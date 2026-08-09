@@ -35,7 +35,7 @@ psql -d "$DB" -q -c "create user ${APP_USER} with password '${APP_PASS}' in role
 # Git Bash บน Windows แปลง argv เป็น ANSI codepage (TIS-620) ก่อนส่งให้ psql.exe
 # ข้อความไทยใน -c จึงเพี้ยนและ PostgreSQL ปฏิเสธว่าเป็น UTF-8 ที่ไม่ถูกต้อง
 # ส่วนไฟล์ที่ส่งด้วย -f ไม่มีปัญหานี้เพราะอ่านเป็นไบต์ตรง ๆ
-if [ "$(psql -d "$DB" -At -c       "select case when rolsuper or rolbypassrls then 'BYPASS' else 'ok' end          from pg_roles where rolname = '${APP_USER}'" | tr -d '')" != "ok" ]; then
+if [ "$(psql -d "$DB" -At -c       "select case when rolsuper or rolbypassrls then 'BYPASS' else 'ok' end          from pg_roles where rolname = '${APP_USER}'" | tr -d '\r')" != "ok" ]; then
   echo "ผู้ใช้ของแอปข้าม RLS ได้ ซึ่งทำให้กำแพงกันข้อมูลไม่ทำงาน ใช้ทดสอบไม่ได้" >&2
   exit 1
 fi
