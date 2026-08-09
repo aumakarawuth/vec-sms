@@ -30,6 +30,22 @@ for f in "$HERE"/seed/*.sql; do
   psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "$f"
 done
 
+# ─── ทำไมต้องรัน roles.sql ตรงนี้ ───
+# เทสต์เกือบทุกไฟล์ `set local role app_runtime` เพื่อออกจากสิทธิ์ superuser
+# (superuser ข้าม RLS ทุกกรณี เทสต์ที่ลืมสลับบทบาทจึงไม่ได้ทดสอบอะไรเลย)
+# แต่ละไฟล์จึงมีท่อน `create role app_runtime if not exists` ของตัวเองไว้กัน
+# ไม่ให้ล้มบนเครื่องที่ยังไม่มีบทบาท
+#
+# ปัญหาคือบทบาทที่สร้างแบบนั้นได้แค่ usage on schema — ไม่มีสิทธิ์ execute
+# ฟังก์ชันที่ migrations ถอนจาก public ไว้ (0017) บน cluster ที่เคยรัน
+# roles.sql มาก่อนจะไม่มีใครเห็นปัญหา เพราะบทบาทมีสิทธิ์ครบอยู่แล้ว
+# ส่วน cluster ใหม่จะล้มที่ TEST 10 ด้วย "permission denied for function"
+#
+# รัน roles.sql ตรงนี้จึงตรงกับลำดับการติดตั้งจริงตาม DEPLOY-ONLINE.md
+# (นำเข้าโครงสร้าง → สร้างผู้ใช้ของแอป) และทำให้เครื่องใหม่ได้ผลเหมือนเครื่องเก่า
+echo "▸ สร้างกลุ่มสิทธิ์ (db/deploy/roles.sql)"
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f "$HERE/deploy/roles.sql"
+
 echo "▸ รันเทสต์"
 for f in "$HERE"/tests/*.sql; do
   printf '  %s\n' "$(basename "$f")"
