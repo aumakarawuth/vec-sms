@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# รวม migrations และ seed เป็นไฟล์เดียวใน dist/ สำหรับนำเข้าระบบอื่น
+#
+#   bash db/build.sh
+#
+# ได้ไฟล์
+#   dist/vec-sms-schema.sql      โครงสร้างอย่างเดียว — ใช้กับระบบจริง
+#   dist/vec-sms-demo-data.sql   ข้อมูลตัวอย่าง — ใช้ทดลองหรือสาธิต
+#   dist/vec-sms-full.sql        โครงสร้าง + ข้อมูลตัวอย่าง — ใช้ทดสอบครั้งเดียวจบ
+#
+# ไฟล์ที่ได้เป็น SQL ล้วน ไม่มีคำสั่งเฉพาะ psql (\set, \echo) จึงวางลง
+# pgAdmin, DBeaver, Supabase SQL Editor หรือ query editor อะไรก็ได้
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST="$HERE/dist"
+mkdir -p "$DIST"
+
+VERSION="$(date +%Y.%m.%d)"
+STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+
+emit_header() {
+  local title="$1" note="$2"
+  cat <<EOF
+-- ═══════════════════════════════════════════════════════════════════
+-- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — $title
+-- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
+--
+-- เวอร์ชัน   $VERSION
+-- สร้างเมื่อ  $STAMP
+-- ต้องการ    PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
+--
+-- $note
+--
+-- วิธีนำเข้า
+--   psql "\$DATABASE_URL" -v ON_ERROR_STOP=1 -f <ไฟล์นี้>
+--   หรือวางทั้งไฟล์ลงใน pgAdmin / DBeaver / Supabase SQL Editor
+--
+-- ไฟล์นี้สร้างจาก db/build.sh อย่าแก้โดยตรง ให้แก้ที่ db/migrations/ แล้ว build ใหม่
+-- ═══════════════════════════════════════════════════════════════════
+
+EOF
+}
+
+emit_files() {
+  local f
+  for f in "$@"; do
+    printf '\n\n-- ───────────────────────────────────────────────────────────────────\n'
+    printf -- '-- แหล่งที่มา: %s\n' "${f#$HERE/}"
+    printf -- '-- ───────────────────────────────────────────────────────────────────\n\n'
+    cat "$f"
+  done
+}
+
+# ── โครงสร้างอย่างเดียว ────────────────────────────────────────────
+{
+  emit_header "โครงสร้างฐานข้อมูล" \
+    "ไฟล์นี้มีเฉพาะโครงสร้าง ไม่มีข้อมูลใด ๆ ใช้กับระบบจริง"
+  emit_files "$HERE"/migrations/*.sql
+} > "$DIST/vec-sms-schema.sql"
+
+# ── ข้อมูลตัวอย่าง ─────────────────────────────────────────────────
+{
+  emit_header "ข้อมูลตัวอย่าง" \
+    "ข้อมูลสาธิต: วิทยาลัยสมมติ หลักสูตรช่างยนต์สองฉบับ ระเบียบวัดผล ปวช.
+-- ตัวเลขทั้งหมดต้องยืนยันกับฝ่ายวัดผลก่อนใช้กับข้อมูลจริง
+-- ต้องนำเข้า vec-sms-schema.sql ก่อน"
+  emit_files "$HERE"/seed/*.sql
+} > "$DIST/vec-sms-demo-data.sql"
+
+# ── รวมทั้งหมด ─────────────────────────────────────────────────────
+{
+  emit_header "โครงสร้าง + ข้อมูลตัวอย่าง" \
+    "ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
+-- สำหรับระบบจริงให้ใช้ vec-sms-schema.sql แทน"
+  emit_files "$HERE"/migrations/*.sql "$HERE"/seed/*.sql
+} > "$DIST/vec-sms-full.sql"
+
+# ── รายการตรวจสอบความถูกต้องของไฟล์ ────────────────────────────────
+(cd "$DIST" && sha256sum vec-sms-*.sql > SHA256SUMS.txt)
+
+printf '▸ สร้างไฟล์ใน %s\n' "${DIST#$HERE/}"
+for f in "$DIST"/vec-sms-*.sql; do
+  printf '  %-28s %s บรรทัด  %s\n' \
+    "$(basename "$f")" \
+    "$(wc -l < "$f" | tr -d ' ')" \
+    "$(du -h "$f" | cut -f1)"
+done
+printf '  %-28s ตรวจความถูกต้องของไฟล์\n' "SHA256SUMS.txt"

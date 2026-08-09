@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# ใช้ migration ที่ยังไม่เคยใช้ กับฐานข้อมูลปลายทาง — รันซ้ำได้ปลอดภัย
+#
+#   DATABASE_URL="postgres://user:pass@host:5432/dbname" bash db/deploy.sh
+#   DATABASE_URL="..." WITH_DEMO=1 bash db/deploy.sh     รวมข้อมูลตัวอย่างด้วย
+#   DATABASE_URL="..." DRY_RUN=1  bash db/deploy.sh      ดูว่าจะทำอะไรบ้าง ไม่เขียนจริง
+#
+# ต่างจาก run.sh ตรงที่ไฟล์นี้ไม่ลบฐานข้อมูล แต่เติมเฉพาะส่วนที่ยังไม่มี
+# จึงใช้กับระบบที่มีข้อมูลจริงอยู่แล้วได้
+set -euo pipefail
+
+# ไฟล์ SQL ทั้งหมดเป็น UTF-8 และมีข้อความไทย
+# บน Windows psql จะเดา client encoding จาก code page ของคอนโซล (มักเป็น WIN874)
+# แล้วอ่านภาษาไทยเพี้ยน จึงต้องประกาศให้ชัด
+export PGCLIENTENCODING=UTF8
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DRY_RUN="${DRY_RUN:-0}"
+WITH_DEMO="${WITH_DEMO:-0}"
+
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "ต้องกำหนด DATABASE_URL ก่อน เช่น" >&2
+  echo '  DATABASE_URL="postgres://user:pass@host:5432/vecsms" bash db/deploy.sh' >&2
+  exit 2
+fi
+
+PSQL=(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q)
+
+# ── ตรวจการเชื่อมต่อและเวอร์ชัน ────────────────────────────────────
+server_version="$("${PSQL[@]}" -At -c "show server_version_num" 2>/dev/null)" || {
+  echo "เชื่อมต่อฐานข้อมูลไม่ได้ ตรวจสอบ DATABASE_URL" >&2
+  exit 1
+}
+if [ "$server_version" -lt 150000 ]; then
+  echo "ต้องใช้ PostgreSQL 15 ขึ้นไป (พบ $server_version)" >&2
+  exit 1
+fi
+printf '▸ เชื่อมต่อสำเร็จ — PostgreSQL %s\n' \
+  "$("${PSQL[@]}" -At -c "show server_version")"
+
+# ── สร้างตารางติดตาม migration ─────────────────────────────────────
+if [ "$DRY_RUN" = "0" ]; then
+  "${PSQL[@]}" -f "$HERE/migrations/0000_migrations.sql" >/dev/null
+fi
+
+applied_checksum() {
+  "${PSQL[@]}" -At -c "select checksum from schema_migrations where version = '$1'" 2>/dev/null || true
+}
+
+checksum_of() {
+  sha256sum "$1" | cut -d' ' -f1
+}
+
+# ── ใช้ migration ที่ยังไม่เคยใช้ ───────────────────────────────────
+pending=0
+skipped=0
+
+for f in "$HERE"/migrations/*.sql; do
+  version="$(basename "$f" .sql)"
+  [ "$version" = "0000_migrations" ] && continue
+
+  sum="$(checksum_of "$f")"
+  prev="$(applied_checksum "$version")"
+
+  if [ -n "$prev" ]; then
+    if [ "$prev" != "$sum" ]; then
+      echo "" >&2
+      echo "หยุด: $version ถูกใช้ไปแล้วแต่ไฟล์ถูกแก้ภายหลัง" >&2
+      echo "  checksum ที่บันทึกไว้ $prev" >&2
+      echo "  checksum ของไฟล์ตอนนี้ $sum" >&2
+      echo "" >&2
+      echo "การแก้ migration ที่ deploy ไปแล้วทำให้ฐานข้อมูลแต่ละเครื่องไม่ตรงกัน" >&2
+      echo "ให้เขียน migration ใหม่เป็นไฟล์ถัดไปแทนการแก้ไฟล์เดิม" >&2
+      exit 1
+    fi
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  pending=$((pending + 1))
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '  จะใช้  %s\n' "$version"
+    continue
+  fi
+
+  printf '  ใช้    %s' "$version"
+  start=$(date +%s%3N 2>/dev/null || echo 0)
+  "${PSQL[@]}" -f "$f"
+  end=$(date +%s%3N 2>/dev/null || echo 0)
+  ms=$(( end > start ? end - start : 0 ))
+
+  "${PSQL[@]}" -c "insert into schema_migrations (version, checksum, duration_ms)
+                   values ('$version', '$sum', $ms)" >/dev/null
+  printf '  (%s ms)\n' "$ms"
+done
+
+if [ "$DRY_RUN" = "1" ]; then
+  printf '▸ ทดลองรัน — จะใช้ %s ไฟล์ ข้าม %s ไฟล์ที่ทำไปแล้ว\n' "$pending" "$skipped"
+  exit 0
+fi
+
+if [ "$pending" -eq 0 ]; then
+  printf '▸ ฐานข้อมูลเป็นเวอร์ชันล่าสุดอยู่แล้ว (ข้าม %s ไฟล์)\n' "$skipped"
+else
+  printf '▸ ใช้ migration ใหม่ %s ไฟล์ (ข้าม %s ไฟล์)\n' "$pending" "$skipped"
+fi
+
+# ── ข้อมูลตัวอย่าง (ต้องสั่งเอง) ────────────────────────────────────
+if [ "$WITH_DEMO" = "1" ]; then
+  existing="$("${PSQL[@]}" -At -c "select count(*) from institution")"
+  if [ "$existing" != "0" ]; then
+    printf '▸ ข้ามข้อมูลตัวอย่าง — มีสถานศึกษาในระบบแล้ว %s แห่ง\n' "$existing"
+  else
+    echo "▸ นำเข้าข้อมูลตัวอย่าง"
+    for f in "$HERE"/seed/*.sql; do
+      printf '  %s\n' "$(basename "$f")"
+      "${PSQL[@]}" -f "$f"
+    done
+  fi
+fi
+
+# ── สรุปสถานะ ───────────────────────────────────────────────────────
+"${PSQL[@]}" -c "
+select
+  (select count(*) from schema_migrations)                            as migrations,
+  (select count(*) from pg_tables  where schemaname = 'public')       as tables,
+  (select count(*) from pg_views   where schemaname = 'public')       as views,
+  (select count(*) from pg_policies where schemaname = 'public')      as rls_policies,
+  (select count(*) from institution)                                  as institutions"
+
+echo "▸ เสร็จ"

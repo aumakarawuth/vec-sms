@@ -1,0 +1,28 @@
+name: vec_sms_app
+description: แอปนักศึกษาและผู้ปกครอง — ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # เลือกไลบรารีให้น้อยที่สุดโดยตั้งใจ
+  # จัดการสถานะด้วย ChangeNotifier ที่มากับ Flutter เอง ไม่ใช้ไลบรารีภายนอก
+  # เพราะแอปนี้มีสถานะไม่ซับซ้อน และการพึ่งไลบรารีน้อยทำให้อัปเกรดง่ายในระยะยาว
+  http: ^1.2.0
+  # เก็บ token และข้อมูลที่แคชไว้ในที่เก็บที่ระบบปฏิบัติการเข้ารหัสให้
+  # Android ใช้ EncryptedSharedPreferences ที่มีกุญแจอยู่ใน Keystore
+  # iOS ใช้ Keychain — ไม่เขียนอัลกอริทึมเข้ารหัสเอง เพราะจัดการกุญแจเองผิดพลาดง่าย
+  flutter_secure_storage: ^9.2.0
+  intl: ^0.20.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

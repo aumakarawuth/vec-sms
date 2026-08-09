@@ -1,0 +1,38 @@
+{
+  "name": "vec-sms-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsc -p tsconfig.json && node --watch dist/main.js",
+    "test:e2e": "tsc -p tsconfig.test.json && node dist-test/test/e2e.js",
+    "test:auth": "tsc -p tsconfig.test.json && node dist-test/test/auth.e2e.js",
+    "test:ratelimit": "tsc -p tsconfig.test.json && node dist-test/test/ratelimit.e2e.js",
+    "test:hardening": "tsc -p tsconfig.test.json && node dist-test/test/hardening.e2e.js",
+    "test:platform": "tsc -p tsconfig.test.json && node dist-test/test/platform.e2e.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/swagger": "^11.4.6",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "pg": "^8.13.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "js-yaml": "^5.2.3"
+  }
+}

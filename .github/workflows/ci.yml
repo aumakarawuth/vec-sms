@@ -1,0 +1,145 @@
+# ═══════════════════════════════════════════════════════════════════
+# CI — รันเทสต์ทั้งฐานข้อมูลและ API กับ PostgreSQL จริง
+#
+# ไม่ mock ฐานข้อมูลเลย เพราะกฎทางธุรกิจเกือบทั้งหมดของระบบนี้อยู่ใน
+# ฐานข้อมูล — RLS, constraint, trigger และ function ถ้า mock จะเหลือ
+# แต่การทดสอบชั้นที่บางที่สุดซึ่งไม่ใช่ที่ที่บั๊กอยู่
+# ═══════════════════════════════════════════════════════════════════
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+          TZ: Asia/Bangkok
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ci
+      PGCLIENTENCODING: UTF8
+      TZ: Asia/Bangkok
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ติดตั้ง psql 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+
+      - name: เทสต์ฐานข้อมูล — migrations, seed และเทสต์ทั้งหมด
+        run: bash db/run.sh
+
+      - name: ตรวจว่าไฟล์ใน dist ตรงกับ migrations
+        run: |
+          bash db/build.sh
+          if ! git diff --quiet -- db/dist; then
+            echo "::error::db/dist ไม่ตรงกับ migrations — รัน bash db/build.sh แล้ว commit ด้วย"
+            git diff --stat -- db/dist
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: ติดตั้ง dependencies
+        working-directory: api
+        run: npm ci
+
+      - name: เตรียมฐานข้อมูลสำหรับเทสต์ API
+        run: bash api/test/prepare-db.sh
+
+      - name: เทสต์ระบบงาน
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://apiuser:apipass@localhost:5432/vecsms_api_test
+          ADMIN_DATABASE_URL: postgres://postgres:ci@localhost:5432/vecsms_api_test
+          JWT_SECRET: ci-secret
+          IP_HASH_SECRET: ci-ip-salt
+          DEV_AUTH: "true"
+          JOBS_ENABLED: "false"
+        run: npm run test:e2e
+
+      - name: เทสต์การยืนยันตัวตน
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://apiuser:apipass@localhost:5432/vecsms_api_test
+          ADMIN_DATABASE_URL: postgres://postgres:ci@localhost:5432/vecsms_api_test
+          JWT_SECRET: ci-secret
+          IP_HASH_SECRET: ci-ip-salt
+          DEV_AUTH: "true"
+          JOBS_ENABLED: "false"
+        run: |
+          bash test/prepare-db.sh
+          npm run test:auth
+
+      - name: เทสต์การจำกัดจำนวนคำขอ
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://apiuser:apipass@localhost:5432/vecsms_api_test
+          ADMIN_DATABASE_URL: postgres://postgres:ci@localhost:5432/vecsms_api_test
+          JWT_SECRET: ci-secret
+          IP_HASH_SECRET: ci-ip-salt
+          DEV_AUTH: "true"
+          JOBS_ENABLED: "false"
+        run: |
+          bash test/prepare-db.sh
+          npm run test:ratelimit
+
+      # ตัวจำกัดจำนวนคำขอมีไว้กันการโจมตี การปล่อยให้ dependency
+      # ที่มีช่องโหว่ระดับสูงหลุดเข้ามาพร้อมกันจึงขัดกันเอง
+      - name: ตรวจช่องโหว่ของ dependency
+        working-directory: api
+        run: npm audit --audit-level=high
+
+      - name: ตรวจว่า image build ได้
+        run: docker build -t vecsms-api -f api/Dockerfile .
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.9"
+          channel: stable
+
+      - name: ติดตั้ง dependencies
+        working-directory: app
+        run: flutter pub get
+
+      # ใช้ dart analyze ไม่ใช่ flutter analyze เพราะ flutter analyze
+      # ไล่อ่านไดเรกทอรีของ SDK ด้วย ซึ่งช้าและไม่จำเป็น
+      - name: ตรวจโค้ด
+        working-directory: app
+        run: dart analyze .
+
+      - name: เทสต์
+        working-directory: app
+        run: flutter test
+
+      - name: ตรวจว่า build web ได้
+        working-directory: app
+        run: flutter build web --release

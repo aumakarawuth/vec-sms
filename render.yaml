@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════
+# Render Blueprint — ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน
+#
+# วิธีใช้
+#   1. push โปรเจกต์ขึ้น GitHub
+#   2. Render → New → Blueprint → เลือกรีโป
+#   3. Render อ่านไฟล์นี้แล้วสร้างฐานข้อมูลกับ service ให้เอง
+#   4. ทำขั้นตอนใน DEPLOY-ONLINE.md ให้ครบ — โดยเฉพาะการสร้างผู้ใช้
+#      ฐานข้อมูลที่ไม่ใช่ superuser ซึ่ง **ข้ามไม่ได้**
+#
+# ─── เรื่องที่ต้องรู้ก่อน ───
+# ผู้ใช้ที่ Render ให้มาตอนสร้างฐานข้อมูลเป็นเจ้าของฐานข้อมูล
+# แอปจะ **ปฏิเสธการเริ่มทำงาน** ถ้าตรวจพบว่าผู้ใช้ข้าม RLS ได้
+# ซึ่งเป็นพฤติกรรมที่ตั้งใจ ไม่ใช่บั๊ก — ต้องสร้าง vecsms_app แยกก่อน
+# ═══════════════════════════════════════════════════════════════════
+
+databases:
+  - name: vecsms-db
+    databaseName: vecsms
+    user: vecsms_owner
+    plan: basic-256mb          # ปรับตามขนาดจริง — ดู DEPLOY-ONLINE.md
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: vecsms-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: .
+    plan: starter
+    region: singapore          # ใกล้ไทยที่สุดที่ Render มี — หน่วงต่ำกว่า US มาก
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: commit
+    envVars:
+      # ตั้งด้วยมือใน Dashboard เป็นค่าของ vecsms_app ที่สร้างเอง
+      # ไม่ผูกกับ connectionString ของ Render เพราะนั่นคือผู้ใช้เจ้าของฐานข้อมูล
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: IP_HASH_SECRET
+        generateValue: true
+      - key: JWT_TTL
+        value: 12h
+      - key: DEV_AUTH
+        value: "false"         # เปิดในระบบจริงไม่ได้เด็ดขาด — ออก token ได้โดยไม่ต้องยืนยันตัวตน
+      - key: LOG_LEVEL
+        value: info
+      - key: TZ
+        value: Asia/Bangkok
+      - key: DB_POOL_MAX
+        value: "10"
+      # ปิดตัวตั้งเวลาในโปรเซส แล้วให้ cron job ด้านล่างยิงเข้ามาแทน
+      # ถ้าเปิดไว้แล้ว scale เป็นหลาย instance งานจะถูกรันซ้ำพร้อมกัน
+      - key: JOBS_ENABLED
+        value: "false"
+      - key: LOGIN_LOG_KEEP_DAYS
+        value: "90"
+      # โดเมนของ Flutter build web — ใส่เป็นรายชื่อ ห้ามใช้ '*'
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ─── งานตามกำหนดเวลา ─────────────────────────────────────────────
+  # ยิง POST /jobs/run เข้า API แทนที่จะรันในโปรเซสของ API เอง
+  # ต้องใช้ token ของบทบาท admin — ดูวิธีออก token ใน DEPLOY-ONLINE.md
+  - type: cron
+    name: vecsms-nightly-jobs
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: .
+    region: singapore
+    schedule: "30 18 * * *"    # 18:30 UTC = 01:30 เวลาไทย
+    dockerCommand: >
+      node -e "fetch(process.env.API_URL+'/api/v1/jobs/run',{method:'POST',headers:{Authorization:'Bearer '+process.env.JOBS_TOKEN}}).then(async r=>{const t=await r.text();console.log(r.status,t);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
+    envVars:
+      - key: API_URL
+        fromService:
+          type: web
+          name: vecsms-api
+          property: hostport
+      - key: JOBS_TOKEN
+        sync: false

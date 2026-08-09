@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════════════════════
+# ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — ฐานข้อมูล
+#
+#   cp .env.example .env      แล้วแก้รหัสผ่าน
+#   docker compose up -d
+#
+# ครั้งแรกที่ขึ้น container จะนำเข้าไฟล์จาก dist/ ให้อัตโนมัติ
+# ถ้ายังไม่มีไฟล์ใน dist/ ให้รัน  bash build.sh  ก่อน
+#
+# ค่าเริ่มต้นนำเข้า vec-sms-full.sql ซึ่งมีข้อมูลตัวอย่างด้วย
+# สำหรับระบบจริงให้ตั้ง INIT_SQL=vec-sms-schema.sql ใน .env
+# ═══════════════════════════════════════════════════════════════════
+name: vecsms
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: vecsms-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vecsms}
+      POSTGRES_USER: ${POSTGRES_USER:-vecsms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ต้องกำหนด POSTGRES_PASSWORD ใน .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Bangkok
+      PGTZ: Asia/Bangkok
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - vecsms-data:/var/lib/postgresql/data
+      # นำเข้าอัตโนมัติเฉพาะครั้งแรกที่สร้าง volume
+      - ./dist/${INIT_SQL:-vec-sms-full.sql}:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./deploy/roles.sql:/docker-entrypoint-initdb.d/02-roles.sql:ro
+      # เก็บไฟล์ migration ไว้ในเครื่องเพื่อใช้ deploy.sh ตอนอัปเกรด
+      - ./migrations:/opt/vecsms/migrations:ro
+      - ./seed:/opt/vecsms/seed:ro
+      - ./backup:/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vecsms} -d ${POSTGRES_DB:-vecsms}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    shm_size: 256mb
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      # เก็บ log จราจรทางคอมพิวเตอร์ ตาม พ.ร.บ.คอมพิวเตอร์ มาตรา 26
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
+      - -c
+      - log_statement=ddl
+      - -c
+      - log_min_duration_statement=1000
+
+  # เครื่องมือดูฐานข้อมูลผ่านเบราว์เซอร์ — เปิดเมื่อต้องการเท่านั้น
+  #   docker compose --profile tools up -d
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: vecsms-pgadmin
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?ต้องกำหนด PGADMIN_PASSWORD ใน .env}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - vecsms-pgadmin:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # สำรองข้อมูลรายวัน เก็บย้อนหลัง 14 วัน
+  #   docker compose --profile backup up -d
+  backup:
+    image: postgres:16-alpine
+    container_name: vecsms-backup
+    profiles: ["backup"]
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - ./backup:/backup
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          ts=$$(date +%Y%m%d-%H%M)
+          pg_dump -h db -U "$${POSTGRES_USER:-vecsms}" -d "$${POSTGRES_DB:-vecsms}" -Fc \
+            -f "/backup/vecsms-$$ts.dump" && echo "สำรองข้อมูลแล้ว $$ts"
+          find /backup -name 'vecsms-*.dump' -mtime +14 -delete
+          sleep 86400
+        done
+
+volumes:
+  vecsms-data:
+  vecsms-pgadmin:

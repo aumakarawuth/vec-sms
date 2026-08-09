@@ -1,0 +1,3 @@
+b701981f62cd19464ccc62e8b1fbb8e567d45090872822f9a770bdeec74c8234 *vec-sms-demo-data.sql
+d3fe841e3fb069f187c4cb3d77b4e604d5f5a0d57fd5d399f0235305c33bd2ca *vec-sms-full.sql
+6b2992ab2415ec4fd3e52cdf109b9ee1febc69d4033f3d3aa49146cd145433d3 *vec-sms-schema.sql
