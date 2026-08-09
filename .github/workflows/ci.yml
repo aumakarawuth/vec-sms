@@ -108,6 +108,37 @@ jobs:
           bash test/prepare-db.sh
           npm run test:ratelimit
 
+      - name: เทสต์มาตรการสำหรับระบบจริง
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://apiuser:apipass@localhost:5432/vecsms_api_test
+          ADMIN_DATABASE_URL: postgres://postgres:ci@localhost:5432/vecsms_api_test
+          JWT_SECRET: ci-secret
+          IP_HASH_SECRET: ci-ip-salt
+          DEV_AUTH: "true"
+          JOBS_ENABLED: "false"
+          PROVISION_KEY: ci-provision-key
+        run: |
+          bash test/prepare-db.sh
+          npm run test:hardening
+
+      # ชุดนี้คุมกำแพงระหว่างผู้ให้บริการกับวิทยาลัย ซึ่งเป็นจุดเดียวในระบบ
+      # ที่ตั้งใจให้เห็นทุกวิทยาลัยพร้อมกัน — ถ้าพังคือข้อมูลของทุกลูกค้า
+      # หลุดจากบัญชีเดียว จึงต้องอยู่ใน CI ไม่ใช่รันเฉพาะตอนนึกได้
+      - name: เทสต์หน้าจอผู้ดูแลข้ามวิทยาลัย
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://apiuser:apipass@localhost:5432/vecsms_api_test
+          ADMIN_DATABASE_URL: postgres://postgres:ci@localhost:5432/vecsms_api_test
+          JWT_SECRET: ci-secret
+          IP_HASH_SECRET: ci-ip-salt
+          DEV_AUTH: "true"
+          JOBS_ENABLED: "false"
+          PROVISION_KEY: ci-provision-key
+        run: |
+          bash test/prepare-db.sh
+          npm run test:platform
+
       # ตัวจำกัดจำนวนคำขอมีไว้กันการโจมตี การปล่อยให้ dependency
       # ที่มีช่องโหว่ระดับสูงหลุดเข้ามาพร้อมกันจึงขัดกันเอง
       - name: ตรวจช่องโหว่ของ dependency
@@ -143,3 +174,9 @@ jobs:
       - name: ตรวจว่า build web ได้
         working-directory: app
         run: flutter build web --release
+
+      # entrypoint ที่สองไม่ได้ถูกแตะโดย build ข้างบนเลย ถ้าไม่ตรวจแยก
+      # หน้าจอผู้ให้บริการจะ build ไม่ผ่านโดยไม่มีใครรู้จนถึงวัน deploy
+      - name: ตรวจว่า build หน้าจอผู้ให้บริการได้
+        working-directory: app
+        run: flutter build web --release -t lib/main_platform.dart --output build/platform

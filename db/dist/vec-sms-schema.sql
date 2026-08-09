@@ -2,9 +2,9 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้างฐานข้อมูล
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- เวอร์ชัน   2026.08.10
--- สร้างเมื่อ  2026-08-09 17:35 UTC
--- ต้องการ    PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
+-- migration ล่าสุด  0040
+-- ลายนิ้วมือต้นทาง  dbd57ad2662a7a46
+-- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์นี้มีเฉพาะโครงสร้าง ไม่มีข้อมูลใด ๆ ใช้กับระบบจริง
 --
@@ -5024,10 +5024,28 @@ revoke all on function student_institution(uuid)            from public;
 revoke all on function class_section_institution(uuid)      from public;
 revoke all on function curriculum_version_institution(uuid) from public;
 revoke all on function section_teacher_person_id(uuid)      from public;
-grant execute on function student_institution(uuid)            to app_runtime;
-grant execute on function class_section_institution(uuid)      to app_runtime;
-grant execute on function curriculum_version_institution(uuid) to app_runtime;
-grant execute on function section_teacher_person_id(uuid)      to app_runtime;
+
+-- ─── ทำไมต้องเช็คว่ามีบทบาทก่อน ───
+-- บทบาทใน PostgreSQL อยู่ระดับ cluster ไม่ใช่ระดับฐานข้อมูล บนเครื่อง
+-- ที่เคยรัน db/deploy/roles.sql มาแล้ว app_runtime จะค้างอยู่ใน cluster
+-- ทำให้ migrations ผ่านทุกครั้งจนดูเหมือนไม่มีปัญหา
+--
+-- แต่บน cluster ใหม่เอี่ยม (CI · เครื่องคนอื่น · เซิร์ฟเวอร์จริงตอน deploy
+-- ครั้งแรก) บทบาทยังไม่มี แล้ว migration นี้จะล้มทั้งไฟล์ — ซึ่งแปลว่า
+-- ไม่มีใครติดตั้งระบบนี้จากศูนย์ได้เลย ทั้งที่บนเครื่องคนเขียนผ่านตลอด
+--
+-- ข้ามไปได้เพราะ roles.sql มี `grant execute on all functions` อยู่แล้ว
+-- ฟังก์ชันเหล่านี้จึงได้สิทธิ์ตอนรัน roles.sql ทีหลัง (แบบเดียวกับ 0022 ·
+-- 0023 · 0025 · 0040 ที่เขียนไว้ถูกอยู่แล้ว)
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant execute on function student_institution(uuid)            to app_runtime;
+    grant execute on function class_section_institution(uuid)      to app_runtime;
+    grant execute on function curriculum_version_institution(uuid) to app_runtime;
+    grant execute on function section_teacher_person_id(uuid)      to app_runtime;
+  end if;
+end $$;
 
 -- ═══ ชั้นที่ 1 — แยกข้อมูลระหว่างสถานศึกษา (permissive) ═══════════
 

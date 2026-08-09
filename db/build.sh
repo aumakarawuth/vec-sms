@@ -16,8 +16,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIST="$HERE/dist"
 mkdir -p "$DIST"
 
-VERSION="$(date +%Y.%m.%d)"
-STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+# ─── ทำไมเวอร์ชันไม่ใช่วันที่ที่ build ───
+# เดิมใช้ `date` ทั้งเวอร์ชันและเวลาที่สร้าง ผลคือ build ซ้ำสองครั้งได้ไฟล์
+# ที่ต่างกันทั้งที่ต้นทางไม่ได้เปลี่ยนสักบรรทัด — ซึ่งทำให้ขั้นตอนใน CI
+# ที่ถามว่า "dist ตรงกับ migrations หรือยัง" ตอบไม่ได้เลย มันแดงทุกครั้ง
+# ไม่ว่าจะลืม build จริงหรือไม่ แล้วสัญญาณนั้นก็ไร้ความหมายทันที
+#
+# ตอนนี้ทั้งสองค่ามาจาก **เนื้อไฟล์ต้นทาง** ต้นทางเดิมจึงได้ผลลัพธ์เดิมเสมอ
+# และค่าที่ได้ยังบอกได้ตรงกว่าเดิมว่าไฟล์นี้สร้างจากอะไร
+VERSION="$(basename "$(ls "$HERE"/migrations/*.sql | tail -1)" .sql | cut -d_ -f1)"
+FINGERPRINT="$(cat "$HERE"/migrations/*.sql "$HERE"/seed/*.sql | sha256sum | cut -c1-16)"
 
 emit_header() {
   local title="$1" note="$2"
@@ -26,9 +34,9 @@ emit_header() {
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — $title
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- เวอร์ชัน   $VERSION
--- สร้างเมื่อ  $STAMP
--- ต้องการ    PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
+-- migration ล่าสุด  $VERSION
+-- ลายนิ้วมือต้นทาง  $FINGERPRINT
+-- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- $note
 --
