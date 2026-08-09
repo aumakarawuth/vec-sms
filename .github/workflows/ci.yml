@@ -71,6 +71,8 @@ jobs:
       - name: เตรียมฐานข้อมูลสำหรับเทสต์ API
         run: bash api/test/prepare-db.sh
 
+      # ต้องมี PROVISION_KEY ด้วย — API-82/83 ยิงเส้นทางผูกแพ็กเกจของ
+      # ผู้ให้บริการ ซึ่งปิดสนิท (503) เมื่อไม่ได้ตั้งกุญแจ
       - name: เทสต์ระบบงาน
         working-directory: api
         env:
@@ -80,6 +82,7 @@ jobs:
           IP_HASH_SECRET: ci-ip-salt
           DEV_AUTH: "true"
           JOBS_ENABLED: "false"
+          PROVISION_KEY: ci-provision-key
         run: npm run test:e2e
 
       - name: เทสต์การยืนยันตัวตน
