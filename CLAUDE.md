@@ -157,6 +157,11 @@ bash db/build.sh
 - **`pkill -f "node dist/main.js"` ไม่ทำงาน** ใช้ PowerShell `Get-CimInstance Win32_Process`
   กรอง `CommandLine -like '*main.js*'` แทน
 - **หยุด API ก่อนรัน `db/run.sh`** มิฉะนั้น `drop database` ล้มเพราะมี connection ค้าง
+- **`TZ` ที่ตั้งใน Git Bash ไปไม่ถึง Node** — `export TZ=Asia/Bangkok` แล้ว
+  `echo $TZ` เห็นค่าถูกต้อง แต่ `process.env.TZ` เป็น `undefined` (MSYS จัดการ
+  ตัวแปรนี้เป็นกรณีพิเศษ) อาการคือ production-guard เตือน "TZ ไม่ได้ตั้ง"
+  ตอนซ้อมบูตบนเครื่อง **ทั้งที่ตั้งไว้แล้ว** — บน Linux container ไม่เกิด
+  เพราะ Dockerfile ตั้ง `ENV TZ` ในตัว image เอง อย่าไล่แก้ผิดที่
 
 ---
 
@@ -366,6 +371,15 @@ trigger) · `staff_leave` (บุคลากรยื่นใบลาเอ�
 ## ที่ยังไม่ได้ทำ (เรียงตามที่ผมแนะนำ)
 
 **บล็อกการใช้งานจริง**
+- **ไม่มีเส้นทางสร้างภาคเรียน** — `POST /platform/institutions` สร้างวิทยาลัย
+  ผู้ดูแล และปีการศึกษาให้ แต่ไม่ได้สร้างภาคเรียน และไม่มี API ให้สร้างเลย
+  สักเส้น (`/rollover` คัดลอกของระหว่างภาคเรียนที่มีอยู่แล้วเท่านั้น ส่วน
+  `insert into term` มีอยู่ที่เดียวคือไฟล์ seed) วิทยาลัยที่เพิ่งเปิดจึงใช้งาน
+  อะไรไม่ได้เลย และแอปเว็บ build ไม่ได้เพราะไม่มี `TERM_ID`
+  ตอนนี้เลี่ยงด้วย [`db/deploy/first-terms.sql`](db/deploy/first-terms.sql)
+  **บทเรียน** เจอตอนซ้อม deploy บนฐานข้อมูลเปล่า ซึ่งเป็นสภาพเดียวกับลูกค้า
+  ใหม่ทุกราย — เทสต์ทั้ง 153 ข้อรันบนฐานที่มี seed ให้แล้วจึงไม่มีวันเจอ
+  เรื่องนี้ เหมือนกับที่ AUTH-26 ไม่เจอเพราะหยิบ token จาก `/auth/dev-token`
 - **ยังไม่ได้ผูกผู้ให้บริการอีเมล/SMS** — การรีเซ็ตรหัสผ่านทำเสร็จแล้วทั้งสามชั้น
   (migration 0025 · `POST /auth/forgot-password` · `POST /auth/reset-password` ·
   `POST /auth/credentials/reset-code`) แต่ **ช่องทางส่งอัตโนมัติปิดอยู่โดยค่าเริ่มต้น**
