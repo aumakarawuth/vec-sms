@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Query,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   ArrayNotEmpty,
@@ -50,7 +51,7 @@ class ImportRowDto {
 }
 
 class CreateImportDto {
-  @IsIn(['student', 'academic_history']) kind: string;
+  @IsIn(['student', 'academic_history', 'staff']) kind: string;
   @IsOptional() @IsString() sourceName?: string;
   @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => ImportRowDto)
   rows: ImportRowDto[];
@@ -119,13 +120,18 @@ export class ImportService {
     batchId: string,
     kind: string,
   ) {
-    if (kind === 'student') {
-      // ตรรกะการตรวจอยู่ในฐานข้อมูลทั้งหมด ชั้นนี้แค่สั่งให้ตรวจ
-      // เพื่อให้สคริปต์นำเข้าที่รันตรงกับฐานข้อมูลได้ผลเหมือนกัน
+    // ตรรกะการตรวจอยู่ในฐานข้อมูลทั้งหมด ชั้นนี้แค่สั่งให้ตรวจ
+    // เพื่อให้สคริปต์นำเข้าที่รันตรงกับฐานข้อมูลได้ผลเหมือนกัน
+    const validator =
+      kind === 'student' ? 'validate_student_row'
+      : kind === 'staff' ? 'validate_staff_row'
+      : null;
+
+    if (validator) {
       await c.query(
         `update import_row r
-            set errors = validate_student_row(b.institution_id, r.payload),
-                ok = cardinality(validate_student_row(b.institution_id, r.payload)) = 0
+            set errors = ${validator}(b.institution_id, r.payload),
+                ok = cardinality(${validator}(b.institution_id, r.payload)) = 0
            from import_batch b
           where b.id = r.batch_id and r.batch_id = $1`,
         [batchId],
@@ -192,13 +198,41 @@ export class ImportService {
     );
   }
 
-  /** ขั้นที่ 2 — นำเข้าจริง ทั้งชุดหรือไม่เลย */
+  /**
+   * ขั้นที่ 2 — นำเข้าจริง ทั้งชุดหรือไม่เลย
+   *
+   * เลือกฟังก์ชันตามชนิดของรอบนำเข้า ไม่ใช่ให้ผู้เรียกระบุมา — ถ้าผู้เรียก
+   * ระบุได้ จะยิงรอบของบุคลากรเข้าตัวนำเข้านักศึกษาได้ ซึ่งฟังก์ชันจะปฏิเสธ
+   * ด้วยข้อความที่ไม่มีใครเข้าใจว่าเกิดอะไรขึ้น
+   */
   async apply(batchId: string) {
-    const row = await this.db.queryOne<{ imported: number; failed: number }>(
-      `select * from apply_student_import($1)`,
-      [batchId],
-    );
-    return { imported: Number(row?.imported ?? 0), failed: Number(row?.failed ?? 0) };
+    return this.db.tx(async (c) => {
+      const kind = (
+        await c.query<{ kind: string }>(`select kind from import_batch where id = $1`, [
+          batchId,
+        ])
+      ).rows[0]?.kind;
+      if (!kind) throw new ForbiddenException('ไม่พบรอบนำเข้านี้ หรือไม่มีสิทธิ์เข้าถึง');
+
+      const fn =
+        kind === 'student' ? 'apply_student_import'
+        : kind === 'staff' ? 'apply_staff_import'
+        : null;
+
+      if (!fn) {
+        throw new UnprocessableEntityException(
+          `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษาและบุคลากร`,
+        );
+      }
+
+      const row = (
+        await c.query<{ imported: number; failed: number }>(`select * from ${fn}($1)`, [
+          batchId,
+        ])
+      ).rows[0];
+
+      return { imported: Number(row?.imported ?? 0), failed: Number(row?.failed ?? 0) };
+    });
   }
 
   // ─── ประวัติการเรียนจากสถานศึกษาเดิม ───────────────────────────

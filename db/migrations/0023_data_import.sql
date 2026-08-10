@@ -180,8 +180,11 @@ begin
        set status = 'failed', error_rows = v_bad,
            ok_rows = (select count(*) from import_row where batch_id = p_batch_id and ok)
      where id = p_batch_id;
+    -- ข้อความไม่ชี้ไปที่ import_row เพราะ `raise` rollback การเขียน errors
+    -- ข้างบนไปด้วย รายละเอียดรายแถวจึงหายไปพร้อมข้อผิดพลาด (ดู 0043)
     raise exception
-      'มี % แถวที่ยังมีปัญหา ไม่ได้นำเข้าอะไรเลย — ดูรายละเอียดรายแถวที่ import_row', v_bad;
+      'มี % แถวที่ยังมีปัญหา ไม่ได้นำเข้าอะไรเลย — สั่งตรวจ (validate) รอบนี้อีกครั้ง '
+      'เพื่อดูรายละเอียดรายแถว', v_bad;
   end if;
 
   for r in select * from import_row where batch_id = p_batch_id order by row_no loop
