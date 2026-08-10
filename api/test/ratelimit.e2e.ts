@@ -174,6 +174,89 @@ async function main() {
     return `ถูกบล็อก · ต้องรออีก ${row.retry_after_secs} วินาที`;
   });
 
+  console.log('\n══ ตัวนับที่ใช้ร่วมกันทุก instance ══');
+
+  await check('RATE-07 instance ใหม่ต้องรู้ว่าโควตาถูกใช้ไปแล้ว', async () => {
+    /*
+     * ─── ทำไมต้องสร้างแอปตัวที่สอง ───
+     * นี่คือข้อเดียวที่พิสูจน์เรื่องที่ 0050 แก้ได้จริง — ตัวนับใน
+     * หน่วยความจำถูกแบ่งตามจำนวน instance การยิงจนตันแล้วเช็คว่าโดน 429
+     * พิสูจน์แค่ว่าตัวนับในโปรเซสทำงาน ซึ่งทำงานอยู่แล้วตั้งแต่ต้น
+     *
+     * แอปตัวที่สองมี Map ของตัวเองที่ว่างเปล่า ถ้ามันยอมให้ผ่าน แปลว่า
+     * เพดานจริงคูณตามจำนวน instance ซึ่งคือบั๊กทั้งหมดของเรื่องนี้
+     */
+    const admin = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await admin.connect();
+    await admin.query('delete from request_rate');
+    await admin.end();
+
+    // เส้นทางนี้ตั้งเพดานไว้ 3 ครั้งต่อนาที เพราะทุกคำขอที่ผ่านสร้าง
+    // วิทยาลัยใหม่หนึ่งแห่ง — กุญแจผิดก็ยังถูกนับ เพราะ guard ทำงานก่อน
+    const fire = (b: string) =>
+      fetch(`${b}/provisioning/institutions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+    let blocked = 0;
+    for (let i = 0; i < 5; i++) {
+      if ((await fire(base)).status === 429) blocked++;
+    }
+    expect(blocked > 0, `ยิง 5 ครั้งบนเพดาน 3 ควรโดนปฏิเสธบ้าง โดน ${blocked}`);
+
+    const app2 = await createApp();
+    await app2.listen(0);
+    const base2 = `http://127.0.0.1:${
+      (app2.getHttpServer().address() as { port: number }).port
+    }/api/v1`;
+    const res2 = await fire(base2);
+    const retryAfter = res2.headers.get('retry-after');
+    await app2.close();
+
+    expect(
+      res2.status === 429,
+      `instance ที่สองต้องรู้ว่าโควตาหมดแล้ว ได้ ${res2.status} ` +
+        '(ตัวนับยังอยู่ในหน่วยความจำของแต่ละโปรเซส เพดานจริงจึงคูณตามจำนวน instance)',
+    );
+    return `instance แรกโดนปฏิเสธ ${blocked} ครั้ง · instance ที่สองโดนทันที รออีก ${retryAfter} วินาที`;
+  });
+
+  await check('RATE-08 ปิดตัวนับร่วมแล้วต้องยังมีตัวนับในโปรเซสอยู่', async () => {
+    /*
+     * THROTTLE_STORE=memory มีไว้ให้คนที่รัน instance เดียวจริง ๆ เลี่ยง
+     * ค่าใช้จ่ายหนึ่ง query ต่อคำขอ ถ้าตั้งค่านี้แล้วกลายเป็นไม่จำกัดอะไรเลย
+     * มันจะเป็นสวิตช์ปิดระบบป้องกันที่ดูเหมือนสวิตช์ปรับประสิทธิภาพ
+     */
+    const admin = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await admin.connect();
+    await admin.query('delete from request_rate');
+    await admin.end();
+
+    process.env.THROTTLE_STORE = 'memory';
+    const app3 = await createApp();
+    await app3.listen(0);
+    const base3 = `http://127.0.0.1:${
+      (app3.getHttpServer().address() as { port: number }).port
+    }/api/v1`;
+
+    let blocked = 0;
+    for (let i = 0; i < 6; i++) {
+      const r = await fetch(`${base3}/provisioning/institutions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (r.status === 429) blocked++;
+    }
+    await app3.close();
+    delete process.env.THROTTLE_STORE;
+
+    expect(blocked > 0, `ยิง 6 ครั้งบนเพดาน 3 ควรโดนปฏิเสธบ้าง โดน ${blocked}`);
+    return `โดนปฏิเสธ ${blocked} จาก 6 ครั้งโดยไม่แตะฐานข้อมูล`;
+  });
+
   await app.close();
 
   console.log('');
