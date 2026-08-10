@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Injectable,
   Module,
@@ -20,6 +21,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Audit } from '../../common/audit/audit.interceptor';
@@ -230,6 +232,24 @@ class TimeslotCheckDto {
 
 class AddTimeslotDto extends TimeslotCheckDto {}
 
+class AvailabilityDto {
+  @IsUuid() staffId: string;
+  @IsInt() @Min(1) @Max(7) dayOfWeek: number;
+  @IsInt() @Min(1) @Max(20) periodFrom: number;
+  @IsInt() @Min(1) @Max(20) periodTo: number;
+
+  /**
+   * unavailable = ห้ามวางจริง ๆ · prefer_not = เลี่ยงถ้าได้
+   *
+   * ค่าเริ่มต้นเป็น unavailable เพราะคนกรอกส่วนใหญ่กรอกเรื่องที่ติดจริง
+   * ส่วนคำขอเชิงความสะดวกต้องตั้งใจเลือกเอง — ถ้าสลับกัน ข้อจำกัดที่ห้าม
+   * จริงจะถูกบันทึกเป็นแค่คำขอโดยไม่มีใครสังเกต
+   */
+  @IsOptional() @IsIn(['unavailable', 'prefer_not']) kind?: string;
+  @IsOptional() @IsString() @MaxLength(200) reason?: string;
+  @IsOptional() @IsUuid() termId?: string;
+}
+
 @Injectable()
 export class TimetableService {
   constructor(private readonly db: DbService) {}
@@ -251,12 +271,68 @@ export class TimetableService {
     return { canPlace: rows.length === 0, conflicts: rows };
   }
 
-  async suggest(classSectionId: string, periods: number, roomId?: string) {
+  /**
+   * คาบว่างที่วางได้จริง
+   *
+   * `avoids` บอกว่าคาบนั้นตรงกับที่ครูขอเลี่ยงไว้ (แต่ไม่ได้ห้าม) และ `note`
+   * คือเหตุผลที่ครูแจ้ง — หน้าจอต้องแสดงให้คนจัดเห็น มิฉะนั้นเขาจะเลือกคาบ
+   * ท้ายรายการโดยไม่รู้ว่ากำลังฝืนคำขอของใครอยู่
+   *
+   * ส่วนช่วงที่ครูสอนไม่ได้จริง ๆ ถูกตัดออกตั้งแต่ในฐานข้อมูลแล้ว
+   */
+  async suggest(classSectionId: string, periods: number, roomId?: string, termId?: string) {
     return this.db.query(
-      `select day_of_week, period_from, period_to
-         from suggest_timeslots($1, $2::smallint, $3, 20)`,
-      [classSectionId, periods, roomId ?? null],
+      `select day_of_week, period_from, period_to, avoids, note
+         from suggest_timeslots($1, $2::smallint, $3, 20, $4)`,
+      [classSectionId, periods, roomId ?? null, termId ?? null],
     );
+  }
+
+  /** ข้อจำกัดเวลาสอนของครูคนหนึ่ง */
+  async availability(staffId: string) {
+    return this.db.query(
+      `select ta.id, ta.day_of_week, ta.period_from, ta.period_to,
+              ta.kind, ta.reason, ta.term_id, t.ordinal as term_ordinal
+         from teacher_availability ta
+         left join term t on t.id = ta.term_id
+        where ta.staff_id = $1
+        order by ta.day_of_week, ta.period_from`,
+      [staffId],
+    );
+  }
+
+  async addAvailability(dto: {
+    staffId: string;
+    dayOfWeek: number;
+    periodFrom: number;
+    periodTo: number;
+    kind?: string;
+    reason?: string;
+    termId?: string;
+  }) {
+    return this.db.queryOne(
+      `insert into teacher_availability
+         (institution_id, staff_id, term_id, day_of_week, period_from, period_to,
+          kind, reason, created_by)
+       values (current_institution_id(), $1, $2, $3::smallint, $4::smallint, $5::smallint,
+               coalesce($6, 'unavailable')::availability_kind, $7, current_actor_id())
+       returning id, day_of_week, period_from, period_to, kind`,
+      [
+        dto.staffId, dto.termId ?? null, dto.dayOfWeek,
+        dto.periodFrom, dto.periodTo, dto.kind ?? null, dto.reason ?? null,
+      ],
+    );
+  }
+
+  async removeAvailability(id: string) {
+    const r = await this.db.query(
+      `delete from teacher_availability where id = $1 returning id`,
+      [id],
+    );
+    if (r.length === 0) {
+      throw new ForbiddenException('ไม่พบข้อจำกัดนี้ หรือไม่มีสิทธิ์ลบ');
+    }
+    return { removed: id };
   }
 
   /**
@@ -583,9 +659,39 @@ class TimetableController {
     @Query('classSectionId', ParseUuidPipe) classSectionId: string,
     @Query('periods') periods?: string,
     @Query('roomId') roomId?: string,
+    @Query('termId') termId?: string,
   ) {
     const n = Number(periods ?? 2);
-    return this.svc.suggest(classSectionId, Number.isFinite(n) && n > 0 ? n : 2, roomId);
+    return this.svc.suggest(
+      classSectionId,
+      Number.isFinite(n) && n > 0 ? n : 2,
+      roomId,
+      termId,
+    );
+  }
+
+  /**
+   * ข้อจำกัดเวลาสอนของครู
+   *
+   * ครูอ่านของตัวเองได้ที่ชั้นฐานข้อมูล แต่เส้นทางนี้กั้นด้วย @Roles ของ
+   * controller (งานทะเบียน/วิชาการ) โดยตั้งใจ — ถ้าครูกรอกเองได้ ตารางสอน
+   * จะกลายเป็นเรื่องที่ต่อรองกันเอง และคนที่กรอกก่อนได้คาบที่ดีที่สุดเสมอ
+   */
+  @Get('availability')
+  availability(@Query('staffId', ParseUuidPipe) staffId: string) {
+    return this.svc.availability(staffId);
+  }
+
+  @Audit('teacher_availability')
+  @Post('availability')
+  addAvailability(@Body() dto: AvailabilityDto) {
+    return this.svc.addAvailability(dto);
+  }
+
+  @Audit('teacher_availability')
+  @Post('availability/:id/remove')
+  removeAvailability(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.removeAvailability(id);
   }
 
   @Audit('section_timeslot')
