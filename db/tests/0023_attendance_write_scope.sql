@@ -170,17 +170,22 @@ declare
   v_missing text;
   v_rest    integer;
 begin
+  -- รายชื่อนี้ต้องยาวขึ้นเรื่อย ๆ ทุกครั้งที่ปิดเพิ่ม ห้ามสั้นลง
+  -- เวลาเรียน (0039) · คะแนน เกรด ทะเบียน และการเงิน (0041)
   select string_agg(tablename || '.' || policyname, ', ')
     into v_missing
     from pg_policies
    where schemaname = 'public'
-     and tablename in ('attendance_record', 'class_meeting')
+     and tablename in ('attendance_record', 'class_meeting',
+                       'gradebook_score', 'term_summary', 'student',
+                       'student_status_history', 'enrollment',
+                       'invoice', 'invoice_line', 'installment')
      and permissive = 'RESTRICTIVE'
      and cmd = 'ALL'
      and with_check is null;
 
   if v_missing is not null then
-    raise exception 'TEST 185 ล้มเหลว: นโยบายที่ควบคุมการเขียนเวลาเรียนไม่มี with check — % '
+    raise exception 'TEST 185 ล้มเหลว: นโยบายที่ปิดไปแล้วกลับมาไม่มี with check — % '
       '(สิทธิ์อ่านจะกลายเป็นสิทธิ์เขียนทันที)', v_missing;
   end if;
 
@@ -191,7 +196,7 @@ begin
      and cmd = 'ALL'
      and with_check is null;
 
-  raise notice 'TEST 185 ผ่าน — เวลาเรียนมี with check ครบ · ยังเหลืออีก % ตารางที่ยังไม่ปิด', v_rest;
+  raise notice 'TEST 185 ผ่าน — สิบตารางที่ปิดแล้วยังปิดอยู่ · ยังเหลืออีก % ตารางที่ยังไม่ปิด', v_rest;
 end $$;
 
 do $$ begin raise notice ''; raise notice '════ ทดสอบขอบเขตการเขียนเวลาเรียนครบทุกข้อ ════'; end $$;
