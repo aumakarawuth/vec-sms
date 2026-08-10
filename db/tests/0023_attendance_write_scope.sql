@@ -189,12 +189,30 @@ begin
       '(สิทธิ์อ่านจะกลายเป็นสิทธิ์เขียนทันที)', v_missing;
   end if;
 
+  /*
+   * ─── ทำไมต้องหักตารางที่มีนโยบายเขียนเฉพาะทางออก ───
+   * มีสองวิธีปิดช่องนี้ และตัวนับต้องรู้จักทั้งคู่
+   *   1. เขียนนโยบายเดิมทับให้มี with check (0039 · 0041 · 0042)
+   *   2. **เพิ่ม** นโยบาย restrictive ที่คุมเฉพาะ insert/update/delete
+   *      ทับลงไป โดยไม่แตะนโยบายอ่านเดิม (0045)
+   *
+   * วิธีที่ 2 ปลอดภัยกว่าเมื่อต้องปิดหลายสิบตารางพร้อมกัน เพราะไม่ต้อง
+   * คัดลอกประโยค using ที่ยาวมาใหม่ทีละตาราง — แต่ถ้าตัวนับไม่รู้จัก
+   * มันจะรายงานว่ายังไม่ได้ปิดทั้งที่ปิดแล้ว แล้วตัวเลขนี้จะเลิกมีความหมาย
+   */
   select count(*) into v_rest
-    from pg_policies
-   where schemaname = 'public'
-     and permissive = 'RESTRICTIVE'
-     and cmd = 'ALL'
-     and with_check is null;
+    from pg_policies p
+   where p.schemaname = 'public'
+     and p.permissive = 'RESTRICTIVE'
+     and p.cmd = 'ALL'
+     and p.with_check is null
+     and not exists (
+       select 1 from pg_policies w
+        where w.schemaname = 'public'
+          and w.tablename  = p.tablename
+          and w.permissive = 'RESTRICTIVE'
+          and w.cmd in ('INSERT', 'UPDATE', 'DELETE')
+     );
 
   raise notice 'TEST 185 ผ่าน — สิบตารางที่ปิดแล้วยังปิดอยู่ · ยังเหลืออีก % ตารางที่ยังไม่ปิด', v_rest;
 end $$;
