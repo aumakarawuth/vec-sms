@@ -160,4 +160,49 @@ begin
 end $$;
 rollback;
 
+-- ── TEST 209ก ──────────────────────────────────────────────────────
+-- นักศึกษาบันทึกชั่วโมงฝึกอาชีพของตัวเองได้ แต่รับรองเองไม่ได้
+--
+-- คนที่อยู่ในสถานประกอบการคือคนที่รู้ว่าทำงานกี่ชั่วโมง ไม่ใช่ครูที่อยู่
+-- คนละที่ — ปิดการบันทึกคือปิดหน้าจอ A-06 ทั้งหน้า
+-- แต่ชั่วโมงที่เจ้าตัวบันทึกต้องไม่ถูกนับจนกว่าครูนิเทศจะรับรอง
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+set local role app_runtime;
+select set_config('app.institution_id', :'inst', true) as a,
+       set_config('app.actor_id',       :'pid',  true) as b,
+       set_config('app.role',           'student', true) as c,
+       set_config('test.sid',           :'sid',  true) as d \gset ctx_
+
+do $$
+declare
+  v_sid    uuid := current_setting('test.sid')::uuid;
+  v_id     uuid;
+  v_forged boolean := false;
+begin
+  -- บันทึกของตัวเองต้องทำได้
+  insert into practicum_log (student_id, worked_on, hours, description, source)
+  values (v_sid, current_date, 8, 'ฝึกงานวันนี้', 'student_app')
+  returning id into v_id;
+
+  if v_id is null then
+    raise exception 'TEST 209ก ล้มเหลว: นักศึกษาบันทึกชั่วโมงฝึกอาชีพของตัวเองไม่ได้ '
+      '(หน้าจอ A-06 ใช้ไม่ได้ทั้งหน้า)';
+  end if;
+
+  -- แต่รับรองเองไม่ได้
+  begin
+    update practicum_log set verified_at = now() where id = v_id;
+    if found then v_forged := true; end if;
+  exception when insufficient_privilege then null; end;
+
+  if v_forged then
+    raise exception 'TEST 209ก ล้มเหลว: นักศึกษารับรองชั่วโมงของตัวเองได้ '
+      '(กฎการจบข้อชั่วโมงฝึกอาชีพจะกลายเป็นตัวเลขที่เจ้าตัวกรอกเอง)';
+  end if;
+
+  raise notice 'TEST 209ก ผ่าน — บันทึกชั่วโมงของตัวเองได้ แต่รับรองเองไม่ได้';
+end $$;
+rollback;
+
 do $$ begin raise notice ''; raise notice '════ ทดสอบขอบเขตการเขียนระเบียนนักศึกษาครบทุกข้อ ════'; end $$;

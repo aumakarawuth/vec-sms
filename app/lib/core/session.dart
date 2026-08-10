@@ -19,6 +19,18 @@ class Session extends ChangeNotifier {
   String? programName;
   bool mustChangePassword = false;
 
+  /// บทบาทที่เซิร์ฟเวอร์คืนมาตอนเข้าสู่ระบบ
+  ///
+  /// แอปตัวเดียวใช้ได้ทั้งนักศึกษาและผู้ปกครอง แต่แท็บไม่เหมือนกัน —
+  /// ผู้ปกครองเช็คอินแทนลูกไม่ได้และไม่ต้องบันทึกชั่วโมงฝึกอาชีพ
+  ///
+  /// เก็บไว้เพื่อเลือกหน้าจอเท่านั้น **ไม่ใช่มาตรการความปลอดภัย** —
+  /// สิทธิ์จริงมาจาก token และ RLS ฝั่งเซิร์ฟเวอร์ ผู้ปกครองที่แก้ค่านี้
+  /// ในเครื่องตัวเองจะเห็นแท็บเพิ่ม แต่ทุกคำขอยังถูกปฏิเสธเหมือนเดิม
+  String? role;
+
+  bool get isGuardianMode => role == 'guardian';
+
   bool get isSignedIn => api.token != null && studentId != null;
 
   static const _kStudent = 'session.studentId';
@@ -27,6 +39,7 @@ class Session extends ChangeNotifier {
   static const _kCode = 'session.code';
   static const _kProgram = 'session.program';
   static const _kMustChange = 'session.mustChange';
+  static const _kRole = 'session.role';
 
   Future<void> restore() async {
     await api.loadToken();
@@ -36,6 +49,7 @@ class Session extends ChangeNotifier {
     studentCode = await _store.read(_kCode);
     programName = await _store.read(_kProgram);
     mustChangePassword = (await _store.read(_kMustChange)) == '1';
+    role = await _store.read(_kRole);
     notifyListeners();
   }
 
@@ -68,6 +82,8 @@ class Session extends ChangeNotifier {
     );
     mustChangePassword = res['mustChangePassword'] == true;
     await _store.write(_kMustChange, mustChangePassword ? '1' : '0');
+    role = res['role']?.toString();
+    if (role != null) await _store.write(_kRole, role!);
 
     final students = await api.get('/students') as List<dynamic>;
     final me = students.cast<Map<String, dynamic>>().firstWhere(
@@ -141,7 +157,7 @@ class Session extends ChangeNotifier {
 
   Future<void> signOut() async {
     await api.signOut();
-    for (final k in [_kStudent, _kTerm, _kName, _kCode, _kProgram, _kMustChange]) {
+    for (final k in [_kStudent, _kTerm, _kName, _kCode, _kProgram, _kMustChange, _kRole]) {
       await _store.remove(k);
     }
     studentId = null;
@@ -150,6 +166,7 @@ class Session extends ChangeNotifier {
     studentCode = null;
     programName = null;
     mustChangePassword = false;
+    role = null;
     notifyListeners();
   }
 }

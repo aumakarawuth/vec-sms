@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import '../core/session.dart';
 import '../core/theme.dart';
 import '../widgets.dart';
+import '../core/secure_store.dart';
 import 'attendance.dart';
+import 'checkin.dart';
 import 'finance.dart';
 import 'graduation.dart';
+import 'guardian.dart';
 import 'home.dart';
+import 'practicum.dart';
 
 /// โครงหลักของแอป — แท็บล่างเป็นตัวอักษรล้วน ไม่มีไอคอน
 ///
@@ -13,8 +17,13 @@ import 'home.dart';
 /// ไอคอนที่ประดิษฐ์ขึ้นเองมักถูกตีความผิด ส่วนคำไทยสั้น ๆ อ่านได้ทันที
 /// และไม่มีเมนูซ่อน เพราะสิ่งที่ซ่อนคือสิ่งที่หาไม่เจอ
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.session});
+  const AppShell({
+    super.key,
+    required this.session,
+    required this.deviceIdentity,
+  });
   final Session session;
+  final DeviceIdentity deviceIdentity;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -23,20 +32,41 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  static const _labels = ['หน้าแรก', 'เวลาเรียน', 'การจบ', 'การเงิน', 'ฉัน'];
+  /*
+   * ─── ทำไมแท็บของนักศึกษากับผู้ปกครองไม่เหมือนกัน ───
+   * ผู้ปกครองเช็คอินแทนลูกไม่ได้ (ไม่มีเหตุผลใดที่ควรทำได้) และไม่ต้อง
+   * บันทึกชั่วโมงฝึกอาชีพ สองแท็บนั้นจึงไม่มีในโหมดผู้ปกครอง
+   *
+   * ส่วนแท็บ "ลูกของฉัน" รวมเรื่องที่ผู้ปกครองเปิดมาดูจริง ๆ ไว้หน้าเดียว
+   * และทนกับกรณีที่ได้รับสิทธิ์ไม่ครบทุกเรื่อง
+   */
+  bool get _isGuardian => widget.session.isGuardianMode;
+
+  List<String> get _labels => _isGuardian
+      ? ['หน้าแรก', 'ลูกของฉัน', 'เวลาเรียน', 'การเงิน', 'ฉัน']
+      : ['หน้าแรก', 'เช็คอิน', 'เวลาเรียน', 'ฝึกอาชีพ', 'การจบ', 'ฉัน'];
 
   void _openTab(int i) => setState(() => _index = i);
 
   @override
   Widget build(BuildContext context) {
     final s = widget.session;
-    final pages = [
-      HomeScreen(session: s, onOpenTab: _openTab),
-      AttendanceScreen(session: s),
-      GraduationScreen(session: s),
-      FinanceScreen(session: s),
-      _ProfileScreen(session: s),
-    ];
+    final pages = _isGuardian
+        ? [
+            HomeScreen(session: s, onOpenTab: _openTab),
+            GuardianScreen(session: s),
+            AttendanceScreen(session: s),
+            FinanceScreen(session: s),
+            _ProfileScreen(session: s),
+          ]
+        : [
+            HomeScreen(session: s, onOpenTab: _openTab),
+            CheckinScreen(session: s, deviceIdentity: widget.deviceIdentity),
+            AttendanceScreen(session: s),
+            PracticumScreen(session: s),
+            GraduationScreen(session: s),
+            _ProfileScreen(session: s),
+          ];
 
     return Scaffold(
       body: SafeArea(

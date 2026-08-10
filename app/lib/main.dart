@@ -72,7 +72,7 @@ class VecSmsApp extends StatelessWidget {
           if (session.mustChangePassword) {
             return ChangePasswordScreen(session: session);
           }
-          return AppShell(session: session);
+          return AppShell(session: session, deviceIdentity: deviceIdentity);
         },
       ),
     );

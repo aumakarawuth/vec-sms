@@ -124,7 +124,12 @@ export class StudentsService {
               -- ย้ายไปโรงฝึกงาน ซึ่งเป็นห้องที่นักศึกษาต้องไปจริง
               coalesce(slot_room.name_th, default_room.name_th) as room,
               cs.section_no,
-              p.first_name_th || ' ' || p.last_name_th as teacher_name
+              p.first_name_th || ' ' || p.last_name_th as teacher_name,
+              -- สองช่องนี้ให้หน้าจอเช็คอิน (A-05) ใช้ — ต้องรู้ว่าคาบนี้เป็น
+              -- ของ enrollment ไหน และเคยส่งคำขอไปแล้วหรือยัง มิฉะนั้นแอป
+              -- ต้องยิงอีกหนึ่งคำขอต่อคาบเพื่อรู้เรื่องเดียวกัน
+              e.id as enrollment_id,
+              ac.status as checkin_status
          from enrollment e
          join class_section cs on cs.id = e.class_section_id
          join class_meeting cm on cm.class_section_id = cs.id and cm.meets_on = $2::date
@@ -141,6 +146,8 @@ export class StudentsService {
               and cm.period_from between ts.period_from and ts.period_to
             limit 1
          ) slot_room on true
+         left join attendance_checkin ac
+                on ac.class_meeting_id = cm.id and ac.enrollment_id = e.id
         where e.student_id = $1 and e.status = 'enrolled'
         order by cm.period_from`,
       [studentId, onDate],

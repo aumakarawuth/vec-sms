@@ -88,14 +88,36 @@ end $$;
 --
 -- เจอเพราะ TEST 86 ล้มทันทีที่ใส่ practicum_log ลงในรายการข้างบน
 -- ───────────────────────────────────────────────────────────────────
+-- ─── และนักศึกษาบันทึกชั่วโมงของตัวเองได้ ตราบใดที่ยังไม่รับรอง ───
+--
+-- แอปของนักศึกษา (A-06) บันทึกชั่วโมงฝึกอาชีพเองได้โดยการออกแบบ —
+-- คนที่อยู่ในสถานประกอบการคือคนที่รู้ว่าทำงานกี่ชั่วโมง ไม่ใช่ครูที่อยู่
+-- คนละที่ ถ้าปิดตรงนี้ POST /practicum/logs ของนักศึกษาจะพังทันที
+--
+-- สิ่งที่ต้องกันคือ **การรับรองตัวเอง** ไม่ใช่การบันทึก — เงื่อนไข
+-- `verified_at is null` เขียนใน with check ได้ตรง ๆ ชั่วโมงที่เจ้าตัว
+-- บันทึกจึงไม่มีผลกับกฎการจบจนกว่าครูนิเทศจะรับรอง (evaluate_graduation
+-- นับเฉพาะ verified_at ที่ไม่เป็น null อยู่แล้ว)
 create policy practicum_log_staff_insert on practicum_log
   as restrictive for insert
-  with check (is_institution_wide_role() or current_app_role() = 'teacher');
+  with check (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or (student_id in (select actor_student_ids()) and verified_at is null)
+  );
 
 create policy practicum_log_staff_update on practicum_log
   as restrictive for update
-  using (is_institution_wide_role() or current_app_role() = 'teacher')
-  with check (is_institution_wide_role() or current_app_role() = 'teacher');
+  using (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or student_id in (select actor_student_ids())
+  )
+  with check (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or (student_id in (select actor_student_ids()) and verified_at is null)
+  );
 
 create policy practicum_log_staff_delete on practicum_log
   as restrictive for delete

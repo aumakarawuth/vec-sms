@@ -7,8 +7,12 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsIn, IsISO8601, IsOptional, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsISO8601,
+  IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
@@ -35,6 +39,29 @@ class BulkMarkDto {
   @IsArray() @ArrayNotEmpty() @ArrayMaxSize(200)
   @ValidateNested({ each: true }) @Type(() => MarkDto)
   records: MarkDto[];
+}
+
+class CheckinDto {
+  @IsUuid() meetingId: string;
+  @IsUuid() enrollmentId: string;
+
+  /**
+   * ระยะห่างจากวิทยาลัยเป็นเมตร ไม่ใช่พิกัด
+   *
+   * พิกัดของผู้เยาว์เป็นข้อมูลอ่อนไหวตาม PDPA และเก็บไว้ก็ตอบคำถามเดียว
+   * ที่ระบบต้องการไม่ได้ดีไปกว่าระยะห่าง — "อยู่ในบริเวณวิทยาลัยไหม"
+   *
+   * ไม่บังคับ เพราะโรงฝึกงานเป็นอาคารคอนกรีตที่ GPS เข้าไม่ถึง ถ้าบังคับ
+   * คนที่อยู่ในห้องเรียนจริงจะเช็คอินไม่ได้ ส่วนคนที่อยากโกงก็ปลอมได้อยู่ดี
+   */
+  @IsOptional() @IsInt() @Min(0) @Max(100000) distanceM?: number;
+  @IsOptional() @IsString() @MaxLength(128) deviceId?: string;
+}
+
+class CheckinDecisionDto {
+  @IsBoolean() accept: boolean;
+  @IsOptional() @IsIn(STATUSES as unknown as string[]) status?: AttendanceStatus;
+  @IsOptional() @IsString() @MaxLength(200) note?: string;
 }
 
 @Injectable()
@@ -126,6 +153,58 @@ export class AttendanceService {
     });
   }
 
+  /**
+   * นักศึกษาส่งคำขอเช็คอิน
+   *
+   * ตรรกะทั้งหมดอยู่ใน submit_checkin() — ชั้นนี้ไม่ตรวจอะไรเอง เพราะกฎ
+   * ที่อยู่ในฐานข้อมูลบังคับกับสคริปต์และเส้นทางอื่นด้วย (หลักข้อ 1)
+   */
+  async submitCheckin(dto: {
+    meetingId: string;
+    enrollmentId: string;
+    distanceM?: number;
+    deviceId?: string;
+  }) {
+    const row = await this.db.queryOne(
+      `select id, status, submitted_at, distance_m
+         from submit_checkin($1, $2, $3, $4)`,
+      [dto.meetingId, dto.enrollmentId, dto.distanceM ?? null, dto.deviceId ?? null],
+    );
+    return {
+      ...row,
+      note: 'ส่งคำขอแล้ว — เวลาเรียนจะถูกบันทึกเมื่อครูผู้สอนยืนยัน',
+    };
+  }
+
+  /** คำขอของคาบหนึ่ง พร้อมชื่อคนขอให้ครูตัดสินได้โดยไม่ต้องเปิดหน้าอื่น */
+  async checkins(meetingId: string) {
+    return this.db.query(
+      `select ac.id, ac.status, ac.distance_m, ac.submitted_at, ac.decision_note,
+              s.student_code,
+              trim(coalesce(p.prefix_th,'') || coalesce(p.first_name_th,'')
+                   || ' ' || coalesce(p.last_name_th,'')) as full_name
+         from attendance_checkin ac
+         join enrollment e on e.id = ac.enrollment_id
+         join student s    on s.id = e.student_id
+         join person p     on p.id = s.person_id
+        where ac.class_meeting_id = $1
+        order by ac.status, ac.submitted_at`,
+      [meetingId],
+    );
+  }
+
+  async decideCheckin(
+    id: string,
+    dto: { accept: boolean; status?: string; note?: string },
+  ) {
+    const row = await this.db.queryOne(
+      `select id, status, decided_at
+         from decide_checkin($1, $2, coalesce($3, 'present')::attendance_status, $4)`,
+      [id, dto.accept, dto.status ?? null, dto.note ?? null],
+    );
+    return row;
+  }
+
   async forEnrollment(enrollmentId: string) {
     return this.db.queryOne(
       `select periods_held, periods_credited, pct_to_date, pct_final,
@@ -176,6 +255,32 @@ class AttendanceController {
   @Get('enrollments/:enrollmentId')
   enrollment(@Param('enrollmentId', ParseUuidPipe) id: string) {
     return this.svc.forEnrollment(id);
+  }
+
+  /**
+   * ─── การเช็คอินของนักศึกษา (A-05) ───
+   *
+   * นักศึกษาส่งได้แค่ **คำขอ** ซึ่งไม่มีผลกับกฎเวลาเรียน 80% เลยจนกว่า
+   * ครูจะยืนยัน — คนถูกเช็คต้องไม่ใช่คนเขียนผล (หลักเดียวกับ 0039)
+   *
+   * ขอบเขตรายคนกรองด้วย RLS ของ attendance_checkin ไม่ได้กรองที่นี่
+   */
+  @Roles('student')
+  @Post('checkin')
+  checkin(@Body() dto: CheckinDto) {
+    return this.svc.submitCheckin(dto);
+  }
+
+  /** คำขอที่รอครูตัดสินในคาบหนึ่ง */
+  @Get('meetings/:meetingId/checkins')
+  checkins(@Param('meetingId', ParseUuidPipe) meetingId: string) {
+    return this.svc.checkins(meetingId);
+  }
+
+  @Audit('attendance_checkin')
+  @Post('checkins/:id/decide')
+  decide(@Param('id', ParseUuidPipe) id: string, @Body() dto: CheckinDecisionDto) {
+    return this.svc.decideCheckin(id, dto);
   }
 }
 
