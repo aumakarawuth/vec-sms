@@ -50,6 +50,14 @@ services:
       #   openssl rand -base64 32
       - key: MFA_SECRET_KEY
         sync: false
+      # ─── ตั้งด้วยมือเช่นกัน ───
+      # เปิดสองอย่างที่อยู่นอกขอบเขตของทุกบทบาท — เปิดวิทยาลัยใหม่ (0037)
+      # และสร้างบัญชีผู้ให้บริการคนแรก (0040) ถ้าไม่ประกาศไว้ที่นี่
+      # ทั้งสองเส้นทางจะปิดสนิท (503) หลัง deploy โดยที่ health ยังเขียว
+      # แล้วขั้นตอนที่ 7 ของคู่มือทำไม่ได้เลยสักข้อ
+      #   openssl rand -base64 48
+      - key: PROVISION_KEY
+        sync: false
       - key: JWT_TTL
         value: 12h
       - key: DEV_AUTH
@@ -60,33 +68,53 @@ services:
         value: Asia/Bangkok
       - key: DB_POOL_MAX
         value: "10"
-      # ปิดตัวตั้งเวลาในโปรเซส แล้วให้ cron job ด้านล่างยิงเข้ามาแทน
-      # ถ้าเปิดไว้แล้ว scale เป็นหลาย instance งานจะถูกรันซ้ำพร้อมกัน
+      # Render วาง service ไว้หลัง proxy ของตัวเองเสมอ ไอพีที่ socket เห็น
+      # จึงเป็นของ proxy เหมือนกันทุกคำขอ ถ้าไม่เชื่อ X-Forwarded-For ผลคือ
+      # ทั้งวิทยาลัยแชร์ถังจำกัดคำขอใบเดียว (429 กันทั้งวิทยาลัยช่วงประกาศผล
+      # โดยไม่มีใครโจมตี) และ access_log.ip_hash เป็นค่าเดียวกันทุกแถว
+      # ซึ่งทำให้หลักฐานที่เก็บไว้ 90 วันตาม พ.ร.บ.คอมพิวเตอร์ ม.26 ชี้อะไรไม่ได้
+      #
+      # ตั้งเป็น true ได้เพราะอยู่หลัง proxy จริง — บน VPS ที่ไม่มี proxy
+      # ห้ามตั้ง เพราะใครก็ปลอมเฮดเดอร์เพื่อขอโควตาใหม่ทุกคำขอได้
+      - key: TRUST_PROXY
+        value: "true"
+      # ตัวตั้งเวลาในโปรเซส — ใช้ได้เฉพาะเมื่อรัน **instance เดียว** เท่านั้น
+      # ถ้า scale เกินหนึ่ง งานประจำคืนจะถูกรันซ้ำพร้อมกันทุก instance
+      # (ซ้ำจริงที่เจ็บที่สุดคือ usage-snapshot ซึ่งเป็นหลักฐานการเรียกเก็บเงิน)
+      #
+      # ทางเลือกอีกทางคือปิดตัวนี้แล้วให้ cron ยิง POST /jobs/run เข้ามา
+      # ซึ่ง **ยังทำไม่ได้จริงตอนนี้** — ดูหัวข้อ "งานตามกำหนดเวลา" ท้ายไฟล์
       - key: JOBS_ENABLED
-        value: "false"
+        value: "true"
       - key: LOGIN_LOG_KEEP_DAYS
         value: "90"
       # โดเมนของ Flutter build web — ใส่เป็นรายชื่อ ห้ามใช้ '*'
       - key: CORS_ORIGINS
         sync: false
 
-  # ─── งานตามกำหนดเวลา ─────────────────────────────────────────────
-  # ยิง POST /jobs/run เข้า API แทนที่จะรันในโปรเซสของ API เอง
-  # ต้องใช้ token ของบทบาท admin — ดูวิธีออก token ใน DEPLOY-ONLINE.md
-  - type: cron
-    name: vecsms-nightly-jobs
-    runtime: docker
-    dockerfilePath: ./api/Dockerfile
-    dockerContext: .
-    region: singapore
-    schedule: "30 18 * * *"    # 18:30 UTC = 01:30 เวลาไทย
-    dockerCommand: >
-      node -e "fetch(process.env.API_URL+'/api/v1/jobs/run',{method:'POST',headers:{Authorization:'Bearer '+process.env.JOBS_TOKEN}}).then(async r=>{const t=await r.text();console.log(r.status,t);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
-    envVars:
-      - key: API_URL
-        fromService:
-          type: web
-          name: vecsms-api
-          property: hostport
-      - key: JOBS_TOKEN
-        sync: false
+# ═══════════════════════════════════════════════════════════════════
+# งานตามกำหนดเวลา — ทำไมไม่มี cron service ในไฟล์นี้
+#
+# เคยมี cron ที่ยิง POST /jobs/run พร้อม `JOBS_TOKEN` ตามที่คู่มือบอก
+# แต่ token แบบนั้นออกไม่ได้จริงเลยสักวิธี ด้วยเหตุผลสองชั้นที่ไม่เกี่ยวกัน
+#
+#   1. JobsController บังคับ @Roles('admin','director') และ auth_policy
+#      ตั้ง require_mfa_roles = {admin,director} เป็นค่าเริ่มต้น (0036)
+#      POST /auth/login ของบัญชีนั้นจึงคืน challengeToken ไม่ใช่ token จริง
+#      cron ยิงต่อไม่ได้ถ้าไม่มีคนกดรหัสจากแอป authenticator ให้
+#   2. ต่อให้ผ่าน MFA มาได้ access_token_minutes ค่าเริ่มต้นคือ 30 นาที
+#      (0014) ค่าที่แปะไว้ใน env ของ cron จึงตายก่อนถึงตี 1:30 ของคืนแรก
+#
+# ผลที่เคยเป็นคือ cron ล้มทุกคืนเงียบ ๆ โดยงานประจำวันไม่เคยรันเลยสักครั้ง
+# ซึ่งแปลว่าไม่มีใครถูกระงับสิทธิ์เพราะค้างชำระ คะแนนความเสี่ยงค้างทั้งภาค
+# และ usage_snapshot ว่างเปล่าจนออกใบเรียกเก็บไม่ได้ — ทั้งหมดโดยไม่มีอะไรฟ้อง
+# (เรื่องเดียวกับข้อ 8 ในรายการที่เคยพังแบบเงียบ ๆ)
+#
+# ตอนนี้จึงใช้ตัวตั้งเวลาในโปรเซสแทน (JOBS_ENABLED=true ข้างบน) ซึ่งไม่ต้อง
+# มี token เลย แลกกับข้อจำกัดว่า **ห้าม scale เกินหนึ่ง instance**
+#
+# ถ้าวันหนึ่งต้องรันหลาย instance จริง ต้องเพิ่มกลไก token ระดับบริการใน
+# โค้ดก่อน แล้วค่อยเอา cron กลับมา — และตอนนั้นอย่าลืมว่า
+# `fromService property: hostport` คืน host:port เปล่า ๆ ไม่มี scheme
+# ซึ่ง fetch() รับไม่ได้ ต้องเติม http:// ให้เอง (ของเดิมก็ผิดข้อนี้ด้วย)
+# ═══════════════════════════════════════════════════════════════════

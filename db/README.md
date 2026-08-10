@@ -31,7 +31,9 @@ psql -v ON_ERROR_STOP=1 -d vecsms -f db/tests/0001_smoke.sql
 bash db/run.sh
 ```
 
-ต้องใช้ **PostgreSQL 15 ขึ้นไป** (ใช้ `pgcrypto`, `btree_gist` และ `security_invoker` บน view)
+ต้องใช้ **PostgreSQL 18** (ใช้ `pgcrypto`, `btree_gist` และ `security_invoker` บน view)
+สคีมารันผ่านตั้งแต่ 15 แต่รุ่นเก่ากว่า 18 วางแผนคำสั่งที่กาง RLS ได้แย่กว่ามาก
+จนเส้นทางที่หนักที่สุดชน `statement_timeout` — `deploy.sh` จึงปฏิเสธรุ่นต่ำกว่า 18
 
 ---
 

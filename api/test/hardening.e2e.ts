@@ -362,9 +362,40 @@ async function main() {
     const yaml = await readFile(resolve(__dirname, '..', '..', '..', 'render.yaml'), 'utf8');
 
     // อ่านชื่อตัวแปรจาก render.yaml ตรง ๆ ไม่ใช่คัดลอกมาไว้ในเทสต์
-    // มิฉะนั้นเทสต์จะยังเขียวต่อไปหลังจากมีคนลบตัวแปรออกจาก render.yaml
     const declared = [...yaml.matchAll(/^\s*-\s*key:\s*([A-Z_]+)\s*$/gm)].map((m) => m[1]);
     expect(declared.includes('DATABASE_URL'), 'อ่าน render.yaml ไม่ออก');
+
+    /*
+     * ─── ทำไมอ่านจากไฟล์อย่างเดียวไม่พอ ───
+     * การไล่ตามรายชื่อที่ไฟล์ประกาศ จับได้แค่ตัวที่**เพิ่มเข้ามา**โดยคู่มือ
+     * ไม่ได้บอกวิธีตั้ง แต่จับ "ตัวที่หายไปทั้งตัว" ไม่ได้เลย เพราะสิ่งที่
+     * ไม่ได้ประกาศไว้ก็ไม่มีอยู่ในสายตาของเทสต์ตั้งแต่แรก
+     *
+     * นั่นคือรูปของ PROVISION_KEY ที่หายไปจาก render.yaml ทั้งไฟล์ — deploy
+     * ผ่านสนิท health เขียว แล้ว POST /platform/bootstrap ตอบ 503 ทุกครั้ง
+     * ซึ่งเป็นขั้นตอนที่ทำได้ครั้งเดียวตลอดอายุระบบ
+     *
+     * รายชื่อข้างล่างคือตัวแปรที่ **เส้นทางในคู่มือจะใช้ไม่ได้ถ้าขาด** จึงต้อง
+     * ยาวขึ้นได้เท่านั้น การลบชื่อออกจากรายชื่อนี้เพื่อให้เทสต์ผ่าน คือการ
+     * ลบสัญญาณเตือน ไม่ใช่การแก้ปัญหา
+     */
+    const REQUIRED = [
+      'DATABASE_URL',      // ไม่มี = ไม่บูต
+      'JWT_SECRET',        // ไม่มี = ไม่บูต
+      'IP_HASH_SECRET',    // ไม่มี = ไม่บูต
+      'MFA_SECRET_KEY',    // ไม่มี = ไม่บูต (รอบที่แล้วพังที่ตัวนี้)
+      'PROVISION_KEY',     // ไม่มี = เปิดวิทยาลัยและตั้งบัญชีผู้ให้บริการไม่ได้ (503)
+      'CORS_ORIGINS',      // ไม่มี = แอปเว็บเรียก API ไม่ได้ หน้าจอว่างแบบไม่มีข้อความ
+      'TRUST_PROXY',       // ไม่มี = ทั้งวิทยาลัยแชร์ถังจำกัดคำขอใบเดียว และ ip_hash ไร้ค่า
+      'JOBS_ENABLED',      // ไม่มี = ค่าเริ่มต้นเปิด ซึ่งถูกเฉพาะตอน instance เดียว
+      'DEV_AUTH',          // ไม่มี = ไม่ได้ประกาศเจตนาว่าปิด
+      'TZ',                // ไม่มี = งานประจำวันรันผิดเวลา 7 ชั่วโมง
+    ];
+    const absent = REQUIRED.filter((k) => !declared.includes(k));
+    expect(
+      absent.length === 0,
+      `render.yaml ไม่ได้ประกาศตัวแปรที่เส้นทางในคู่มือต้องใช้: ${absent.join(', ')}`,
+    );
 
     // ค่าที่ผู้ให้บริการสุ่มให้หรือคนตั้งเองตามคู่มือ — ใช้ค่าที่ถูกต้องตามรูปแบบ
     const supplied: Record<string, string> = {
@@ -372,9 +403,8 @@ async function main() {
       JWT_SECRET: 'j'.repeat(48),
       IP_HASH_SECRET: 'i'.repeat(48),
       MFA_SECRET_KEY: Buffer.alloc(32, 7).toString('base64'),
+      PROVISION_KEY: 'p'.repeat(48),
       CORS_ORIGINS: 'https://vecsms.pages.dev',
-      JOBS_TOKEN: 't'.repeat(48),
-      API_URL: 'https://vecsms-api.onrender.com',
     };
 
     const env: NodeJS.ProcessEnv = { NODE_ENV: 'production' };
@@ -405,7 +435,10 @@ async function main() {
       'guard ไม่ปฏิเสธ env ที่ว่างเปล่า — เทสต์นี้จึงไม่ได้พิสูจน์อะไร',
     );
 
-    return `ตัวแปร ${declared.length} ตัวจาก render.yaml บูตผ่าน · env ว่างยังถูกปฏิเสธ ${emptyErrors.length} ข้อ`;
+    return (
+      `ตัวแปร ${declared.length} ตัวจาก render.yaml บูตผ่าน · ` +
+      `ที่จำเป็นครบ ${REQUIRED.length} ตัว · env ว่างยังถูกปฏิเสธ ${emptyErrors.length} ข้อ`
+    );
   });
 
   await app.close();
