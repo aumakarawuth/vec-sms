@@ -19,7 +19,10 @@ databases:
     databaseName: vecsms
     user: vecsms_owner
     plan: basic-256mb          # ปรับตามขนาดจริง — ดู DEPLOY-ONLINE.md
-    postgresMajorVersion: "16"
+    # ต้องเป็น 18 ไม่ใช่ 16 — วัดแล้วบน 16 ตัวจัดตารางอัตโนมัติใช้เวลา
+    # 14.6 วินาทีจนชน statement_timeout ส่วนบน 18 ใช้ 90 มิลลิวินาที
+    # ด้วยข้อมูลชุดเดียวกัน (ดูข้อ 12 ในรายการที่เคยพังแบบเงียบ ๆ)
+    postgresMajorVersion: "18"
 
 services:
   - type: web
@@ -40,6 +43,13 @@ services:
         generateValue: true
       - key: IP_HASH_SECRET
         generateValue: true
+      # ─── ตั้งด้วยมือ ห้ามใช้ generateValue ───
+      # production-guard บังคับว่าต้องถอด base64 ได้ **32 ไบต์พอดี**
+      # ค่าที่ Render สุ่มให้เป็นสตริงสุ่มธรรมดา ถอดแล้วไม่ได้ 32 ไบต์
+      # แอปจึงไม่บูตเหมือนกับตอนไม่ได้ตั้งเลย
+      #   openssl rand -base64 32
+      - key: MFA_SECRET_KEY
+        sync: false
       - key: JWT_TTL
         value: 12h
       - key: DEV_AUTH

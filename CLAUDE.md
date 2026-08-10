@@ -6,7 +6,7 @@
 | ส่วน | เทคโนโลยี | สถานะ |
 |---|---|---|
 | [`db/`](db/) | PostgreSQL 18.4 · 51 migrations | เทสต์ 254 ข้อ ผ่าน |
-| [`api/`](api/) | NestJS · Node 26 · 20 โมดูล · 194 routes | เทสต์ 152 ข้อ ผ่าน |
+| [`api/`](api/) | NestJS · Node 26 · 20 โมดูล · 194 routes | เทสต์ 153 ข้อ ผ่าน |
 | [`app/`](app/) | Flutter 3.44.9 / Dart 3.12.2 · 2 entrypoint | เทสต์ 47 ข้อ ผ่าน · build web ได้ทั้งคู่ |
 
 ---
@@ -114,7 +114,7 @@ PGHOST=localhost PGPORT=5433 PGUSER=postgres PGCLIENTENCODING=UTF8 bash api/test
 ```
 
 ```bash
-# API — รันเทสต์ทั้งห้าชุด (152 ข้อ)
+# API — รันเทสต์ทั้งห้าชุด (153 ข้อ)
 cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_api_test" \
   ADMIN_DATABASE_URL="postgres://postgres@localhost:5433/vecsms_api_test" \
   JWT_SECRET=test-secret DEV_AUTH=true IP_HASH_SECRET=test-ip-salt JOBS_ENABLED=false PROVISION_KEY=test-provision-key && \
@@ -495,7 +495,12 @@ migration 0027–0029 ปิดชั้นเอกสารครบห้า�
 
 ดู [`DEPLOY-ONLINE.md`](DEPLOY-ONLINE.md) — มี [`render.yaml`](render.yaml),
 [`api/Dockerfile`](api/Dockerfile) และ CI พร้อมแล้ว
-**ยังไม่เคย deploy จริง** เพราะต้องมีบัญชีผู้ให้บริการ
+**เคยลอง deploy แล้วไม่ผ่านทั้ง Render และ Railway** — สาเหตุคือ
+`MFA_SECRET_KEY` ไม่มีอยู่ในไฟล์ตั้งค่าไหนเลย ทั้งที่ production-guard
+บังคับให้ต้องมี และ Dockerfile ตั้ง `NODE_ENV=production` ไว้ตายตัว
+แอปจึงไม่บูตเหมือนกันทุกผู้ให้บริการ โดยที่เทสต์ทั้งหมดยังเขียวสนิท
+เพราะทุกชุดรันด้วย NODE_ENV ที่ไม่ใช่ production (HARD-09 ปิดช่องนี้แล้ว
+ด้วยการอ่านชื่อตัวแปรจาก render.yaml จริงแล้วส่งเข้า guard)
 
 ข้อควรระวัง: ข้อมูลชุดนี้มีเลขบัตรประชาชน ข้อมูลผู้เยาว์ ผลคัดกรอง SDQ
 และบันทึกเยี่ยมบ้าน การส่งออกนอกประเทศเข้าเงื่อนไข PDPA มาตรา 28

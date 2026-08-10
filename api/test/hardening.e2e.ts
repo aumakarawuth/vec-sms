@@ -11,6 +11,8 @@
  * สิ่งที่พังแล้วไม่มีอะไรฟ้อง ต้องมีเทสต์คุมเสมอ
  */
 import 'reflect-metadata';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { createApp } from '../src/main';
 import { checkProductionConfig } from '../src/common/config/production-guard';
 import { MAX_PAGE_SIZE, parsePage } from '../src/common/pagination/pagination';
@@ -339,6 +341,71 @@ async function main() {
     const json = (await res.json()) as { total_rows?: number };
     expect(json.total_rows === 900, `ควรรับครบ 900 แถว ได้ ${json.total_rows}`);
     return `${sizeKb} KB · ${json.total_rows} แถว ผ่านเพดานทั่วไป`;
+  });
+
+  await check('HARD-09 ค่าที่ render.yaml เตรียมให้ต้องบูตได้จริง', async () => {
+    /*
+     * ─── ทำไมต้องมีข้อนี้ ───
+     * production-guard ทำงานถูกต้องทุกข้อ และมีเทสต์ยืนยันว่ามัน**ปฏิเสธ**
+     * ค่าที่ไม่ปลอดภัย แต่ไม่เคยมีเทสต์ไหนถามว่า "ค่าที่คู่มือ deploy
+     * บอกให้ตั้ง มันผ่านหรือเปล่า"
+     *
+     * ผลคือ `MFA_SECRET_KEY` หายไปจากทั้ง render.yaml, .env.example และ
+     * ตัวอย่าง docker run — แอปจึงบูตไม่ขึ้นบนทุกผู้ให้บริการเหมือนกันหมด
+     * โดยที่เทสต์ทั้ง 152 ข้อยังเขียวสนิท เพราะทุกชุดรันด้วย NODE_ENV
+     * ที่ไม่ใช่ production
+     *
+     * บทเรียนเดียวกับ AUTH-26 — เทสต์ที่เดินทางที่ระบบจริงไม่มี
+     * ไม่ได้พิสูจน์อะไรเลย
+     */
+    // คอมไพล์แล้วไฟล์นี้อยู่ที่ api/dist-test/test/ จึงย้อนขึ้นสามชั้นถึงรากรีโป
+    const yaml = await readFile(resolve(__dirname, '..', '..', '..', 'render.yaml'), 'utf8');
+
+    // อ่านชื่อตัวแปรจาก render.yaml ตรง ๆ ไม่ใช่คัดลอกมาไว้ในเทสต์
+    // มิฉะนั้นเทสต์จะยังเขียวต่อไปหลังจากมีคนลบตัวแปรออกจาก render.yaml
+    const declared = [...yaml.matchAll(/^\s*-\s*key:\s*([A-Z_]+)\s*$/gm)].map((m) => m[1]);
+    expect(declared.includes('DATABASE_URL'), 'อ่าน render.yaml ไม่ออก');
+
+    // ค่าที่ผู้ให้บริการสุ่มให้หรือคนตั้งเองตามคู่มือ — ใช้ค่าที่ถูกต้องตามรูปแบบ
+    const supplied: Record<string, string> = {
+      DATABASE_URL: 'postgres://vecsms_app:pw@db.example.com:5432/vecsms?sslmode=require',
+      JWT_SECRET: 'j'.repeat(48),
+      IP_HASH_SECRET: 'i'.repeat(48),
+      MFA_SECRET_KEY: Buffer.alloc(32, 7).toString('base64'),
+      CORS_ORIGINS: 'https://vecsms.pages.dev',
+      JOBS_TOKEN: 't'.repeat(48),
+      API_URL: 'https://vecsms-api.onrender.com',
+    };
+
+    const env: NodeJS.ProcessEnv = { NODE_ENV: 'production' };
+    for (const key of declared) {
+      // ค่าที่ render.yaml กำหนดไว้ตายตัวอ่านจากไฟล์ ส่วนที่เหลือใช้ตารางข้างบน
+      const fixed = yaml.match(
+        new RegExp(`-\\s*key:\\s*${key}\\s*\\n\\s*value:\\s*"?([^"\\n]+)"?`),
+      );
+      env[key] = fixed ? fixed[1].trim() : supplied[key];
+    }
+
+    const missing = declared.filter((k) => env[k] === undefined);
+    expect(
+      missing.length === 0,
+      `render.yaml ประกาศตัวแปรที่คู่มือไม่ได้บอกวิธีตั้ง: ${missing.join(', ')}`,
+    );
+
+    const { errors } = checkProductionConfig(env);
+    expect(
+      errors.length === 0,
+      `ค่าที่ deploy จริงจะได้ทำให้แอปไม่บูต ${errors.length} ข้อ — ${errors.join(' · ')}`,
+    );
+
+    // และต้องครบจริง ไม่ใช่ผ่านเพราะ guard ไม่ได้ตรวจอะไรเลย
+    const { errors: emptyErrors } = checkProductionConfig({ NODE_ENV: 'production' });
+    expect(
+      emptyErrors.length > 0,
+      'guard ไม่ปฏิเสธ env ที่ว่างเปล่า — เทสต์นี้จึงไม่ได้พิสูจน์อะไร',
+    );
+
+    return `ตัวแปร ${declared.length} ตัวจาก render.yaml บูตผ่าน · env ว่างยังถูกปฏิเสธ ${emptyErrors.length} ข้อ`;
   });
 
   await app.close();

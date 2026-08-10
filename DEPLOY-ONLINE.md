@@ -92,10 +92,27 @@ select rolsuper, rolbypassrls from pg_roles where rolname = 'vecsms_app';
 | ตัวแปร | ค่า |
 |---|---|
 | `DATABASE_URL` | connection string ของ `vecsms_app` จากขั้นตอนที่ 3 |
+| `MFA_SECRET_KEY` | `openssl rand -base64 32` — **ต้องเป็น 32 ไบต์พอดี** |
 | `CORS_ORIGINS` | โดเมนของแอปเว็บ เช่น `https://vecsms.pages.dev` |
 | `JOBS_TOKEN` | token ของบทบาท admin — ดูขั้นตอนที่ 6 |
 
 `JWT_SECRET` และ `IP_HASH_SECRET` Render สุ่มให้เอง ไม่ต้องตั้ง
+
+**`MFA_SECRET_KEY` ตั้งด้วยมือเท่านั้น ห้ามให้ Render สุ่มให้** — ตัวตรวจ
+บังคับว่าถอด base64 แล้วต้องได้ 32 ไบต์พอดี ค่าที่ Render สุ่มเป็นสตริงสุ่ม
+ธรรมดา ถอดแล้วไม่ได้ 32 ไบต์ แอปจึงไม่บูตเหมือนกับตอนไม่ได้ตั้งเลย
+
+### Railway
+
+Railway อ่าน [`railway.json`](railway.json) แล้ว build ด้วย `api/Dockerfile` ให้เอง
+แต่มี**สองอย่างที่ต้องทำเองเสมอ** และเป็นสาเหตุที่ deploy ไม่ผ่านบ่อยที่สุด
+
+1. **ห้ามใช้ `DATABASE_URL` ที่ Railway ให้มาตรง ๆ** — ผู้ใช้นั้นเป็น superuser
+   แอปจะปฏิเสธการเริ่มทำงานทันที (ตั้งใจให้เป็นแบบนั้น) ต้องทำขั้นตอนที่ 3
+   สร้าง `vecsms_app` ก่อน แล้วตั้ง `DATABASE_URL` เป็นของผู้ใช้นั้นแทน
+2. ตั้งตัวแปรให้ครบเหมือนตารางของ Render — โดยเฉพาะ `MFA_SECRET_KEY`
+
+Railway ไม่รัน migrations ให้ ต้องทำขั้นตอนที่ 2 ด้วยตัวเองก่อนเช่นกัน
 
 ### ผู้ให้บริการอื่นหรือ VPS
 
@@ -106,12 +123,16 @@ docker build -t vecsms-api -f api/Dockerfile .
 docker run -d -p 3000:3000 \
   -e DATABASE_URL="postgres://vecsms_app:...@host:5432/vecsms" \
   -e JWT_SECRET="$(openssl rand -base64 48)" \
-  -e IP_HASH_SECRET="$(openssl rand -base64 32)" \
+  -e IP_HASH_SECRET="$(openssl rand -base64 48)" \
+  -e MFA_SECRET_KEY="$(openssl rand -base64 32)" \
   -e DEV_AUTH=false \
   -e TZ=Asia/Bangkok \
   -e CORS_ORIGINS="https://โดเมนของแอปเว็บ" \
   vecsms-api
 ```
+
+`MFA_SECRET_KEY` ต้องเป็น `-base64 32` (32 ไบต์) ส่วนอีกสองตัวใช้ 48 ได้
+เพราะตรวจแค่ความยาวขั้นต่ำ ไม่ได้ตรวจขนาดคีย์
 
 **`DEV_AUTH` ต้องเป็น `false` เสมอในระบบจริง** — ถ้าเปิดไว้ `POST /auth/dev-token`
 จะออก token ให้ใครก็ได้ที่รู้ URL โดยไม่ต้องยืนยันตัวตน
@@ -275,7 +296,9 @@ cd app && flutter build web --release -t lib/main_platform.dart \
 
 | อาการ | สาเหตุ |
 |---|---|
-| แอปไม่ขึ้น ฟ้องว่าผู้ใช้เป็น superuser | ใช้ connection string ของผู้ใช้เจ้าของฐานข้อมูล ให้เปลี่ยนเป็น `vecsms_app` |
+| แอปไม่ขึ้น ฟ้องว่า `ไม่ได้ตั้ง MFA_SECRET_KEY` | ตัวแปรนี้บังคับใน `NODE_ENV=production` และ Dockerfile ตั้ง `NODE_ENV=production` ไว้ตายตัว — สุ่มด้วย `openssl rand -base64 32` |
+| แอปไม่ขึ้น ฟ้องว่า `MFA_SECRET_KEY ต้องเป็นคีย์ 32 ไบต์` | ตั้งเป็นสตริงสุ่มธรรมดาหรือให้แพลตฟอร์มสุ่มให้ — ต้องเป็น base64 ที่ถอดได้ 32 ไบต์พอดีเท่านั้น |
+| แอปไม่ขึ้น ฟ้องว่าผู้ใช้เป็น superuser | ใช้ connection string ของผู้ใช้เจ้าของฐานข้อมูล ให้เปลี่ยนเป็น `vecsms_app` (Railway ให้ค่านี้มาเป็นค่าเริ่มต้น) |
 | ทุก query คืน 0 แถวทั้งที่มีข้อมูล | ยังไม่ได้ตั้ง `app.institution_id` — เป็นพฤติกรรมที่ตั้งใจ |
 | แอปเว็บเรียก API ไม่ได้ หน้าจอว่าง | ยังไม่ได้ตั้ง `CORS_ORIGINS` ให้ตรงกับโดเมนของแอปเว็บ |
 | งานประจำคืนไม่ทำงาน | `JOBS_ENABLED=false` แต่ยังไม่ได้ตั้ง cron ของแพลตฟอร์ม |
