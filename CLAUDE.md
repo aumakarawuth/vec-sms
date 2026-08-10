@@ -114,7 +114,7 @@ PGHOST=localhost PGPORT=5433 PGUSER=postgres PGCLIENTENCODING=UTF8 bash api/test
 ```
 
 ```bash
-# API — รันเทสต์ทั้งห้าชุด (148 ข้อ)
+# API — รันเทสต์ทั้งห้าชุด (152 ข้อ)
 cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_api_test" \
   ADMIN_DATABASE_URL="postgres://postgres@localhost:5433/vecsms_api_test" \
   JWT_SECRET=test-secret DEV_AUTH=true IP_HASH_SECRET=test-ip-salt JOBS_ENABLED=false PROVISION_KEY=test-provision-key && \
