@@ -438,6 +438,74 @@ async function main() {
     return 'เข้าได้ → ถูกระงับพร้อมเหตุผล → คืนสิทธิ์แล้วเข้าได้ทันที';
   });
 
+  console.log('\n══ แพ็กเกจและสัญญา ══');
+
+  await check('PLAT-16 ผูกแพ็กเกจให้วิทยาลัยผ่านหน้าจอผู้ให้บริการ', async () => {
+    /*
+     * ย้ายมาจาก API-82 ที่เคยยิง /provisioning/subscriptions ด้วยกุญแจ
+     * เส้นทางใหม่รู้ว่าใครเป็นคนผูกและบันทึกไว้ใน platform_action_log
+     */
+    const auth = { authorization: `Bearer ${ownerToken}` };
+
+    const plan = await json(await post('/platform/plans', {
+      code: 'PLAT-TEST', nameTh: 'แพ็กเกจสำหรับทดสอบ',
+      maxStudents: 500, pricePerYear: 50000, enforcement: 'soft',
+    }, auth));
+    expect(plan.status === 200 || plan.status === 201,
+      `สร้างแพ็กเกจควรสำเร็จ ได้ ${plan.status} ${plan.body.message}`);
+
+    const sub = await json(await post('/platform/subscriptions', {
+      institutionId: INST, planCode: 'PLAT-TEST',
+      startsOn: '2026-01-01', status: 'active',
+    }, auth));
+    expect(sub.status === 200 || sub.status === 201,
+      `ผูกแพ็กเกจควรสำเร็จ ได้ ${sub.status} ${sub.body.message}`);
+
+    // ผูกแพ็กเกจใหม่ต้องปิดฉบับเดิมให้เอง ไม่ใช่ชน exclusion constraint
+    const again = await json(await post('/platform/subscriptions', {
+      institutionId: INST, planCode: 'PLAT-TEST',
+      startsOn: '2026-06-01', status: 'active',
+    }, auth));
+    expect(again.status === 200 || again.status === 201,
+      `เปลี่ยนแพ็กเกจควรทำได้โดยไม่ต้องไปปิดฉบับเดิมเอง ได้ ${again.status} ${again.body.message}`);
+
+    return 'สร้างแพ็กเกจและผูกสัญญาสองรอบได้';
+  });
+
+  await check('PLAT-17 ตัวเลขปริมาณใช้งานมาจากภาพนิ่ง ไม่ใช่การยืมบริบทลูกค้า', async () => {
+    /*
+     * ก่อนเก็บภาพนิ่ง ตัวเลขต้องเป็นค่าว่าง ไม่ใช่ศูนย์ที่ดูเหมือนจริง —
+     * หน้าจอต้องแยกออกระหว่าง "ยังไม่ได้เก็บ" กับ "เก็บแล้วได้ศูนย์"
+     */
+    const auth = { authorization: `Bearer ${ownerToken}` };
+
+    const refreshed = await json(await post('/platform/usage/refresh', {}, auth));
+    expect(refreshed.status === 200 || refreshed.status === 201,
+      `สั่งเก็บภาพนิ่งควรสำเร็จ ได้ ${refreshed.status}`);
+
+    const list = await json(await get('/platform/institutions', auth));
+    const row = (list.body.rows as Record<string, unknown>[])
+      .find((r) => r.id === INST);
+    expect(row, 'ต้องเห็นวิทยาลัยที่ทดสอบในรายการ');
+
+    /*
+     * ฐานข้อมูลของชุดนี้ไม่มีนักศึกษา (prepare-db.sh ใส่แค่ข้อมูลอ้างอิง
+     * ส่วนนักศึกษาถูกสร้างโดยชุด e2e เอง) จำนวนที่ถูกต้องจึงเป็นศูนย์
+     *
+     * สิ่งที่ต้องพิสูจน์คือ **ภาพนิ่งถูกเก็บจริง** ไม่ใช่จำนวนมากกว่าศูนย์ —
+     * usage_taken_on ที่ไม่เป็น null คือความต่างระหว่าง "เก็บแล้วได้ศูนย์"
+     * กับ "ยังไม่เคยเก็บ" ซึ่งหน้าจอต้องแยกออกจากกัน
+     */
+    expect(row!.usage_taken_on,
+      'ต้องมีวันที่เก็บภาพนิ่ง มิฉะนั้นแปลว่างานเก็บภาพนิ่งไม่ได้รัน');
+    expect(row!.students_active !== null && row!.students_active !== undefined,
+      'จำนวนนักศึกษาต้องเป็นตัวเลขจากภาพนิ่ง ไม่ใช่ค่าว่าง');
+    expect(row!.plan_code === 'PLAT-TEST',
+      `ต้องเห็นแพ็กเกจล่าสุด ได้ ${row!.plan_code}`);
+
+    return `ภาพนิ่ง ${row!.usage_taken_on} · นักศึกษา ${row!.students_active} คน · ${row!.plan_name_th}`;
+  });
+
   console.log('\n══ บันทึกการกระทำ ══');
 
   await check('PLAT-14 ทุกการกระทำถูกบันทึกพร้อมชื่อบัญชีที่ทำ', async () => {

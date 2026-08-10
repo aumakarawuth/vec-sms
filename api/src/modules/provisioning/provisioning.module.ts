@@ -186,11 +186,10 @@ export class ProvisioningService {
   }
 
   /**
-   * ผูกแพ็กเกจให้วิทยาลัย
+   * @deprecated ย้ายไป POST /platform/subscriptions แล้ว
    *
-   * ปิดสัญญาฉบับเดิมให้อัตโนมัติ เพราะ exclusion constraint ห้ามสัญญา
-   * ซ้อนช่วงเวลากัน — ถ้าไม่ปิดให้ ผู้ให้บริการจะเจอ 409 แล้วต้องไปไล่ปิดเอง
-   * ซึ่งเป็นขั้นตอนที่ลืมได้ง่ายและทำให้เปลี่ยนแพ็กเกจไม่สำเร็จ
+   * เหลือไว้ให้โค้ดเก่าที่อาจเรียกอยู่ยังคอมไพล์ได้ แต่ไม่มีเส้นทาง HTTP
+   * ชี้มาแล้ว — ดูเหตุผลที่ ProvisioningController
    */
   async assignPlan(dto: AssignPlanDto) {
     return this.db.runAs(VENDOR_CTX, async (c) => {
@@ -234,43 +233,6 @@ export class ProvisioningService {
     });
   }
 
-  /** ปริมาณใช้งานของทุกวิทยาลัย — ฝั่งผู้ให้บริการใช้ตั้งใบเรียกเก็บ */
-  async usageAll() {
-    const institutions = await this.db.runAs(VENDOR_CTX, async (c) =>
-      (
-        await c.query<{ id: string; code: string; name_th: string }>(
-          `select id, code, name_th from institution order by code`,
-        )
-      ).rows,
-    );
-
-    const rows = [];
-    for (const inst of institutions) {
-      // อ่านในบริบทของวิทยาลัยนั้นเอง เพื่อให้ RLS ทำงานตามปกติ
-      // แทนที่จะทำฟังก์ชันรวมเป็น security definer
-      const usage = await this.db.runAs(
-        { institutionId: inst.id, actorId: VENDOR_CTX.actorId, role: 'admin' as const },
-        async (c) =>
-          (
-            await c.query(
-              `select plan_code, plan_name_th, status, enforcement,
-                      students_active, students_limit, students_allowed, over_students,
-                      staff_active, staff_limit
-                 from institution_usage($1)`,
-              [inst.id],
-            )
-          ).rows[0],
-      );
-      rows.push({ code: inst.code, nameTh: inst.name_th, ...usage });
-    }
-
-    return {
-      institutions: rows.length,
-      overQuota: rows.filter((r: any) => Number(r.over_students ?? 0) > 0).length,
-      unassigned: rows.filter((r: any) => !r.plan_code).length,
-      rows,
-    };
-  }
 }
 
 @Controller('provisioning')
@@ -292,25 +254,22 @@ class ProvisioningController {
     return this.svc.provision(dto);
   }
 
-  @Throttle(20, 60)
-  @Public()
-  @Post('subscriptions')
-  assignPlan(@Body() dto: AssignPlanDto, @Headers('x-provision-key') key?: string) {
-    this.svc.assertKey(key);
-    return this.svc.assignPlan(dto);
-  }
-
-  /**
-   * ใช้ POST ทั้งที่เป็นการอ่าน เพื่อไม่ให้กุญแจไปติดใน query string
-   * ซึ่งจะไปโผล่ใน access log ของ reverse proxy และประวัติเบราว์เซอร์
+  /*
+   * ─── POST /provisioning/subscriptions และ /provisioning/usage ถูกตัดออกแล้ว ───
+   *
+   * ทั้งสองเส้นทางย้ายไปที่หน้าจอผู้ให้บริการ (POST /platform/subscriptions
+   * และ GET /platform/institutions) ซึ่งรู้ว่า**ใคร**เป็นคนทำและบันทึกไว้ใน
+   * platform_action_log ต่างจากกุญแจที่ทั้งทีมใช้ร่วมกัน
+   *
+   * และ /provisioning/usage ยังยืมบริบท admin ของแต่ละวิทยาลัยมานับสด
+   * ซึ่งขัดกับหลักข้อ 5ค โดยตรง — โค้ดที่ยืมบริบทของลูกค้าได้หนึ่งที่
+   * คือโค้ดที่อ่านอะไรก็ได้ของลูกค้าได้ทั้งหมด ฝั่ง /platform อ่านจาก
+   * usage_snapshot ที่งานประจำวันเก็บไว้แทน
+   *
+   * ─── ทำไม /provisioning/institutions ยังอยู่ ───
+   * เป็นทางฉุกเฉินทางเดียวที่เปิดวิทยาลัยได้เมื่อบัญชีผู้ให้บริการเข้าไม่ได้
+   * (ลืมอุปกรณ์ MFA ทั้งทีม) การตัดทิ้งแปลว่าเหลือทางเดียวที่พังพร้อมกันได้
    */
-  @Throttle(20, 60)
-  @Public()
-  @Post('usage')
-  usage(@Headers('x-provision-key') key?: string) {
-    this.svc.assertKey(key);
-    return this.svc.usageAll();
-  }
 }
 
 @Module({

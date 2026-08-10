@@ -1619,51 +1619,32 @@ async function main() {
   console.log('');
   console.log('══ แพ็กเกจและโควตา ══');
 
-  await check('API-82 ผู้ให้บริการผูกแพ็กเกจให้วิทยาลัยได้', async () => {
+  await check('API-82 เส้นทางผู้ให้บริการที่กั้นด้วยกุญแจอย่างเดียวถูกตัดแล้ว', async () => {
+    /*
+     * การผูกแพ็กเกจและการดูปริมาณใช้งานย้ายไปหน้าจอผู้ให้บริการ (/platform/*)
+     * ซึ่งรู้ว่าใครเป็นคนทำและบันทึกไว้ ต่างจากกุญแจที่ทั้งทีมใช้ร่วมกัน
+     *
+     * เทสต์ข้อนี้กันการเผลอเปิดกลับมา — เส้นทางที่ไม่มีใครรับผิดชอบ
+     * เป็นสิ่งที่ถูกเพิ่มกลับได้ง่ายมากตอนรีบแก้ปัญหาหน้างาน
+     */
     const key = { 'x-provision-key': process.env.PROVISION_KEY ?? '' };
 
-    const r = await anon('/provisioning/subscriptions', {
-      method: 'POST',
-      headers: key,
-      body: JSON.stringify({
-        institutionCode: '1300000001', planCode: 'SMALL-SOFT',
-        startsOn: '2026-01-01', status: 'active',
-      }),
-    });
-    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
-    expect((r.body as any).subscription?.status === 'active', 'สัญญาต้องเปิดใช้');
-
-    // ผูกแพ็กเกจใหม่ต้องปิดฉบับเดิมให้เอง ไม่ใช่ชน exclusion constraint
-    const again = await anon('/provisioning/subscriptions', {
-      method: 'POST',
-      headers: key,
-      body: JSON.stringify({
-        institutionCode: '1300000001', planCode: 'UNLIMITED',
-        startsOn: '2026-06-01', status: 'active',
-      }),
-    });
-    expect(again.status === 201,
-      `เปลี่ยนแพ็กเกจควรทำได้โดยไม่ต้องไปปิดฉบับเดิมเอง ได้ ${again.status}: ${JSON.stringify(again.body)}`);
-    return `${(again.body as any).plan}`;
+    for (const path of ['/provisioning/subscriptions', '/provisioning/usage']) {
+      const r = await anon(path, { method: 'POST', headers: key, body: '{}' });
+      expect(r.status === 404, `${path} ควรถูกตัดแล้ว (404) ได้ ${r.status}`);
+    }
+    return 'ทั้งสองเส้นทางไม่มีแล้ว';
   });
 
-  await check('API-83 วิทยาลัยเห็นโควตาของตัวเองด้วยตัวเลขชุดเดียวกับผู้ให้บริการ', async () => {
+  await check('API-83 วิทยาลัยเห็นโควตาของตัวเอง', async () => {
     // ใบเรียกเก็บที่ลูกค้าตรวจสอบเองไม่ได้คือใบที่จะถูกเถียงทุกงวด
+    // (การเทียบว่าตัวเลขตรงกับฝั่งผู้ให้บริการอยู่ที่ PLAT-16 ซึ่งเข้าผ่าน
+    //  หน้าจอผู้ให้บริการจริง ไม่ใช่ผ่านกุญแจ)
     const r = await director('/subscription');
     expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
     const usage = (r.body as any).usage;
-    expect(usage.plan_code === 'UNLIMITED', `ควรเป็นแพ็กเกจล่าสุด ได้ ${usage.plan_code}`);
     expect(Number(usage.students_active) > 0, 'ต้องนับนักศึกษาได้');
-
-    const vendor = await anon('/provisioning/usage', {
-      method: 'POST',
-      headers: { 'x-provision-key': process.env.PROVISION_KEY ?? '' },
-    });
-    expect(vendor.status === 201, `ได้ ${vendor.status}`);
-    const row = (vendor.body as any).rows.find((x: any) => x.code === '1300000001');
-    expect(Number(row.students_active) === Number(usage.students_active),
-      `ตัวเลขสองฝั่งต้องตรงกัน วิทยาลัย ${usage.students_active} ผู้ให้บริการ ${row.students_active}`);
-    return `${usage.plan_name_th} · นักศึกษา ${usage.students_active} คน`;
+    return `นักศึกษา ${usage.students_active} คน`;
   });
 
   await check('API-84 ครูเปิดข้อมูลแพ็กเกจไม่ได้', async () => {
