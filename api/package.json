@@ -12,7 +12,8 @@
     "test:auth": "tsc -p tsconfig.test.json && node dist-test/test/auth.e2e.js",
     "test:ratelimit": "tsc -p tsconfig.test.json && node dist-test/test/ratelimit.e2e.js",
     "test:hardening": "tsc -p tsconfig.test.json && node dist-test/test/hardening.e2e.js",
-    "test:platform": "tsc -p tsconfig.test.json && node dist-test/test/platform.e2e.js"
+    "test:platform": "tsc -p tsconfig.test.json && node dist-test/test/platform.e2e.js",
+    "test:load": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && node dist-test/test/load.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
