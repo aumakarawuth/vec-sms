@@ -2204,6 +2204,160 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ หนังสือถึงผู้ปกครองและใบรับรองความประพฤติ (0055) ══');
+
+  await check('API-121 รายชื่อผู้ที่ควรได้รับจดหมายแจ้งขาดเรียน', async () => {
+    /*
+     * หน้าจอต้องไม่ต้องเดาว่าจะออกจดหมายให้ใคร — `last_notice_on` เป็น null
+     * แปลว่ายังไม่เคยส่ง ไม่ใช่ส่งแล้วไม่ได้ผล ซึ่งเป็นความต่างที่คนทำงาน
+     * ต้องเห็น มิฉะนั้นจะส่งซ้ำคนเดิมทุกสัปดาห์
+     */
+    const r = await registrar(`/documents/absence-candidates/${TERM1}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(Array.isArray(r.body), 'ควรคืนอาร์เรย์');
+    if (r.body.length > 0) {
+      const x = r.body[0];
+      expect(x.student_code && x.courses_at_risk !== undefined,
+        'ต้องบอกรหัสนักศึกษาและจำนวนวิชาที่ตกเกณฑ์');
+      expect('last_notice_on' in x, 'ต้องบอกว่าเคยออกจดหมายล่าสุดเมื่อไร');
+    }
+    return `${r.body.length} คน`;
+  });
+
+  let noticeId = '';
+
+  await check('API-122 จดหมายแจ้งขาดเรียนไม่มี GPAX แต่มีที่อยู่ผู้ปกครอง', async () => {
+    /*
+     * payload ของ `issue_document()` มี `summary`/`graduation` ทุกใบ
+     * ถ้าหนังสือใช้ส่วนหัวเดียวกัน GPAX จะติดมาโดยไม่มีอะไรฟ้อง แล้วกลายเป็น
+     * การเก็บข้อมูลเกินจำเป็นในที่ที่ลบไม่ได้ (หลักข้อ 5ก · PDPA ม.22)
+     */
+    const cand = await registrar(`/documents/absence-candidates/${TERM1}`);
+    const target = cand.body.find((x: any) => x.student_id === F.student) ?? cand.body[0];
+    if (!target) return 'ข้าม — ไม่มีผู้ที่เวลาเรียนต่ำกว่าเกณฑ์ในภาคนี้';
+
+    const r = await registrar('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: target.student_id, kind: 'absence_notice', termId: TERM1,
+      }),
+    });
+    expect(r.status < 400, `ออกจดหมายไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    noticeId = r.body.id;
+
+    const pl = r.body.payload;
+    expect(!('summary' in pl) && !('graduation' in pl),
+      'จดหมายแจ้งขาดเรียนต้องไม่มี GPAX หรือข้อมูลการจบติดมาด้วย');
+    expect(Array.isArray(pl.recipients), 'ต้องมีรายชื่อผู้รับ');
+    expect(Array.isArray(pl.courses) && pl.courses.length > 0,
+      'ต้องมีรายวิชาที่ตกเกณฑ์');
+    return `เลขที่ ${r.body.doc_no} · ${pl.courses.length} วิชา`;
+  });
+
+  await check('API-123 พิมพ์จดหมายได้เป็น HTML ที่ไม่อ้างไฟล์ภายนอก', async () => {
+    if (!noticeId) return 'ข้าม — ไม่มีจดหมายจาก API-122';
+    const r = await registrar(`/documents/${noticeId}/print`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    const html = String(r.body);
+    expect(html.includes('<!doctype html>'), 'ควรได้หน้า HTML เต็มหน้า');
+    expect(html.includes('ส่วนตอบรับ'),
+      'จดหมายแจ้งขาดเรียนต้องมีท่อนตัดกลับให้ผู้ปกครองเซ็นชื่อส่งคืน');
+    // พิมพ์ได้แม้อินเทอร์เน็ตของวิทยาลัยล่ม
+    expect(!/(src|href)\s*=\s*["']https?:/i.test(html),
+      'แม่แบบต้องไม่อ้างไฟล์ภายนอกเลย');
+    return `${html.length} ตัวอักษร`;
+  });
+
+  await check('API-124 ตำแหน่งใต้ลายเซ็นต้องตรงกับคนที่ชื่ออยู่ตรงนั้น', async () => {
+    /*
+     * แม่แบบเดิมเขียน `advisor ?? issued_by` แล้วพิมพ์ "ครูที่ปรึกษา" ใต้ชื่อ
+     * เสมอ ผลคือนักศึกษาที่ยังไม่ได้มอบหมายที่ปรึกษา (สภาพเริ่มต้นของทุกคน)
+     * ได้จดหมายที่ระบุว่าเจ้าหน้าที่ทะเบียนเป็นครูที่ปรึกษาของตัวเอง —
+     * ข้อความเท็จบนเอกสารที่ส่งถึงบ้านและแก้ไม่ได้อีกเลย
+     */
+    // F.studentRegrade ไม่ได้ถูกมอบหมายที่ปรึกษาใน API-108 หรือ API-110
+    // — ต้องเป็นคนที่ไม่มีที่ปรึกษาจริง มิฉะนั้นข้อนี้ข้ามแล้วไม่พิสูจน์อะไร
+    const notice = await registrar('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.studentRegrade, kind: 'guardian_invitation',
+        meetOn: '2026-09-20', placeTh: 'ห้องประชุม',
+      }),
+    });
+    expect(notice.status < 400, `ออกหนังสือไม่สำเร็จ ${notice.status} ${JSON.stringify(notice.body)}`);
+    expect(!notice.body.payload.advisor,
+      'ข้อนี้ต้องใช้นักศึกษาที่ยังไม่มีที่ปรึกษา — ถ้ามีแล้วให้เปลี่ยนตัวอย่าง');
+
+    const html = String((await registrar(`/documents/${notice.body.id}/print`)).body);
+    expect(!html.includes('ครูที่ปรึกษา'),
+      'ยังไม่มีที่ปรึกษา แต่หนังสือระบุว่ามี — ข้อความเท็จบนเอกสารที่แก้ไม่ได้');
+    expect(html.includes('ผู้ออกหนังสือ'),
+      'ต้องระบุตำแหน่งที่ตรงกับคนที่ลงนามจริง');
+    return 'ไม่มีที่ปรึกษา → ลงนามในฐานะผู้ออกหนังสือ';
+  });
+
+  await check('API-128 หนังสือเชิญผู้ปกครองต้องมีวันนัดพบ', async () => {
+    const none = await registrar('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'guardian_invitation' }),
+    });
+    expect(none.status >= 400, `ควรถูกปฏิเสธ ได้ ${none.status}`);
+
+    const r = await registrar('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, kind: 'guardian_invitation',
+        meetOn: '2026-09-15', meetTime: '10:00 น.',
+        placeTh: 'ห้องงานปกครอง อาคาร 1', reasonTh: 'ปรึกษาเรื่องเวลาเรียน',
+      }),
+    });
+    expect(r.status < 400, `ออกหนังสือไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.payload.meeting?.meet_on, 'ต้องเก็บวันนัดพบไว้ใน payload');
+
+    const html = String((await registrar(`/documents/${r.body.id}/print`)).body);
+    expect(html.includes('ห้องงานปกครอง'), 'หน้าที่พิมพ์ต้องมีสถานที่นัดพบ');
+    return `เลขที่ ${r.body.doc_no}`;
+  });
+
+  await check('API-129 ใบรับรองความประพฤติออกได้และพิมพ์ได้', async () => {
+    const r = await registrar('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, kind: 'conduct_certificate', purposeTh: 'สมัครงาน',
+      }),
+    });
+    expect(r.status < 400, `ออกใบรับรองไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.payload.behavior, 'ต้องมีข้อมูลความประพฤติ');
+    expect(r.body.payload.behavior.deduct_count !== undefined,
+      'ต้องนับจำนวนครั้งที่ถูกหักคะแนน — คะแนนเต็มเพราะไม่เคยมีประวัติ กับเต็มเพราะชดเชยแล้ว คนละเรื่อง');
+
+    const html = String((await registrar(`/documents/${r.body.id}/print`)).body);
+    expect(html.includes('ใบรับรองความประพฤติ'), 'หน้าที่พิมพ์ต้องเป็นใบรับรองความประพฤติ');
+    return `เลขที่ ${r.body.doc_no}`;
+  });
+
+  await check('API-130 ครูผู้สอนออกหนังสือถึงผู้ปกครองไม่ได้', async () => {
+    // ครูเห็นว่าใครตกเกณฑ์ได้ (ต้องใช้สอน) แต่การออกหนังสือในนามวิทยาลัย
+    // เป็นงานของงานปกครองและงานทะเบียน
+    const see = await teacher(`/documents/absence-candidates/${TERM1}`);
+    expect(see.status === 200, `ครูควรเห็นรายชื่อได้ ได้ ${see.status}`);
+
+    const r = await teacher('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'conduct_certificate' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-131 นักศึกษาออกใบรับรองให้ตัวเองไม่ได้', async () => {
+    const r = await student('/documents/letters', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'conduct_certificate' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

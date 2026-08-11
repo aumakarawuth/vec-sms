@@ -21,6 +21,7 @@ import { GraduationScreen } from './screens/graduation';
 import { HrScreen } from './screens/hr';
 import { ImportScreen } from './screens/import';
 import { JobsScreen } from './screens/jobs';
+import { LettersScreen } from './screens/letters';
 import { LoginScreen } from './screens/login';
 import { RegistrationScreen } from './screens/registration';
 import { RiskScreen } from './screens/risk';
@@ -82,6 +83,11 @@ const NAV: NavGroup[] = [
         path: '/risk',
         label: 'เฝ้าระวังและติดตาม',
         roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
+      },
+      {
+        path: '/letters',
+        label: 'หนังสือถึงผู้ปกครอง',
+        roles: ['student_affairs', 'registrar', 'academic', 'director', 'admin'],
       },
       {
         path: '/leaves',
@@ -177,6 +183,7 @@ function Routes() {
   if (head === 'academic-year') return <AcademicYearScreen />;
   if (head === 'finance') return <FinanceScreen />;
   if (head === 'leaves') return <StudentLeaveScreen />;
+  if (head === 'letters') return <LettersScreen />;
 
   return (
     <div className="empty">

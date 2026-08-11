@@ -23,6 +23,8 @@
  */
 
 /** เอกสารหนึ่งใบตามที่อ่านมาจาก issued_document */
+import { renderLetter, type LetterDocument } from './letters';
+
 export interface IssuedDocument {
   id: string;
   kind: string;
@@ -828,6 +830,13 @@ export function renderDocument(doc: IssuedDocument): string {
       return renderGradeReport(doc);
     case 'cumulative_record':
       return renderCumulativeRecord(doc);
+    // หนังสือถึงผู้ปกครองอยู่คนละไฟล์เพราะ payload เป็นคนละชุดกันจริง ๆ
+    // (มีผู้รับและที่อยู่ · ไม่มี GPAX) การยัดลงชนิดเดียวกันจะทำให้ทุกช่อง
+    // ต้องเป็น optional แล้วชนิดข้อมูลจะเลิกบอกอะไรได้
+    case 'absence_notice':
+    case 'guardian_invitation':
+    case 'conduct_certificate':
+      return renderLetter(doc as unknown as LetterDocument);
     default:
       throw new Error(`ยังไม่มีแม่แบบพิมพ์สำหรับเอกสารประเภท ${doc.kind}`);
   }

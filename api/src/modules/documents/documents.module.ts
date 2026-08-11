@@ -63,6 +63,37 @@ class VoidDocumentDto {
   @IsString() reason: string;
 }
 
+/*
+ * หนังสือถึงผู้ปกครองแยก endpoint จาก `POST /documents/issue` เพราะรับ
+ * ข้อมูลคนละชุด (วันนัดพบ · สถานที่ · เหตุผล) และ payload ที่ได้ก็คนละชุด
+ * — การยัดลง DTO เดียวกันจะทำให้ทุกช่องเป็น optional แล้วไม่มีอะไรบังคับได้
+ * ว่าหนังสือเชิญต้องมีวันนัด (ฐานข้อมูลบังคับอยู่ แต่ผู้ใช้ควรรู้ก่อนกดส่ง)
+ */
+const LETTER_KINDS = ['absence_notice', 'guardian_invitation', 'conduct_certificate'] as const;
+
+class IssueLetterDto {
+  @IsUuid() studentId: string;
+  @IsIn(LETTER_KINDS, {
+    message: 'kind ต้องเป็น absence_notice, guardian_invitation หรือ conduct_certificate',
+  })
+  kind: (typeof LETTER_KINDS)[number];
+
+  /** บังคับสำหรับ absence_notice — ฐานข้อมูลปฏิเสธเองถ้าไม่ส่งมา */
+  @IsOptional() @IsUuid() termId?: string;
+
+  // หนังสือเชิญผู้ปกครอง
+  @IsOptional() @IsISO8601() meetOn?: string;
+  @IsOptional() @IsString() meetTime?: string;
+  @IsOptional() @IsString() placeTh?: string;
+  @IsOptional() @IsString() withTh?: string;
+  @IsOptional() @IsString() reasonTh?: string;
+
+  // ใบรับรองความประพฤติ
+  @IsOptional() @IsString() purposeTh?: string;
+
+  @IsOptional() @IsString() note?: string;
+}
+
 class CreateApprovalDto {
   @IsISO8601() approvedOn: string;
   @IsOptional() @IsUuid() termId?: string;
@@ -116,6 +147,39 @@ export class DocumentsService {
       [dto.studentId, dto.kind, dto.yearBe ?? null, dto.termId ?? null],
     );
     return row;
+  }
+
+  /**
+   * ออกหนังสือถึงผู้ปกครองหรือใบรับรองความประพฤติ
+   *
+   * ส่ง context เป็น jsonb ก้อนเดียวเพราะแต่ละชนิดใช้คนละช่อง การทำเป็น
+   * พารามิเตอร์แยกจะได้ลายเซ็นที่มีช่องว่างเปล่าเกินครึ่งทุกครั้งที่เรียก
+   */
+  async issueLetter(dto: IssueLetterDto) {
+    const context: Record<string, string> = {};
+    if (dto.meetOn) context.meet_on = dto.meetOn;
+    if (dto.meetTime) context.meet_time = dto.meetTime;
+    if (dto.placeTh) context.place_th = dto.placeTh;
+    if (dto.withTh) context.with_th = dto.withTh;
+    if (dto.reasonTh) context.reason_th = dto.reasonTh;
+    if (dto.purposeTh) context.purpose_th = dto.purposeTh;
+    if (dto.note) context.note = dto.note;
+
+    return this.db.queryOne(
+      `select id, doc_no, kind, copy_no, issued_on, payload
+         from issue_student_letter($1, $2::document_kind, $3, $4::jsonb)`,
+      [dto.studentId, dto.kind, dto.termId ?? null, JSON.stringify(context)],
+    );
+  }
+
+  /** ผู้ที่เวลาเรียนต่ำกว่าเกณฑ์ พร้อมวันที่เคยออกจดหมายล่าสุด */
+  async absenceCandidates(termId: string) {
+    return this.db.query(
+      `select student_id, student_code, full_name, courses_at_risk,
+              worst_pct, last_notice_on
+         from absence_notice_candidates($1)`,
+      [termId],
+    );
   }
 
   async listForStudent(studentId: string) {
@@ -269,6 +333,27 @@ class DocumentsController {
     return this.svc.listForStudent(studentId);
   }
 
+  /*
+   * งานปกครองออกหนังสือถึงผู้ปกครองได้ด้วย ซึ่งเป็นบทบาทที่ไม่ได้อยู่ใน
+   * @Roles ระดับคลาส — หนังสือแจ้งขาดเรียนและเชิญผู้ปกครองเป็นงานของ
+   * ฝ่ายนั้นโดยตรง ไม่ใช่ของงานทะเบียน
+   */
+  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+  @Audit('issued_document')
+  @Post('letters')
+  issueLetter(@Body() dto: IssueLetterDto) {
+    return this.svc.issueLetter(dto);
+  }
+
+  @Roles('registrar', 'academic', 'student_affairs', 'teacher', 'director', 'admin')
+  @Get('absence-candidates/:termId')
+  absenceCandidates(@Param('termId', ParseUuidPipe) termId: string) {
+    return this.svc.absenceCandidates(termId);
+  }
+
+  // งานปกครองต้องเปิดและพิมพ์หนังสือที่ตัวเองเพิ่งออกได้ — ถ้าออกได้
+  // แต่พิมพ์ไม่ได้ ต้องไปขอให้งานทะเบียนกดแทนทุกใบ
+  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
   @Audit('issued_document', 'id')
   @Get(':id')
   get(@Param('id', ParseUuidPipe) id: string) {
@@ -280,6 +365,7 @@ class DocumentsController {
    * แม่แบบฝัง CSS มาในหน้าเดียว ไม่มีการอ้างอิงไฟล์ภายนอกเลย จึงพิมพ์ได้
    * แม้อินเทอร์เน็ตของวิทยาลัยล่ม
    */
+  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
   @Audit('issued_document', 'id')
   @Header('content-type', 'text/html; charset=utf-8')
   @Get(':id/print')
