@@ -103,6 +103,47 @@ export function checkProductionConfig(env: NodeJS.ProcessEnv): GuardResult {
     }
 
     /*
+     * NATIONAL_ID_KEY เข้ารหัสเลขประจำตัวประชาชน ซึ่งใบ รบ. พิมพ์เต็ม
+     * บนกระดาษทุกรูปแบบ ถ้าไม่มี วิทยาลัยจะกรอกเลขบัตรไม่ได้เลยสักคน
+     * แล้วใบ รบ. ทุกใบที่ออกจะมีช่องเลขบัตรว่าง — ใช้ยื่นจริงไม่ได้
+     *
+     * เป็นข้อผิดพลาดรูปเดียวกับ MFA_SECRET_KEY ที่ทำให้ deploy รอบก่อน
+     * ไม่ผ่าน คือค่าที่ทุกอย่างพึ่งอยู่แต่ไม่มีอยู่ในไฟล์ตั้งค่าไหนเลย
+     */
+    const nidKey = env.NATIONAL_ID_KEY ?? '';
+    if (!nidKey) {
+      errors.push(
+        'ไม่ได้ตั้ง NATIONAL_ID_KEY — กรอกเลขประจำตัวประชาชนไม่ได้เลย และใบ รบ. ' +
+          'ทุกใบจะมีช่องเลขบัตรว่าง สร้างด้วย openssl rand -base64 32',
+      );
+    } else if (Buffer.from(nidKey, 'base64').length !== 32) {
+      errors.push(
+        'NATIONAL_ID_KEY ต้องเป็นคีย์ 32 ไบต์ในรูปแบบ base64 — สร้างด้วย openssl rand -base64 32',
+      );
+    } else if (
+      nidKey === env.JWT_SECRET ||
+      nidKey === env.IP_HASH_SECRET ||
+      nidKey === env.MFA_SECRET_KEY
+    ) {
+      errors.push(
+        'NATIONAL_ID_KEY ซ้ำกับความลับอื่น — ถ้าค่าใดค่าหนึ่งรั่ว จะเสียหลายอย่างพร้อมกัน',
+      );
+    }
+
+    /*
+     * ─── กุญแจเก่าที่ถอนออกแล้วต้องเก็บไว้ ───
+     * ใบ รบ. ที่ออกวันนี้ต้องพิมพ์ซ้ำได้อีกสิบปี ซึ่งนานกว่าอายุของกุญแจ
+     * ชุดใดชุดหนึ่ง การหมุนกุญแจโดยทิ้งใบเก่าแปลว่าใบที่ออกก่อนหน้าพิมพ์
+     * ซ้ำแล้วช่องเลขบัตรว่าง โดยไม่มีอะไรฟ้องจนกว่าจะมีคนขอใบซ้ำ
+     */
+    for (const old of (env.NATIONAL_ID_KEYS_OLD ?? '').split(',')) {
+      if (old.trim() && Buffer.from(old.trim(), 'base64').length !== 32) {
+        errors.push('NATIONAL_ID_KEYS_OLD มีคีย์ที่ไม่ใช่ 32 ไบต์ในรูปแบบ base64');
+        break;
+      }
+    }
+
+    /*
      * PROVISION_KEY เปิดสองอย่างที่อยู่นอกขอบเขตของทุกบทบาทในระบบ —
      * การเปิดวิทยาลัยใหม่ (0037) และการสร้างบัญชีผู้ให้บริการคนแรก (0040)
      *

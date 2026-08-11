@@ -17,6 +17,11 @@ import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
 import { WorksheetController, WorksheetService } from './worksheets';
+import {
+  decryptNationalId,
+  decryptionKeys,
+  formatNationalId,
+} from '../../common/crypto/national-id';
 import { IssuedDocument, PrintOptions, applyPrintOptions, renderDocument } from './templates';
 
 /**
@@ -159,6 +164,35 @@ class AddGraduateDto {
   @IsOptional() @IsString() note?: string;
 }
 
+/**
+ * เติมเลขประจำตัวประชาชนลงในสำเนาที่กำลังจะพิมพ์
+ *
+ * ═══ ทำไมถอดตอนพิมพ์ ไม่ใช่ตอนออกใบ ═══
+ * `issued_document.payload` **ลบไม่ได้และแก้ไม่ได้** ถ้าเก็บเลขเปล่าลงไป
+ * ทุกใบที่เคยออกจะกลายเป็นคลังเลขบัตรที่เอาออกไม่ได้อีกเลย (หลักข้อ 5ก)
+ *
+ * payload จึงเก็บเฉพาะ**ไบต์ที่เข้ารหัสแล้ว** ส่วนการถอดเกิดในหน่วยความจำ
+ * ของคำขอนี้คำขอเดียว แล้วเลขไปอยู่บนกระดาษอย่างเดียว — ไม่เคยถูกเขียน
+ * กลับลงฐานข้อมูล และไม่อยู่ใน JSON ที่หน้าจอเห็น
+ *
+ * และเพราะเป็นไบต์ชุดเดิมเสมอ การพิมพ์ซ้ำในอีกสิบปีจึงได้เลขเดิมเป๊ะ
+ * ตราบที่กุญแจใบนั้นยังอยู่ (หลักข้อ 5 — ค่าที่ตรึงไว้ห้ามคำนวณใหม่)
+ *
+ * ถอดไม่ได้ = เว้นช่องว่างไว้เหมือนเดิม ไม่ใช่พิมพ์ไม่ได้ทั้งใบ เพราะ
+ * ส่วนที่เหลือของเอกสารยังถูกต้องและยังใช้งานได้
+ */
+function withNationalId(doc: IssuedDocument): void {
+  const payload = doc.payload as unknown as {
+    national_id_enc?: string | null;
+    student?: { national_id?: string };
+  };
+  const hex = payload.national_id_enc;
+  if (!hex || !payload.student) return;
+
+  const plain = decryptNationalId(Buffer.from(hex, 'hex'), decryptionKeys(process.env));
+  if (plain !== null) payload.student.national_id = formatNationalId(plain);
+}
+
 @Injectable()
 export class DocumentsService {
   constructor(private readonly db: DbService) {}
@@ -271,6 +305,7 @@ export class DocumentsService {
    */
   async print(id: string, opts?: PrintOptions) {
     const doc = (await this.get(id)) as unknown as IssuedDocument;
+    withNationalId(doc);
     try {
       return applyPrintOptions(renderDocument(doc), opts);
     } catch (err) {

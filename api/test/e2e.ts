@@ -3173,6 +3173,90 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ เลขประจำตัวประชาชนบนใบ รบ. (0061) ══');
+
+  await check('API-167 เลขบัตรขึ้นใบ รบ. ได้ แต่ฐานข้อมูลไม่เคยมีเลขเปล่า', async () => {
+    /*
+     * ─── ตัวบล็อกที่หนักที่สุดของงานเอกสารทั้งหมด ───
+     * ใบ รบ. ทุกรูปแบบพิมพ์เลขบัตรเต็มบนกระดาษ ระบบเก็บแค่ค่าแฮชมาตั้งแต่
+     * 0002 แม่แบบทั้งสี่แบบจึงพิมพ์ช่องนั้นว่างทุกใบ — ใบที่ครบถ้วนทุก
+     * ประการแต่ใช้ยื่นจริงไม่ได้เลย
+     *
+     * ข้อนี้พิสูจน์สามอย่างพร้อมกัน: เลขขึ้นกระดาษจริง · payload ที่ลบไม่ได้
+     * ไม่เคยมีเลขเปล่า · และการพิมพ์ซ้ำได้เลขเดิม
+     */
+    const nid = '1104000247449';
+    const set = await registrar(`/students/${F.student}/profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({ nationalId: nid }),
+    });
+    expect(set.status < 400, `บันทึกเลขบัตรไม่สำเร็จ ${set.status} ${JSON.stringify(set.body)}`);
+
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    expect(issued.status < 400, `ออกใบไม่ได้ ${issued.status}`);
+
+    // payload ที่ตรึงลงฐานข้อมูลต้องไม่มีเลขเปล่าอยู่เลย
+    const raw = JSON.stringify(issued.body.payload);
+    expect(!raw.includes(nid), 'payload ต้องไม่มีเลขบัตรเป็นข้อความเปล่า — payload ลบไม่ได้');
+    expect(typeof issued.body.payload.national_id_enc === 'string',
+      'payload ต้องมีไบต์ที่เข้ารหัสไว้ มิฉะนั้นพิมพ์ซ้ำแล้วเลขหาย');
+
+    // แต่กระดาษต้องมีเลขจริง ในรูปแบบที่ใบจริงพิมพ์
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    expect(html.includes('1 1040 00247 44 9'),
+      'ใบที่พิมพ์ต้องมีเลขบัตรในรูปแบบ 1 1040 00247 44 9 ตามใบจริง');
+
+    // พิมพ์ซ้ำต้องได้เลขเดิม (ไบต์ชุดเดิมเสมอ)
+    const again = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    expect(again.includes('1 1040 00247 44 9'), 'พิมพ์ซ้ำต้องได้เลขเดิม');
+    return 'ขึ้นกระดาษ · ไม่อยู่ใน payload · พิมพ์ซ้ำได้เลขเดิม';
+  });
+
+  await check('API-168 อ่านเลขบัตรได้เฉพาะเส้นทางที่บันทึกว่าใครเปิดดู', async () => {
+    /*
+     * ระเบียนนักศึกษาถูกเปิดวันละหลายสิบครั้งเพื่อดูเรื่องอื่น ถ้าเลขบัตร
+     * ติดไปด้วยทุกครั้ง access_log จะบอกไม่ได้เลยว่าใคร**ตั้งใจ**ดูเลขบัตร
+     * ของใคร ซึ่งเป็นสิ่งเดียวที่หลักฐาน 90 วันตาม PDPA ม.37 ต้องตอบให้ได้
+     */
+    const profile = await registrar(`/students/${F.student}/profile`);
+    expect(profile.status < 400, `อ่านระเบียนไม่ได้ ${profile.status}`);
+    expect(!JSON.stringify(profile.body).includes('1104000247449'),
+      'ระเบียนตามปกติต้องไม่มีเลขบัตรติดมาด้วย');
+
+    const direct = await registrar(`/students/${F.student}/national-id`);
+    expect(direct.status < 400, `อ่านเลขบัตรไม่ได้ ${direct.status}`);
+    expect(direct.body.nationalId === '1104000247449', 'เส้นทางเฉพาะต้องคืนเลขจริง');
+    expect(direct.body.formatted === '1 1040 00247 44 9', 'ต้องมีรูปแบบที่พิมพ์ลงกระดาษด้วย');
+
+    // ครูดูไม่ได้ — ไม่ต้องใช้เลขนี้เพื่อดูแลนักศึกษา
+    const asTeacher = await teacher(`/students/${F.student}/national-id`);
+    expect(asTeacher.status === 403, `ครูควรได้ 403 ได้ ${asTeacher.status}`);
+    return 'ไม่ติดมากับระเบียน · เส้นทางเฉพาะอ่านได้ · ครูอ่านไม่ได้';
+  });
+
+  await check('API-169 เลขบัตรที่หลักตรวจสอบผิดถูกปฏิเสธก่อนเข้ารหัส', async () => {
+    /*
+     * ต้องตรวจ**ก่อน**เข้ารหัส เพราะเลขที่ผิดเมื่อเข้ารหัสไปแล้วจะหาไม่เจอ
+     * อีกเลยโดยไม่ถอดรหัสออกมาทั้งฐาน แล้วมันจะไปโผล่บนใบ รบ. ที่แก้ไม่ได้
+     */
+    const bad = await registrar(`/students/${F.student}/profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({ nationalId: '1104000247448' }),
+    });
+    expect(bad.status === 400, `ควรได้ 400 ได้ ${bad.status}`);
+    expect(JSON.stringify(bad.body).includes('หลักตรวจสอบ'),
+      'ข้อความต้องบอกว่าเป็นเรื่องหลักตรวจสอบ ไม่ใช่ error ดิบ');
+
+    // และค่าเดิมต้องไม่ถูกล้างทิ้งเพราะคำขอที่ถูกปฏิเสธ
+    const still = await registrar(`/students/${F.student}/national-id`);
+    expect(still.body.nationalId === '1104000247449', 'เลขเดิมต้องยังอยู่');
+    return 'ปฏิเสธและไม่ล้างค่าเดิม';
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

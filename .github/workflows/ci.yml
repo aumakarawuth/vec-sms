@@ -88,6 +88,10 @@ jobs:
           DEV_AUTH: "true"
           JOBS_ENABLED: "false"
           PROVISION_KEY: ci-provision-key
+          # API-167/168/169 กรอกเลขบัตรจริงแล้วพิมพ์ใบ รบ. — ถ้าไม่มีกุญแจ
+          # ชั้น API จะปฏิเสธการเก็บเลขบัตรโดยตั้งใจ แล้วทั้งสามข้อล้ม
+          # (ค่าใน CI เป็นค่าคงที่ได้ เพราะไม่มีข้อมูลจริงในฐานทดสอบ)
+          NATIONAL_ID_KEY: Y2ktbmF0aW9uYWwtaWQta2V5LTMyLWJ5dGVzLWxvbmc=
         run: npm run test:e2e
 
       - name: เทสต์การยืนยันตัวตน

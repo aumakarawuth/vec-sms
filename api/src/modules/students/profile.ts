@@ -45,6 +45,15 @@ import {
 import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
+import {
+  decryptNationalId,
+  decryptionKeys,
+  encryptNationalId,
+  formatNationalId,
+  hashNationalId,
+  isValidThaiNationalId,
+  normalizeNationalId,
+} from '../../common/crypto/national-id';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
 
 const ADDRESS_KINDS = ['registered', 'current', 'work'] as const;
@@ -83,6 +92,15 @@ class UpdateProfileDto {
   @IsOptional() @IsInt() @Min(1) @Max(99) classNumber?: number;
   @IsOptional() @IsIn(TRAVEL) travelMode?: string;
   @IsOptional() @IsString() talentTh?: string;
+
+  /**
+   * เลขประจำตัวประชาชนของนักศึกษา — ใบ รบ. พิมพ์เลขนี้เต็มบนกระดาษ
+   *
+   * รับเข้าอย่างเดียว **ไม่เคยส่งกลับ** ในการอ่านระเบียนตามปกติ
+   * ผู้ที่มีสิทธิ์ดูต้องเรียก `GET /students/:id/national-id` ซึ่งบันทึกลง
+   * access_log ทุกครั้งว่าใครเปิดดูของใคร (PDPA ม.37)
+   */
+  @IsOptional() @IsString() nationalId?: string;
 }
 
 class SensitiveDto {
@@ -148,7 +166,51 @@ class AssignAdvisorDto {
 
 @Injectable()
 export class StudentProfileService {
+  /*
+   * ─── อ่านกุญแจจาก env ตรง ๆ ───
+   * ต้องรู้ตั้งแต่จังหวะสร้างออบเจ็กต์ว่ามีกุญแจหรือไม่ เพื่อให้สภาพ
+   * "ยังไม่ได้ตั้งกุญแจ" ตอบผู้ใช้ได้ตรง ๆ ที่จุดบันทึก
+   */
+  private readonly nationalIdKey = process.env.NATIONAL_ID_KEY ?? '';
+  private readonly hashSecret = process.env.IP_HASH_SECRET ?? 'vec-sms';
+
   constructor(private readonly db: DbService) {}
+
+  /**
+   * เลขประจำตัวประชาชนฉบับเต็ม — เส้นทางแยกที่บันทึกทุกครั้งที่มีคนเปิดดู
+   *
+   * ─── ทำไมไม่ส่งมากับระเบียนตามปกติ ───
+   * ระเบียนนักศึกษาถูกเปิดดูวันละหลายสิบครั้งเพื่อดูเรื่องอื่น ถ้าเลขบัตร
+   * ติดไปด้วยทุกครั้ง `access_log` จะบอกไม่ได้เลยว่าใคร**ตั้งใจ**ดูเลขบัตร
+   * ของใคร — ซึ่งเป็นสิ่งเดียวที่หลักฐาน 90 วันตาม PDPA ม.37 ต้องตอบให้ได้
+   *
+   * และหน้าจอส่วนใหญ่ไม่ต้องใช้ตัวเลข ต้องการแค่รู้ว่า "กรอกแล้วหรือยัง"
+   * ซึ่ง `has_national_id` ตอบได้อยู่แล้วโดยไม่เปิดเผยอะไร
+   */
+  async readNationalId(studentId: string) {
+    const row = await this.db.queryOne<{ enc: Buffer | null }>(
+      `select p.national_id_enc as enc
+         from student s join person p on p.id = s.person_id
+        where s.id = $1`,
+      [studentId],
+    );
+    if (!row) throw new NotFoundException('ไม่พบนักศึกษา หรือไม่มีสิทธิ์เข้าถึง');
+    if (!row.enc) return { nationalId: null, reason: 'ยังไม่ได้กรอกเลขประจำตัวประชาชน' };
+
+    const plain = decryptNationalId(Buffer.from(row.enc), decryptionKeys(process.env));
+    if (plain === null) {
+      /*
+       * ถอดไม่ได้แปลว่ากุญแจที่ใช้เข้ารหัสแถวนี้ไม่อยู่ในเครื่องแล้ว
+       * บอกตรง ๆ ดีกว่าตอบว่า "ยังไม่ได้กรอก" ซึ่งจะทำให้เจ้าหน้าที่ไป
+       * กรอกทับ แล้วค่าเดิมหายไปโดยไม่มีใครรู้ว่าเคยมี
+       */
+      return {
+        nationalId: null,
+        reason: 'ถอดรหัสไม่ได้ — กุญแจที่ใช้เข้ารหัสแถวนี้ไม่อยู่ในระบบแล้ว',
+      };
+    }
+    return { nationalId: plain, formatted: formatNationalId(plain) };
+  }
 
   /**
    * ระเบียนฉบับเต็มในคำขอเดียว
@@ -284,8 +346,34 @@ export class StudentProfileService {
       ).rows[0];
       if (!row) throw new NotFoundException('ไม่พบนักศึกษา หรือไม่มีสิทธิ์เข้าถึง');
 
+      /*
+       * ─── เลขบัตรเข้ารหัสที่ชั้นนี้ ไม่ใช่ในฐานข้อมูล ───
+       * กุญแจต้องอยู่นอกฐานข้อมูล มิฉะนั้นจะรั่วไปพร้อมกับ dump แล้ว
+       * การเข้ารหัสกลายเป็นของประดับ (ข้อยกเว้นของหลักข้อ 1 ที่ตั้งใจ)
+       *
+       * ถ้ายังไม่ได้ตั้งกุญแจ **ปฏิเสธไปตรง ๆ** ไม่ใช่เก็บแต่ค่าแฮชแล้ว
+       * ตอบว่าสำเร็จ — เพราะเจ้าหน้าที่จะเข้าใจว่ากรอกครบแล้ว แล้วไปเจอ
+       * ตอนพิมพ์ใบ รบ. ว่าช่องเลขบัตรว่างทุกใบ โดยไม่มีอะไรบอกว่าเพราะอะไร
+       * (หลักเดียวกับ RESET_DELIVERY ที่ค่าเริ่มต้นคือปิด ไม่ใช่ทำเป็นส่งแล้วเงียบ)
+       */
+      const nid = dto.nationalId === undefined ? null : normalizeNationalId(dto.nationalId);
+      if (nid !== null) {
+        if (!isValidThaiNationalId(nid)) {
+          throw new BadRequestException('เลขประจำตัวประชาชนไม่ถูกต้องตามหลักตรวจสอบ');
+        }
+        if (!this.nationalIdKey) {
+          throw new BadRequestException(
+            'ระบบยังไม่ได้ตั้งกุญแจเข้ารหัสเลขประจำตัวประชาชน (NATIONAL_ID_KEY) ' +
+              'จึงเก็บเลขบัตรไม่ได้ — ใบ รบ. ที่ออกไปจะไม่มีเลขบัตรบนกระดาษ',
+          );
+        }
+      }
+
       await c.query(
         `update person set
+           national_id_enc    = coalesce($11, national_id_enc),
+           national_id_hash   = coalesce($12, national_id_hash),
+           national_id_hash_v = case when $11::bytea is null then national_id_hash_v else 2 end,
            prefix_en      = coalesce($2, prefix_en),
            nickname_th    = coalesce($3, nickname_th),
            nickname_en    = coalesce($4, nickname_en),
@@ -299,7 +387,9 @@ export class StudentProfileService {
         [row.person_id, dto.prefixEn ?? null, dto.nicknameTh ?? null,
          dto.nicknameEn ?? null, dto.nationality ?? null, dto.lineId ?? null,
          dto.facebook ?? null, dto.birthPlaceTh ?? null, dto.phone ?? null,
-         dto.email ?? null],
+         dto.email ?? null,
+         nid === null ? null : encryptNationalId(nid, this.nationalIdKey as string),
+         nid === null ? null : hashNationalId(nid, this.hashSecret)],
       );
 
       await c.query(
@@ -632,6 +722,20 @@ class StudentProfileController {
   @Get(':id/profile')
   full(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.full(id);
+  }
+
+  /**
+   * เลขประจำตัวประชาชนฉบับเต็ม
+   *
+   * บทบาทเดียวกับที่แก้ระเบียนได้ — ครูที่ปรึกษาไม่ต้องใช้เลขนี้เพื่อดูแล
+   * นักศึกษา และ `@Audit` ทำให้ทุกครั้งที่มีคนเปิดดูมีชื่อคนเปิดอยู่ใน
+   * access_log พร้อมว่าเป็นของนักศึกษาคนไหน
+   */
+  @Roles('registrar', 'director', 'admin')
+  @Audit('student', 'id')
+  @Get(':id/national-id')
+  nationalId(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.readNationalId(id);
   }
 
   @Roles('registrar', 'student_affairs', 'admin')

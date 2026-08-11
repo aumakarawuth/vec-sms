@@ -103,6 +103,8 @@ export interface Transcript67Payload {
     birth_date: string | null;
     admitted_year_be: number | null;
     status: string;
+    /** เติมโดยชั้น API ตอนพิมพ์ — payload เก็บแต่ไบต์ที่เข้ารหัสแล้ว */
+    national_id?: string;
   };
   program: {
     type_th: string; name_th: string; track_th: string;
@@ -617,7 +619,7 @@ export function renderTranscript67(doc: Transcript67Document): string {
       ${field(t.name, esc(name))}
       ${field(t.ethnic, '')}
       ${field(t.birth, esc(D(d.student.birth_date)))}
-      ${field(t.citizenId, '')}
+      ${field(t.citizenId, esc(d.student.national_id ?? ''))}
       ${field(t.father, '')}
       ${field(t.mother, '')}
       ${field(t.progType, esc(lang === 'en' ? (prog?.type_en ?? '') : (prog?.type_th ?? '')))}

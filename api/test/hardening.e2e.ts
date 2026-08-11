@@ -14,6 +14,13 @@ import 'reflect-metadata';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createApp } from '../src/main';
+import {
+  decryptNationalId,
+  encryptNationalId,
+  hashNationalId,
+  isValidThaiNationalId,
+  keyIdOf,
+} from '../src/common/crypto/national-id';
 import { checkProductionConfig } from '../src/common/config/production-guard';
 import { MAX_PAGE_SIZE, parsePage } from '../src/common/pagination/pagination';
 
@@ -72,6 +79,7 @@ async function main() {
       CORS_ORIGINS: 'https://app.example.ac.th',
       DATABASE_URL: 'postgres://u:p@db/vecsms?sslmode=require',
       MFA_SECRET_KEY: Buffer.alloc(32, 3).toString('base64'),
+      NATIONAL_ID_KEY: Buffer.alloc(32, 9).toString('base64'),
       TZ: 'Asia/Bangkok',
     } as NodeJS.ProcessEnv);
     expect(errors.length === 0, `ไม่ควรมีข้อผิดพลาด แต่มี: ${errors.join(' | ')}`);
@@ -100,6 +108,7 @@ async function main() {
       CORS_ORIGINS: 'https://app.example.ac.th',
       DATABASE_URL: 'postgres://u:p@db/vecsms?sslmode=require',
       MFA_SECRET_KEY: Buffer.alloc(16, 1).toString('base64'),
+      NATIONAL_ID_KEY: Buffer.alloc(32, 9).toString('base64'),
       TZ: 'Asia/Bangkok',
     } as NodeJS.ProcessEnv);
     expect(short.errors.some((e) => e.includes('32 ไบต์')), 'คีย์สั้นเกินต้องถูกจับด้วย');
@@ -384,6 +393,7 @@ async function main() {
       'JWT_SECRET',        // ไม่มี = ไม่บูต
       'IP_HASH_SECRET',    // ไม่มี = ไม่บูต
       'MFA_SECRET_KEY',    // ไม่มี = ไม่บูต (รอบที่แล้วพังที่ตัวนี้)
+      'NATIONAL_ID_KEY',   // ไม่มี = กรอกเลขบัตรไม่ได้ ใบ รบ. ทุกใบมีช่องเลขบัตรว่าง
       'PROVISION_KEY',     // ไม่มี = เปิดวิทยาลัยและตั้งบัญชีผู้ให้บริการไม่ได้ (503)
       'CORS_ORIGINS',      // ไม่มี = แอปเว็บเรียก API ไม่ได้ หน้าจอว่างแบบไม่มีข้อความ
       'TRUST_PROXY',       // ไม่มี = ทั้งวิทยาลัยแชร์ถังจำกัดคำขอใบเดียว และ ip_hash ไร้ค่า
@@ -403,6 +413,8 @@ async function main() {
       JWT_SECRET: 'j'.repeat(48),
       IP_HASH_SECRET: 'i'.repeat(48),
       MFA_SECRET_KEY: Buffer.alloc(32, 7).toString('base64'),
+      NATIONAL_ID_KEY: Buffer.alloc(32, 9).toString('base64'),
+      NATIONAL_ID_KEYS_OLD: '',
       PROVISION_KEY: 'p'.repeat(48),
       CORS_ORIGINS: 'https://vecsms.pages.dev',
     };
@@ -439,6 +451,55 @@ async function main() {
       `ตัวแปร ${declared.length} ตัวจาก render.yaml บูตผ่าน · ` +
       `ที่จำเป็นครบ ${REQUIRED.length} ตัว · env ว่างยังถูกปฏิเสธ ${emptyErrors.length} ข้อ`
     );
+  });
+
+  await check('HARD-10 เลขบัตรประชาชนเข้ารหัสจริง ไม่ใช่แค่เปลี่ยนรูปแบบ', () => {
+    /*
+     * ─── ทำไมต้องพิสูจน์ที่ระดับไบต์ ───
+     * `person.national_id_enc` มีมาตั้งแต่ 0002 พร้อมคอมเมนต์ว่า
+     * "เข้ารหัสแล้ว" และ `national_id_hash` มีคอมเมนต์ว่า "HMAC-SHA256"
+     * ทั้งสองอย่างไม่เป็นจริงมาห้าสิบกว่า migration — คอลัมน์แรกไม่เคยมี
+     * ใครเขียน ส่วนคอลัมน์ที่สองเป็น sha256 เปล่า
+     *
+     * เทสต์ที่ตรวจว่า "มีค่าอยู่" จึงพิสูจน์อะไรไม่ได้เลย ต้องตรวจว่า
+     * ไบต์ที่ได้ **ไม่ซ้ำกันเมื่อเข้ารหัสค่าเดิมสองครั้ง** (คือมี IV จริง)
+     * และ **ถอดด้วยกุญแจผิดไม่ได้**
+     */
+    const key = Buffer.alloc(32, 5).toString('base64');
+    const other = Buffer.alloc(32, 6).toString('base64');
+    const id = '1104000247449';
+
+    const a = encryptNationalId(id, key);
+    const b = encryptNationalId(id, key);
+    expect(!a.equals(b), 'เข้ารหัสค่าเดิมสองครั้งต้องได้ไบต์ต่างกัน (ต้องมี IV สุ่มจริง)');
+    expect(!a.includes(Buffer.from(id, 'utf8')), 'ต้องไม่มีเลขเปล่าอยู่ในไบต์ที่เก็บ');
+
+    const keys = new Map([[keyIdOf(key), key]]);
+    expect(decryptNationalId(a, keys) === id, 'ถอดด้วยกุญแจที่ถูกต้องต้องได้เลขเดิม');
+    expect(decryptNationalId(b, keys) === id, 'ไบต์คนละชุดต้องถอดได้เลขเดียวกัน');
+
+    expect(
+      decryptNationalId(a, new Map([[keyIdOf(other), other]])) === null,
+      'กุญแจผิดต้องถอดไม่ได้',
+    );
+
+    // แก้ไบต์กลางทางแล้วต้องถอดไม่ได้ ไม่ใช่ได้เลขที่เพี้ยนไปพิมพ์ลงใบ รบ.
+    const tampered = Buffer.from(a);
+    tampered[tampered.length - 1] ^= 0xff;
+    expect(decryptNationalId(tampered, keys) === null, 'ไบต์ที่ถูกแก้ต้องถอดไม่ได้');
+
+    // ค่าแฮชต้องขึ้นกับกุญแจ มิฉะนั้นไล่เดาครบ 10¹² ค่าได้ในไม่กี่นาที
+    const h1 = hashNationalId(id, 'a'.repeat(48));
+    const h2 = hashNationalId(id, 'b'.repeat(48));
+    expect(!h1.equals(h2), 'ค่าแฮชต้องต่างกันเมื่อกุญแจต่างกัน — มิฉะนั้นเป็นแฮชเปล่า');
+    expect(h1.equals(hashNationalId('1-1040-00247-44-9', 'a'.repeat(48))),
+      'รูปแบบที่มีขีดคั่นต้องได้ค่าแฮชเดียวกัน มิฉะนั้นจะกันซ้ำไม่ได้');
+
+    // หลักตรวจสอบของเลขบัตรต้องถูกบังคับก่อนเข้ารหัส
+    expect(isValidThaiNationalId(id), 'เลขที่ถูกต้องต้องผ่าน');
+    expect(!isValidThaiNationalId('1104000247448'), 'เลขที่หลักตรวจสอบผิดต้องไม่ผ่าน');
+
+    return 'IV สุ่มจริง · กุญแจผิดถอดไม่ได้ · ไบต์ที่ถูกแก้ถอดไม่ได้ · แฮชมีกุญแจ';
   });
 
   await app.close();
