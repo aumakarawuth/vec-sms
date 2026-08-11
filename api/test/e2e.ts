@@ -2358,6 +2358,143 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ พฤติกรรม คัดกรอง และเยี่ยมบ้าน (0056) ══');
+
+  let deductRule = '';
+
+  await check('API-132 ตั้งกฎพฤติกรรมและมองเห็นได้ทั้งวิทยาลัย', async () => {
+    // กฎที่ไม่มีใครรู้ล่วงหน้าไม่ใช่กฎ — นักศึกษาต้องเห็นว่าทำอะไรแล้วถูกหักเท่าไร
+    const mk = await director('/behavior/rules', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: 'LATE-01', nameTh: 'มาสายเกิน 15 นาที', direction: 'deduct', points: 5,
+      }),
+    });
+    expect(mk.status < 400, `สร้างกฎไม่สำเร็จ ${mk.status} ${JSON.stringify(mk.body)}`);
+    deductRule = mk.body.id;
+
+    const seen = await student('/behavior/rules');
+    expect(seen.status === 200, `นักศึกษาควรอ่านกฎได้ ได้ ${seen.status}`);
+    expect(seen.body.some((r: any) => r.id === deductRule), 'นักศึกษาต้องเห็นกฎที่ประกาศใช้');
+    return `${seen.body.length} ข้อ`;
+  });
+
+  await check('API-133 นักศึกษาตั้งกฎเองไม่ได้', async () => {
+    const r = await student('/behavior/rules', {
+      method: 'POST',
+      body: JSON.stringify({ code: 'HACK', nameTh: 'ให้คะแนนตัวเอง', direction: 'award', points: 99 }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  let recordId = '';
+
+  await check('API-134 บันทึกพฤติกรรมแล้วคืนยอดใหม่มาด้วย', async () => {
+    /*
+     * คนบันทึกต้องรู้ทันทีว่าคนนี้ตกเกณฑ์แล้วหรือยัง ถ้าไม่คืนยอดมาด้วย
+     * หน้าจอต้องยิงอีกคำขอเพื่อรู้เรื่องเดียวกัน — และคนที่ไม่ยิงจะไม่รู้เลย
+     */
+    const r = await teacher('/behavior/records', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, ruleId: deductRule, detail: 'มาสายคาบแรก',
+      }),
+    });
+    expect(r.status < 400, `บันทึกไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    recordId = r.body.id;
+    expect(r.body.points === 5, `ควรใช้คะแนนของกฎ (5) ได้ ${r.body.points}`);
+    expect(r.body.status?.balance !== undefined, 'ต้องคืนยอดคะแนนใหม่มาด้วย');
+    expect(r.body.status?.band, 'ต้องคืนระดับเตือนมาด้วย ไม่ใช่ตัวเลขเปล่า');
+    return `ยอดคงเหลือ ${r.body.status.balance} · ระดับ ${r.body.status.band}`;
+  });
+
+  await check('API-135 นักศึกษาบันทึกพฤติกรรมของตัวเองไม่ได้', async () => {
+    /*
+     * ก่อน 0056 ยิง SQL ตรงแล้วนักศึกษาให้คะแนนตัวเอง 50 คะแนน แก้คะแนน
+     * ที่ถูกหักเป็น 0 และลบประวัติทั้งหมดของตัวเองได้ (ยอด 90 → 100)
+     * ข้อนี้ปิดที่ชั้น API ส่วนชั้นฐานข้อมูลปิดที่ TEST 251
+     */
+    const r = await student('/behavior/records', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, ruleId: deductRule }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+
+    const del = await student(`/behavior/records/${recordId}`, { method: 'DELETE' });
+    expect(del.status === 403, `ลบประวัติของตัวเองควรได้ 403 ได้ ${del.status}`);
+  });
+
+  await check('API-136 นักศึกษาอ่านคะแนนของตัวเองได้', async () => {
+    // การปิดช่องเขียนต้องไม่ปิดการอ่านไปด้วย — นโยบาย restrictive แบบ
+    // for all กิน select ซึ่งเป็นกับดักที่เจอมาแล้วใน 0053
+    const r = await student(`/behavior/students/${F.student}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.status?.balance !== undefined, 'ต้องเห็นยอดคะแนนของตัวเอง');
+    expect(r.body.records.length > 0, 'ต้องเห็นประวัติของตัวเอง');
+    return `${r.body.records.length} รายการ · ยอด ${r.body.status.balance}`;
+  });
+
+  await check('API-137 รายชื่อผู้ที่คะแนนต่ำกว่าเกณฑ์', async () => {
+    const r = await director('/behavior/watchlist');
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(Array.isArray(r.body), 'ควรคืนอาร์เรย์');
+    // ทุกแถวต้องไม่ใช่ 'ok' มิฉะนั้นรายการเฝ้าระวังจะเต็มไปด้วยคนปกติ
+    expect(r.body.every((x: any) => x.band !== 'ok'), 'ต้องไม่มีคนที่คะแนนปกติในรายการ');
+    return `${r.body.length} คน`;
+  });
+
+  await check('API-138 บันทึกผลคัดกรองและเยี่ยมบ้าน', async () => {
+    const sc = await director('/behavior/screenings', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, instrument: 'SDQ', assessedOn: '2026-06-01',
+        band: 'at_risk', score: 18,
+      }),
+    });
+    expect(sc.status < 400, `บันทึกผลคัดกรองไม่สำเร็จ ${sc.status} ${JSON.stringify(sc.body)}`);
+
+    const hv = await director('/behavior/home-visits', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, visitedOn: '2026-06-10',
+        findings: 'อาศัยกับยาย', followUp: 'ติดตามอีกครั้งภาคหน้า',
+      }),
+    });
+    expect(hv.status < 400, `บันทึกเยี่ยมบ้านไม่สำเร็จ ${hv.status} ${JSON.stringify(hv.body)}`);
+
+    const list = await director(`/behavior/screenings/${F.student}`);
+    expect(list.body.length > 0, 'ต้องเห็นผลคัดกรองที่เพิ่งบันทึก');
+    return `คัดกรอง ${list.body.length} ครั้ง`;
+  });
+
+  await check('API-139 ครูผู้สอนเปิดผลคัดกรองไม่ได้', async () => {
+    /*
+     * ต้องได้ 403 ไม่ใช่อาร์เรย์ว่าง — อาร์เรย์ว่างอ่านได้ว่า "ยังไม่เคย
+     * คัดกรอง" ซึ่งทำให้ครูไปถามเจ้าตัวหรือผู้ปกครองเอง แล้วข้อมูลอ่อนไหว
+     * จะไปอยู่นอกระบบ (เหตุผลเดียวกับแท็บข้อมูลอ่อนไหวใน 0053)
+     */
+    const r = await teacher(`/behavior/screenings/${F.student}`);
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-140 ปิดกฎแทนการลบ เพื่อไม่ให้ประวัติเก่าเสียความหมาย', async () => {
+    const r = await director(`/behavior/rules/${deductRule}`, { method: 'DELETE' });
+    expect(r.status < 400, `ปิดกฎไม่สำเร็จ ${r.status}`);
+
+    const active = await director('/behavior/rules');
+    expect(!active.body.some((x: any) => x.id === deductRule), 'กฎที่ปิดแล้วต้องไม่อยู่ในรายการปกติ');
+
+    const all = await director('/behavior/rules?all=true');
+    expect(all.body.some((x: any) => x.id === deductRule), 'แต่ต้องยังค้นเจอได้ เพราะประวัติเก่าอ้างอยู่');
+
+    // ประวัติที่บันทึกไว้ยังต้องอ่านได้และยังรู้ว่าหักด้วยเหตุผลอะไร
+    const hist = await director(`/behavior/students/${F.student}`);
+    const old = hist.body.records.find((x: any) => x.id === recordId);
+    expect(old?.rule_th, 'ประวัติเก่าต้องยังบอกได้ว่าหักด้วยกฎข้อไหน');
+    return 'ปิดแล้วแต่ประวัติยังอ่านได้';
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

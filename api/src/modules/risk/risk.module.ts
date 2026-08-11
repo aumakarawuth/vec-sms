@@ -12,6 +12,7 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { BehaviorController, BehaviorService } from './behavior';
 import { PageParams, parsePage, toPage } from '../../common/pagination/pagination';
 
 class TermDto {
@@ -187,8 +188,8 @@ class RiskController {
 }
 
 @Module({
-  controllers: [RiskController],
-  providers: [RiskService],
-  exports: [RiskService],
+  controllers: [RiskController, BehaviorController],
+  providers: [RiskService, BehaviorService],
+  exports: [RiskService, BehaviorService],
 })
 export class RiskModule {}

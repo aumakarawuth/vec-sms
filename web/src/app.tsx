@@ -12,6 +12,7 @@ import { href, useRoute } from './core/router';
 import { AcademicYearScreen } from './screens/academic-year';
 import { AdmissionsScreen } from './screens/admissions';
 import { AttendanceScreen } from './screens/attendance';
+import { BehaviorScreen } from './screens/behavior';
 import { ChangeRequestsScreen } from './screens/change-requests';
 import { CurriculumScreen } from './screens/curriculum';
 import { DocumentsScreen } from './screens/documents';
@@ -82,6 +83,11 @@ const NAV: NavGroup[] = [
       {
         path: '/risk',
         label: 'เฝ้าระวังและติดตาม',
+        roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
+      },
+      {
+        path: '/behavior',
+        label: 'พฤติกรรมและการดูแล',
         roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
       },
       {
@@ -184,6 +190,7 @@ function Routes() {
   if (head === 'finance') return <FinanceScreen />;
   if (head === 'leaves') return <StudentLeaveScreen />;
   if (head === 'letters') return <LettersScreen />;
+  if (head === 'behavior') return <BehaviorScreen />;
 
   return (
     <div className="empty">
