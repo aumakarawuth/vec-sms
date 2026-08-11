@@ -90,11 +90,16 @@ export interface Transcript67Payload {
     qualification_th: string; qualification_abbr_th: string;
     type_en?: string; name_en?: string; track_en?: string;
     qualification_en?: string;
+    is_continuing?: boolean;
   } | null;
   graduation: { completed_on: string; gpax: string; credits_earned: string } | null;
   summary: { credits_earned: string | number; gpax: string | number | null };
   term_summaries: TermSummary[];
   category_tree: Head67[];
+  prior_education?: {
+    level_th: string; school_th: string; province_th: string;
+    program_th: string; year_be: number | null; gpax: string | number | null;
+  } | null;
   institution_text?: Record<string, { th: string; en: string }>;
   professional_standard?: { no: string; passed: boolean | null; on_date: string | null };
 }
@@ -145,6 +150,7 @@ function gradeCell(c: Course67): string {
 const L = {
   th: {
     title: (edition: number, q: string) => `ระเบียนแสดงผลการเรียนตามหลักสูตร${q} พุทธศักราช ${edition}`,
+    prevProgram: 'สาขาวิชาเดิม',
     schoolCode: 'รหัสสถานศึกษา', schoolName: 'ชื่อสถานศึกษา', province: 'จังหวัด',
     studentCode: 'รหัสประจำตัว', name: 'ชื่อ - ชื่อสกุล',
     ethnic: 'เชื้อชาติ    สัญชาติ    ศาสนา', birth: 'วัน เดือน ปีเกิด',
@@ -171,7 +177,13 @@ const L = {
     criteria: 'เกณฑ์การสำเร็จหลักสูตร', notes: 'หมายเหตุ', memo: 'บันทึก',
   },
   en: {
-    title: (edition: number, q: string) => `TRANSCRIPT OF RECORD — ${q} B.E. ${edition}`,
+    /*
+     * ─── ฉบับอังกฤษใช้ปีคริสต์ศักราช ไม่ใช่ พ.ศ. ───
+     * ใบจริงพิมพ์ "2024 CURRICULUM OF THE …" ซึ่งเป็นข้อที่เดาไม่ถูก
+     * ถ้าไม่ได้เปิดไฟล์ดู — แปลง พ.ศ. เป็น ค.ศ. ที่นี่ที่เดียว
+     */
+    title: (edition: number, q: string) => `${edition - 543} CURRICULUM OF THE ${q}`,
+    prevProgram: 'Previous Field of Study',
     schoolCode: 'School Code', schoolName: 'School Name', province: 'Province',
     studentCode: 'Student ID', name: 'Name - Surname',
     ethnic: 'Ethnicity    Nationality    Religion', birth: 'Date of Birth',
@@ -419,7 +431,18 @@ export function renderTranscript67(doc: Transcript67Document): string {
                              : d.student.full_name_th;
   const school = lang === 'en' ? (d.institution.name_en || d.institution.name_th)
                                : d.institution.name_th;
-  const qual = lang === 'en' ? (prog?.qualification_en ?? '') : (prog?.qualification_th ?? '');
+  /*
+   * ─── ชื่อคุณวุฒิบนหัวเรื่องต่างจากในบล็อกหัว ───
+   * หัวเรื่องของใบจริงใช้ถ้อยคำเฉพาะ (CERTIFICATE / DIPLOMA IN VOCATIONAL
+   * EDUCATION) และเติม "(ต่อเนื่อง)" ให้หลักสูตรต่อเนื่องเฉพาะฉบับไทย
+   * — ฉบับอังกฤษของ ปวส. ต่อเนื่องใช้ชื่อเดียวกับ ปวส. ปกติ (วัดจากไฟล์จริง)
+   */
+  const cont = prog?.is_continuing ? ' (ต่อเนื่อง)' : '';
+  const qual = lang === 'en'
+    ? (prog?.level === 'PVS' ? 'DIPLOMA IN VOCATIONAL EDUCATION'
+      : prog?.level === 'PVC' ? 'CERTIFICATE IN VOCATIONAL EDUCATION'
+      : (prog?.qualification_en ?? ''))
+    : `${prog?.qualification_th ?? ''}${cont}`;
 
   const rows = buildRows(d.category_tree ?? [], lang);
   // แบ่งสองหน้าตามใบจริง — กิจกรรมเสริมหลักสูตรและบรรทัดสรุปท้ายอยู่หน้า 2
@@ -458,10 +481,17 @@ export function renderTranscript67(doc: Transcript67Document): string {
       ${field(t.progName, esc(lang === 'en' ? (prog?.name_en ?? '') : (prog?.name_th ?? '')))}
     </dl>
     <dl>
-      ${field(t.prevSchool, '')}
-      ${field(t.province, '')}
-      ${field(t.prevLevel, '')}
-      ${field(t.prevYear, '')}
+      ${field(t.prevSchool, esc(d.prior_education?.school_th ?? ''))}
+      ${field(t.province, esc(d.prior_education?.province_th ?? ''))}
+      ${field(t.prevLevel, esc(d.prior_education?.level_th ?? ''))}
+      ${/*
+          ปวส. มีช่อง "สาขาวิชาเดิม" เพิ่มมาหนึ่งช่องที่ ปวช. ไม่มี
+          เพราะผู้เข้า ปวส. จบ ปวช. มา สาขาเดิมจึงมีความหมายกับการเทียบโอน
+        */ ''}
+      ${prog?.level === 'PVS'
+        ? field(t.prevProgram, esc(d.prior_education?.program_th ?? '-'))
+        : ''}
+      ${field(t.prevYear, esc(d.prior_education?.year_be ?? ''))}
       ${field(t.admitted, esc(d.student.admitted_year_be ?? ''))}
       ${field(t.transferred, '-')}
       ${field(t.attempted, esc(credits(d.summary?.credits_earned)))}

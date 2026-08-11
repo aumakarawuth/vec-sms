@@ -2875,6 +2875,34 @@ async function main() {
   });
 
   console.log('');
+  await check('API-159 หัวเรื่องใบ รบ. ต่างตามระดับและหลักสูตรต่อเนื่อง', async () => {
+    /*
+     * วัดจากไฟล์จริง — ปวช. กับ ปวส. ใช้ถ้อยคำคุณวุฒิต่างกัน และ ปวส.
+     * ต่อเนื่องเติม "(ต่อเนื่อง)" เฉพาะฉบับไทย ส่วนฉบับอังกฤษใช้ชื่อเดียว
+     * กับ ปวส. ปกติ · และฉบับอังกฤษใช้ **ปีคริสต์ศักราช** ไม่ใช่ พ.ศ.
+     * ซึ่งเป็นข้อที่เดาไม่ถูกถ้าไม่ได้เปิดไฟล์ดู
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    const level = issued.body.payload.program?.level;
+
+    if (level === 'PVC') {
+      expect(html.includes('ประกาศนียบัตรวิชาชีพ พุทธศักราช'),
+        'ปวช. ต้องใช้ถ้อยคำ "ประกาศนียบัตรวิชาชีพ"');
+      expect(!html.includes('สาขาวิชาเดิม'),
+        'ปวช. ไม่มีช่องสาขาวิชาเดิม — ช่องนี้มีเฉพาะ ปวส.');
+    } else if (level === 'PVS') {
+      expect(html.includes('ประกาศนียบัตรวิชาชีพชั้นสูง'),
+        'ปวส. ต้องใช้ถ้อยคำ "ประกาศนียบัตรวิชาชีพชั้นสูง"');
+      expect(html.includes('สาขาวิชาเดิม'), 'ปวส. ต้องมีช่องสาขาวิชาเดิม');
+    }
+    return `ระดับ ${level}`;
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {
