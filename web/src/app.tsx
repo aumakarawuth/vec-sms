@@ -16,6 +16,7 @@ import { BehaviorScreen } from './screens/behavior';
 import { ChangeRequestsScreen } from './screens/change-requests';
 import { CurriculumScreen } from './screens/curriculum';
 import { DocumentsScreen } from './screens/documents';
+import { DualScreen } from './screens/dual';
 import { FinanceScreen } from './screens/finance';
 import { GradebookScreen } from './screens/gradebook';
 import { GraduationScreen } from './screens/graduation';
@@ -68,6 +69,12 @@ const NAV: NavGroup[] = [
       { path: '/curriculum', label: 'โครงสร้างหลักสูตร', roles: OFFICE },
       { path: '/timetable', label: 'ตารางสอน', roles: OFFICE },
       { path: '/academic-year', label: 'งานวิชาการรายปี', roles: OFFICE },
+      {
+        path: '/dual',
+        label: 'ทวิภาคีและสถานประกอบการ',
+        // ครูนิเทศเป็นคนรับรองชั่วโมง จึงต้องเข้าถึงได้แม้ไม่ใช่บทบาทระดับวิทยาลัย
+        roles: ['teacher', 'academic', 'registrar', 'director', 'admin'],
+      },
       { path: '/gradebook', label: 'สมุดคะแนน', roles: ['teacher', 'academic', 'director', 'admin'] },
       { path: '/attendance', label: 'เช็คชื่อรายคาบ', roles: ['teacher', 'registrar', 'academic', 'admin'] },
       {
@@ -191,6 +198,7 @@ function Routes() {
   if (head === 'leaves') return <StudentLeaveScreen />;
   if (head === 'letters') return <LettersScreen />;
   if (head === 'behavior') return <BehaviorScreen />;
+  if (head === 'dual') return <DualScreen />;
 
   return (
     <div className="empty">

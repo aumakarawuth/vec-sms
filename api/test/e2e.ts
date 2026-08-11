@@ -2591,6 +2591,150 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ ทวิภาคีและสถานประกอบการ ══');
+
+  /*
+   * โมดูลนี้มี 20 กว่าเส้นทางและ **ไม่เคยมีเทสต์ HTTP เลยสักข้อ** —
+   * รูปเดียวกับที่ทำให้ข้อ 6, 14 และ 16 หลุดมาได้ คือของที่มีอยู่จริง
+   * แต่ไม่มีอะไรเดินเส้นทางของมันตั้งแต่ต้นจนจบ
+   */
+  let workplaceId = '';
+  let placementId = '';
+
+  await check('API-147 สถานประกอบการที่ยังไม่อนุมัติ ส่งนักศึกษาไปฝึกไม่ได้', async () => {
+    /*
+     * การประเมินสถานประกอบการก่อนส่งเด็กไปเป็นข้อกำหนดของหลักสูตรทวิภาคี
+     * — ถ้าข้ามได้ วิทยาลัยจะส่งนักศึกษาไปที่ที่ยังไม่มีใครไปดูเลย
+     */
+    const mk = await registrar('/workplaces', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: `WP-T${Math.floor(Math.random() * 9000 + 1000)}`,
+        nameTh: 'บริษัททดสอบทวิภาคี จำกัด',
+        industry: 'ซ่อมบำรุงยานยนต์', province: 'เชียงใหม่',
+        lat: 18.79, lng: 98.98, checkinRadiusM: 200,
+      }),
+    });
+    expect(mk.status < 400, `สร้างไม่สำเร็จ ${mk.status} ${JSON.stringify(mk.body)}`);
+    workplaceId = mk.body.id;
+    expect(mk.body.status === 'draft', `สร้างใหม่ต้องเป็น draft ได้ ${mk.body.status}`);
+
+    const early = await registrar('/dual/placements', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, workplaceId,
+        startsOn: '2026-06-01', endsOn: '2026-09-30', targetHours: 400,
+      }),
+    });
+    expect(early.status >= 400,
+      `ส่งไปที่ที่ยังไม่อนุมัติควรถูกปฏิเสธ ได้ ${early.status}`);
+    return 'สร้างได้ · แต่ส่งเด็กไปยังไม่ได้';
+  });
+
+  await check('API-148 งานทะเบียนสร้างสถานประกอบการได้ แต่อนุมัติไม่ได้', async () => {
+    // คนที่กรอกข้อมูลกับคนที่รับรองว่าไปประเมินมาแล้วต้องไม่ใช่คนเดียวกัน
+    const deny = await registrar(`/workplaces/${workplaceId}/approve`, {
+      method: 'POST', body: JSON.stringify({ assessedOn: '2026-05-01' }),
+    });
+    expect(deny.status === 403, `ควรได้ 403 ได้ ${deny.status}`);
+
+    const ok = await director(`/workplaces/${workplaceId}/approve`, {
+      method: 'POST', body: JSON.stringify({ assessedOn: '2026-05-01' }),
+    });
+    expect(ok.status < 400, `ผู้บริหารควรอนุมัติได้ ได้ ${ok.status} ${JSON.stringify(ok.body)}`);
+    return 'แยกคนกรอกกับคนรับรอง';
+  });
+
+  await check('API-149 ชั่วโมงที่ยังไม่รับรองต้องไม่ถูกนับรวมกับที่รับรองแล้ว', async () => {
+    /*
+     * สองตัวเลขนี้ตอบคนละคำถาม — "รับรองแล้ว" คือความคืบหน้าจริงตามหลักสูตร
+     * "รอรับรอง" คือภาระงานของครูนิเทศ ถ้ารวมเป็นตัวเดียว นักศึกษาที่
+     * "ครบ 400 ชั่วโมง" อาจแค่กรอกครบโดยไม่มีใครรับรองสักชั่วโมง
+     */
+    const pl = await registrar('/dual/placements', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, workplaceId,
+        startsOn: '2026-06-01', endsOn: '2026-09-30', targetHours: 400,
+      }),
+    });
+    expect(pl.status < 400, `สร้างใบส่งตัวไม่สำเร็จ ${pl.status} ${JSON.stringify(pl.body)}`);
+    placementId = pl.body.id;
+
+    for (const d of ['2026-06-01', '2026-06-02']) {
+      const lg = await registrar('/practicum/logs', {
+        method: 'POST',
+        body: JSON.stringify({
+          studentId: F.student, placementId, workplaceId,
+          workedOn: d, hours: 7.5, description: 'ซ่อมบำรุงเครื่องยนต์',
+          source: 'teacher',
+        }),
+      });
+      expect(lg.status < 400, `บันทึกชั่วโมงไม่สำเร็จ ${lg.status} ${JSON.stringify(lg.body)}`);
+    }
+
+    const before = await registrar('/dual/placements?status=planned');
+    const mine = before.body.find((x: any) => x.id === placementId);
+    expect(Number(mine.verified_hours) === 0,
+      `ยังไม่รับรอง ชั่วโมงที่นับต้องเป็น 0 ได้ ${mine.verified_hours}`);
+    expect(Number(mine.pending_hours) === 15,
+      `รอรับรองควรเป็น 15 ได้ ${mine.pending_hours}`);
+
+    const pend = await registrar('/practicum/pending?all=true');
+    const ids = pend.body
+      .filter((x: any) => x.student_code)
+      .map((x: any) => x.id);
+    expect(ids.length >= 2, 'ต้องเห็นรายการที่รอรับรอง');
+
+    const vr = await registrar('/practicum/verify', {
+      method: 'POST', body: JSON.stringify({ logIds: ids, verify: true }),
+    });
+    expect(vr.status < 400, `รับรองไม่สำเร็จ ${vr.status} ${JSON.stringify(vr.body)}`);
+
+    const after = await registrar('/dual/placements?status=planned');
+    const now = after.body.find((x: any) => x.id === placementId);
+    expect(Number(now.verified_hours) === 15,
+      `รับรองแล้วต้องนับ 15 ได้ ${now.verified_hours}`);
+    expect(Number(now.pending_hours) === 0,
+      `รอรับรองต้องเหลือ 0 ได้ ${now.pending_hours}`);
+    return 'ก่อนรับรอง 0/15 · หลังรับรอง 15/0';
+  });
+
+  await check('API-150 นักศึกษาบันทึกชั่วโมงเองได้ แต่รับรองเองไม่ได้', async () => {
+    const lg = await student('/practicum/logs', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, placementId, workplaceId,
+        workedOn: '2026-06-03', hours: 8, description: 'บันทึกเอง',
+        source: 'student_app',
+      }),
+    });
+    expect(lg.status < 400, `นักศึกษาควรบันทึกได้ ได้ ${lg.status} ${JSON.stringify(lg.body)}`);
+
+    const vr = await student('/practicum/verify', {
+      method: 'POST', body: JSON.stringify({ logIds: [lg.body.id], verify: true }),
+    });
+    expect(vr.status === 403,
+      `รับรองเองควรได้ 403 ได้ ${vr.status} — มิฉะนั้นชั่วโมงฝึกจะเป็นตัวเลขที่เจ้าตัวกรอกเองล้วน`);
+    return 'บันทึกได้ · รับรองเองไม่ได้';
+  });
+
+  await check('API-151 ใบส่งตัวที่ซ้อนช่วงเวลากันไม่ได้', async () => {
+    /*
+     * นักศึกษาคนหนึ่งไปฝึกสองที่พร้อมกันไม่ได้ — ฐานข้อมูลกันด้วย
+     * exclusion constraint ซึ่งกันได้ทุกทางที่เขียนเข้ามา ไม่ใช่แค่ทางนี้
+     */
+    const dup = await registrar('/dual/placements', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, workplaceId,
+        startsOn: '2026-08-01', endsOn: '2026-10-31', targetHours: 200,
+      }),
+    });
+    expect(dup.status >= 400, `ควรถูกปฏิเสธ ได้ ${dup.status}`);
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {
