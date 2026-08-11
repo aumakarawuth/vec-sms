@@ -8,10 +8,10 @@
  * มิฉะนั้นเจ้าหน้าที่จะไม่รู้ว่าต้องตามใคร
  */
 import { useState } from 'react';
-import { API_BASE, api } from '../core/api';
+import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { num } from '../core/fmt';
-import { AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
 import { TermDates, TermSelect, useTermPicker } from '../ui/term-picker';
 
 interface StudentRow {
@@ -258,20 +258,17 @@ export function RegistrationScreen() {
               เพิ่ม-ถอนมันถูกพิมพ์ซ้ำหลายรอบ ถ้าตรึงไว้จะได้ใบที่ไม่ตรงกับ
               รายวิชาจริง และถ้าให้เลขที่เอกสารก็จะกินเลขเพิ่มทุกครั้งที่กด
             */}
-            <button
-              disabled={pickedStudents.size !== 1 || !termId}
-              title="พิมพ์ได้ทีละคน — เลือกนักศึกษาหนึ่งคน"
-              onClick={() => {
-                const id = [...pickedStudents][0];
-                window.open(
-                  `${API_BASE}/reports/registration/${id}?termId=${termId}`,
-                  '_blank',
-                  'noopener',
-                );
-              }}
-            >
-              พิมพ์ใบลงทะเบียน
-            </button>
+            {pickedStudents.size === 1 && termId ? (
+              <PrintButton
+                path={`/reports/registration/${[...pickedStudents][0]}?termId=${termId}`}
+              >
+                พิมพ์ใบลงทะเบียน
+              </PrintButton>
+            ) : (
+              <button disabled title="พิมพ์ได้ทีละคน — เลือกนักศึกษาหนึ่งคน">
+                พิมพ์ใบลงทะเบียน
+              </button>
+            )}
           </div>
           <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
             เพดานหน่วยกิตและวิชาบังคับก่อนถูกตรวจที่ฐานข้อมูลเสมอ

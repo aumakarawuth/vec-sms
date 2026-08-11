@@ -12,9 +12,13 @@
  * ที่อธิบายย้อนหลังได้ว่าทำไมเอกสารเลขนั้นถึงใช้ไม่ได้
  */
 import { useState } from 'react';
-import { api, API_BASE } from '../core/api';
+import { api } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead,
+  PrintButton, PrintPaperControl, printQuery, readPrintPaper, TableCard,
+  useAsync, type PrintPaper,
+} from '../ui/kit';
 
 const KIND: Record<string, string> = {
   transcript: 'ระเบียนแสดงผลการเรียน (รบ.)',
@@ -45,6 +49,7 @@ export function DocumentsScreen() {
   const [studentId, setStudentId] = useState('');
   const [kind, setKind] = useState('transcript');
   const [reason, setReason] = useState('');
+  const [paper, setPaper] = useState<PrintPaper>(readPrintPaper);
 
   const students = useAsync(
     () => api.get<StudentRow[]>(`/students?limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
@@ -110,6 +115,12 @@ export function DocumentsScreen() {
                 เนื้อหาทั้งใบถูกตรึงไว้ตั้งแต่วันที่ออก การพิมพ์ซ้ำจะได้ใบเดิมเสมอ
                 ไม่ใช่ข้อมูลวันนี้
               </div>
+              {/*
+                ตัวเลือกกระดาษไม่ได้อยู่ใน payload โดยตั้งใจ — กระดาษที่ใส่
+                ในเครื่องพิมพ์วันนี้กับระยะที่ถาดป้อนเหลื่อม เป็นเรื่องของการ
+                พิมพ์ครั้งนี้ ใบเดิมต้องพิมพ์ลงกระดาษเปล่าได้ในปีหน้า
+              */}
+              <PrintPaperControl value={paper} onChange={setPaper} />
             </div>
           </Card>
 
@@ -148,13 +159,11 @@ export function DocumentsScreen() {
                             </span>
                           ) : (
                             <>
-                              <a
-                                href={`${API_BASE}/documents/${d.id}/print`}
-                                target="_blank"
-                                rel="noreferrer"
+                              <PrintButton
+                                path={`/documents/${d.id}/print${printQuery(paper)}`}
                               >
                                 พิมพ์จากต้นฉบับ
-                              </a>
+                              </PrintButton>
                               {' · '}
                               <VoidButton id={d.id} onDone={() => docs.reload()} reason={reason} setReason={setReason} />
                             </>

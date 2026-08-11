@@ -16,10 +16,14 @@
  * ได้ทันทีและงานที่ค้างในหน้านี้ไม่หาย
  */
 import { useState } from 'react';
-import { api, API_BASE } from '../core/api';
+import { api } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync,
+  PrintPaperControl,
+  printQuery,
+  readPrintPaper,
+  type PrintPaper,
 } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -88,8 +92,11 @@ export function LettersScreen() {
   const [purposeTh, setPurposeTh] = useState('');
   const [note, setNote] = useState('');
 
+  const [paper, setPaper] = useState<PrintPaper>(readPrintPaper);
+
   function openPrint(id: string) {
-    window.open(`${API_BASE}/documents/${id}/print`, '_blank', 'noopener');
+    // เปิดผ่าน api.openPrintable เพราะลิงก์ตรงตั้งเฮดเดอร์ token ไม่ได้
+    void api.openPrintable(`/documents/${id}/print${printQuery(paper)}`);
   }
 
   function pick(c: Candidate) {
@@ -116,6 +123,14 @@ export function LettersScreen() {
         พิมพ์ซ้ำจะได้ใบเดิมเสมอ ถ้าตัวเลขเปลี่ยนไปแล้วต้องออกใบใหม่
         (ซึ่งกินเลขที่เอกสารเพิ่มหนึ่งเลข)
       </Notice>
+
+      {/*
+        หนังสือถึงผู้ปกครองมักพิมพ์ลงกระดาษหัวจดหมายของวิทยาลัย ตัวเลือกนี้
+        จึงอยู่ตรงนี้ด้วย — ค่าเก็บที่เครื่อง ไม่ใช่ที่เอกสาร
+      */}
+      <Card>
+        <PrintPaperControl value={paper} onChange={setPaper} />
+      </Card>
 
       {result && <Notice kind="ok">{result}</Notice>}
 

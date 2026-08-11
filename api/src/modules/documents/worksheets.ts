@@ -30,10 +30,33 @@ import {
   Param,
   Query,
 } from '@nestjs/common';
+import { IsIn, IsOptional } from 'class-validator';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
-import { ParseUuidPipe } from '../../common/validation/uuid';
+import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
 import { thaiDate } from './templates';
+
+/**
+ * ตัวกรองของใบรายชื่อ — รับเป็น DTO ไม่ใช่ `@Query('mode')` เดี่ยว ๆ
+ *
+ * ─── ทำไมต้องปฏิเสธพารามิเตอร์ที่ไม่รู้จัก ───
+ * `@Query('name')` เดี่ยวจะ**เมินทุกอย่างที่ไม่ได้ขอ** ส่วน DTO ผ่าน
+ * `ValidationPipe` ที่ตั้ง `forbidNonWhitelisted` ไว้ทั้งระบบ
+ *
+ * ที่สำคัญกับใบชุดนี้คือ **เอกสารทำงานไม่รับตัวเลือกกระดาษตรา** (หลักข้อ 4ก)
+ * ถ้ารับแล้วเมินเงียบ ๆ เจ้าหน้าที่ที่ตั้งกระดาษตราไว้แล้วกดพิมพ์ใบรายชื่อ
+ * จะได้ใบที่ "ตัวเลือกไม่ทำงาน" โดยไม่มีอะไรบอก — ตอบว่าใช้ไม่ได้ตรง ๆ ดีกว่า
+ */
+class EmptyQueryDto {}
+
+class RegistrationQueryDto {
+  @IsUuid() termId!: string;
+}
+
+class RosterQueryDto {
+  @IsOptional() @IsIn(['blank'], { message: 'โหมดของใบรายชื่อมีได้แค่ blank' })
+  mode?: string;
+}
 
 function esc(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -256,9 +279,9 @@ export class WorksheetController {
   @Get('registration/:studentId')
   async registration(
     @Param('studentId', ParseUuidPipe) studentId: string,
-    @Query('termId', ParseUuidPipe) termId: string,
+    @Query() q: RegistrationQueryDto,
   ) {
-    const { head, courses, invoice } = await this.svc.registrationSlip(studentId, termId);
+    const { head, courses, invoice } = await this.svc.registrationSlip(studentId, q.termId);
 
     const totalCredits = courses.reduce(
       (a: number, x: { credits: number }) => a + Number(x.credits ?? 0), 0,
@@ -354,10 +377,10 @@ ${printedAt(
   @Get('roster/:sectionId')
   async roster(
     @Param('sectionId', ParseUuidPipe) sectionId: string,
-    @Query('mode') mode?: string,
+    @Query() q: RosterQueryDto,
   ) {
     const { head, students } = await this.svc.roster(sectionId);
-    const blank = mode === 'blank';
+    const blank = q.mode === 'blank';
     const blankCols = 12;
 
     /*
@@ -452,7 +475,10 @@ ${printedAt(
    */
   @Header('content-type', 'text/html; charset=utf-8')
   @Get('exam-eligibility/:sectionId')
-  async examEligibility(@Param('sectionId', ParseUuidPipe) sectionId: string) {
+  async examEligibility(
+    @Param('sectionId', ParseUuidPipe) sectionId: string,
+    @Query() _q: EmptyQueryDto,
+  ) {
     const { head, students } = await this.svc.roster(sectionId);
 
     const eligible = students.filter(

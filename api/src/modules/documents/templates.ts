@@ -193,6 +193,85 @@ export function thaiDate(iso: string | null | undefined): string {
   return `${Number(d)} ${month} ${Number(y) + 543}`;
 }
 
+/**
+ * ตัวเลือกตอนพิมพ์ — ไม่ใช่เนื้อหาของเอกสาร
+ *
+ * ─── ทำไมไม่เก็บลง payload ───
+ * `issued_document.payload` คือ**เนื้อหาบนใบ** ซึ่งตรึงแล้วแก้ไม่ได้
+ * ส่วนกระดาษที่ใส่ในเครื่องพิมพ์วันนี้กับระยะที่ถาดป้อนเหลื่อมของเครื่องนั้น
+ * เป็นเรื่องของ**การพิมพ์ครั้งนี้** ใบเดิมต้องพิมพ์ลงกระดาษเปล่าได้ในปีหน้า
+ * ถ้าตรึงลง payload จะกลายเป็นว่าเอกสารผูกกับเครื่องพิมพ์ที่ใช้ตอนออกใบ
+ *
+ * ─── และทำไมไม่เก็บเป็นค่าตั้งของวิทยาลัย ───
+ * วิทยาลัยหนึ่งแห่งมีเครื่องพิมพ์หลายเครื่องที่ป้อนกระดาษเหลื่อมกันคนละระยะ
+ * SISA เองก็ให้เลื่อนทีละหน่วยตอนกดพิมพ์ (`set_x`/`set_y`) ด้วยเหตุผลนี้
+ */
+export interface PrintOptions {
+  /** `letterhead` = กระดาษที่พิมพ์ตราครุฑและหัวสถานศึกษามาแล้ว */
+  paper?: 'plain' | 'letterhead';
+  /** เลื่อนตำแหน่งพิมพ์ทั้งหน้า (pt) ชดเชยถาดป้อนกระดาษที่เหลื่อม */
+  offsetX?: number;
+  offsetY?: number;
+}
+
+/** เลื่อนได้ไม่เกินครึ่งนิ้ว — เกินกว่านั้นคือดันเนื้อหาตกขอบโดยไม่มีตัวอย่างให้ดู */
+const OFFSET_LIMIT = 36;
+
+function clampOffset(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-OFFSET_LIMIT, Math.min(OFFSET_LIMIT, n));
+}
+
+/**
+ * CSS ที่แทรกทับแม่แบบตอนพิมพ์
+ *
+ * ─── ทำไมเป็นชั้นทับ ไม่ใช่พารามิเตอร์ของแม่แบบทุกตัว ───
+ * เรขาคณิตของแต่ละแม่แบบวัดมาจากไฟล์จริงคนละชุด การส่งพารามิเตอร์เข้าไป
+ * แปลว่าทุกแม่แบบต้องรู้จักตัวเลือกนี้และคำนวณขอบใหม่เอง ซึ่งจะทำให้ตัวเลข
+ * ที่วัดมากระจายไปอยู่หลายที่ — ชั้นทับเพิ่ม padding ให้ `.page` แทน
+ * ตัวเลขที่วัดมาจึงยังอยู่ที่เดิมและอ่านออกว่าอันไหนวัดมา อันไหนชดเชย
+ *
+ * ค่าที่ใช้วัดจากไฟล์คู่ `แนวตั้ง 62` กับ `แนวตั้ง 62 กระดาษตรา` ที่เป็น
+ * ข้อมูลชุดเดียวกัน — เส้นบนสุดของตารางต่างกัน +17.6 pt · ขอบล่าง +43.7 pt
+ * และฟอนต์ในตารางย่อจาก 12.5 เหลือ 10.0 เพื่อชดเชยพื้นที่ที่หายไป
+ */
+export function printOverrides(opts: PrintOptions | undefined): string {
+  if (!opts) return '';
+  const dx = clampOffset(opts.offsetX);
+  const dy = clampOffset(opts.offsetY);
+  const out: string[] = [];
+
+  if (opts.paper === 'letterhead') {
+    out.push(`
+  .page { padding-top: 17.6pt; padding-bottom: 43.7pt; }
+  /* กระดาษตรามีหัวพิมพ์มาแล้ว การพิมพ์ซ้ำจะได้ใบที่มีหัวสองชั้น
+     (ยืนยันจากไฟล์จริง — ฉบับอังกฤษกระดาษตราไม่มีทั้งชื่อเรื่องและเลขที่) */
+  .page h1, .page .docno { display: none !important; }
+  table.courses { font-size: 10pt; }`);
+  }
+
+  if (dx !== 0 || dy !== 0) {
+    // position:relative แทน transform เพราะ transform บนหน้าที่แบ่งพิมพ์
+    // ทำงานไม่เหมือนกันในแต่ละเบราว์เซอร์
+    out.push(`  .page { position: relative; left: ${dx}pt; top: ${dy}pt; }`);
+  }
+
+  return out.length ? `\n<style>${out.join('\n')}\n</style>` : '';
+}
+
+/**
+ * แทรก CSS ทับก่อนปิด `</head>` — กฎที่มาทีหลังชนะเมื่อ specificity เท่ากัน
+ *
+ * ถ้าไม่มี `</head>` (ซึ่งไม่ควรเกิด) ให้คืนของเดิมไปตรง ๆ ดีกว่าคืนหน้าเปล่า
+ */
+export function applyPrintOptions(html: string, opts: PrintOptions | undefined): string {
+  const css = printOverrides(opts);
+  if (!css) return html;
+  const at = html.lastIndexOf('</head>');
+  return at < 0 ? html : html.slice(0, at) + css + html.slice(at);
+}
+
 const MONTHS_EN = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',

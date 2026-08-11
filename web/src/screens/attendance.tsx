@@ -12,10 +12,10 @@
  * แล้วให้ครูกดทีละคนทั้งห้อง แปลว่าคาบที่ครูลืมกดจะกลายเป็นขาดทั้งห้อง
  */
 import { useEffect, useState } from 'react';
-import { API_BASE, api } from '../core/api';
+import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { pct, thaiDate } from '../core/fmt';
-import { AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const STATUS: { value: string; label: string; short: string }[] = [
@@ -123,19 +123,17 @@ export function AttendanceScreen() {
               ตั้งแต่สัปดาห์แรกใช้ไม่ได้ในสัปดาห์ที่สิบ เพราะมีคนเพิ่ม-ถอนไปแล้ว
             */}
             <div className="shrink">
-              <button onClick={() => window.open(`${API_BASE}/reports/roster/${sectionId}`, '_blank', 'noopener')}>
-                พิมพ์ใบรายชื่อ
-              </button>
+              <PrintButton path={`/reports/roster/${sectionId}`}>พิมพ์ใบรายชื่อ</PrintButton>
             </div>
             <div className="shrink">
-              <button onClick={() => window.open(`${API_BASE}/reports/roster/${sectionId}?mode=blank`, '_blank', 'noopener')}>
+              <PrintButton path={`/reports/roster/${sectionId}?mode=blank`}>
                 พิมพ์ใบเช็คชื่อเปล่า
-              </button>
+              </PrintButton>
             </div>
             <div className="shrink">
-              <button onClick={() => window.open(`${API_BASE}/reports/exam-eligibility/${sectionId}`, '_blank', 'noopener')}>
+              <PrintButton path={`/reports/exam-eligibility/${sectionId}`}>
                 ประกาศผู้มีสิทธิ์สอบ
-              </button>
+              </PrintButton>
             </div>
             <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
               ใบเช็คชื่อเปล่าไว้ถือเข้าห้องตอนอินเทอร์เน็ตล่ม —

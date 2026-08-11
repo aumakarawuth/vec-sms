@@ -7,7 +7,7 @@
  * ให้ของที่ไม่ได้ใช้อีกหลายร้อยกิโลไบต์ และบังคับรูปแบบที่ต้องเขียนทับอยู่ดี
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import { ApiError } from '../core/api';
+import { ApiError, api } from '../core/api';
 
 /* ─── การโหลดข้อมูล ─────────────────────────────────────────────── */
 
@@ -243,5 +243,125 @@ export function ActionButton({
       </button>
       {error && <Notice kind="error">{error}</Notice>}
     </>
+  );
+}
+
+/* ─── การพิมพ์ ───────────────────────────────────────────────────── */
+
+/**
+ * ปุ่มพิมพ์
+ *
+ * ─── ทำไมทุกปุ่มพิมพ์ต้องผ่านตัวนี้ ───
+ * `<a href>` และ `window.open()` ตั้งเฮดเดอร์ `Authorization` ไม่ได้ ส่วน
+ * `AuthGuard` อ่าน token จากที่นั่นอย่างเดียว ทุกลิงก์พิมพ์จึงได้ 401 ทุกครั้ง
+ * — ยืนยันด้วยการยิงจริงแล้ว (`{"message":"ต้องแนบ Bearer token"}`)
+ * `api.openPrintable()` ดึงด้วย fetch ที่มีเฮดเดอร์แล้วเขียนลงแท็บใหม่
+ */
+export function PrintButton({
+  path,
+  children,
+  className = '',
+}: {
+  path: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <ActionButton className={className} onRun={() => api.openPrintable(path)}>
+      {children}
+    </ActionButton>
+  );
+}
+
+/**
+ * ตัวเลือกกระดาษและระยะเลื่อนของเครื่องพิมพ์
+ *
+ * ─── ทำไมเก็บที่เครื่อง ไม่ใช่ที่วิทยาลัย ───
+ * วิทยาลัยหนึ่งแห่งมีเครื่องพิมพ์หลายเครื่องที่ป้อนกระดาษเหลื่อมกันคนละระยะ
+ * และเครื่องในห้องทะเบียนเครื่องหนึ่งมักใส่กระดาษตราค้างไว้ตลอด ค่านี้จึงเป็น
+ * ของ**เครื่องที่นั่งอยู่** ไม่ใช่ของสถานศึกษา
+ *
+ * ใช้ `localStorage` ไม่ใช่ `sessionStorage` ต่างจาก token โดยตั้งใจ —
+ * ค่านี้ไม่ใช่ความลับและตั้งใหม่ทุกเช้าไม่ไหว ส่วน token ต้องหายเมื่อปิดแท็บ
+ */
+export interface PrintPaper {
+  paper: 'plain' | 'letterhead';
+  dx: number;
+  dy: number;
+}
+
+const PRINT_KEY = 'vecsms.print';
+
+export function readPrintPaper(): PrintPaper {
+  try {
+    const raw = localStorage.getItem(PRINT_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<PrintPaper>;
+      return {
+        paper: v.paper === 'letterhead' ? 'letterhead' : 'plain',
+        dx: Number(v.dx) || 0,
+        dy: Number(v.dy) || 0,
+      };
+    }
+  } catch {
+    /* ค่าที่อ่านไม่ได้ให้ใช้ค่าเริ่มต้น ดีกว่าทำให้ทั้งหน้าพัง */
+  }
+  return { paper: 'plain', dx: 0, dy: 0 };
+}
+
+/** ต่อท้าย path ของการพิมพ์ — ไม่ส่งค่าที่เป็นค่าเริ่มต้นเพื่อให้ URL อ่านง่าย */
+export function printQuery(p: PrintPaper): string {
+  const q = new URLSearchParams();
+  if (p.paper === 'letterhead') q.set('paper', 'letterhead');
+  if (p.dx) q.set('offsetX', String(p.dx));
+  if (p.dy) q.set('offsetY', String(p.dy));
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+export function PrintPaperControl({
+  value,
+  onChange,
+}: {
+  value: PrintPaper;
+  onChange: (v: PrintPaper) => void;
+}) {
+  const set = (patch: Partial<PrintPaper>) => {
+    const next = { ...value, ...patch };
+    onChange(next);
+    localStorage.setItem(PRINT_KEY, JSON.stringify(next));
+  };
+
+  return (
+    <div className="row" style={{ alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+      <Field label="กระดาษ">
+        <select
+          value={value.paper}
+          onChange={(e) => set({ paper: e.target.value as PrintPaper['paper'] })}
+        >
+          <option value="plain">กระดาษเปล่า</option>
+          <option value="letterhead">กระดาษตรา (มีหัวพิมพ์มาแล้ว)</option>
+        </select>
+      </Field>
+      <Field label="เลื่อนขวา (pt)">
+        <input
+          type="number" step="0.5" min={-36} max={36} style={{ width: 90 }}
+          value={value.dx}
+          onChange={(e) => set({ dx: Number(e.target.value) || 0 })}
+        />
+      </Field>
+      <Field label="เลื่อนลง (pt)">
+        <input
+          type="number" step="0.5" min={-36} max={36} style={{ width: 90 }}
+          value={value.dy}
+          onChange={(e) => set({ dy: Number(e.target.value) || 0 })}
+        />
+      </Field>
+      <div style={{ color: 'var(--ink-soft)', fontSize: 11.5, maxWidth: 380 }}>
+        กระดาษตราจะไม่พิมพ์หัวเรื่องซ้ำและย่อตารางลงเพื่อไม่ให้ทับตรา ·
+        ค่าเลื่อนเก็บไว้ที่เครื่องนี้เครื่องเดียว เพราะแต่ละเครื่องพิมพ์
+        ป้อนกระดาษเหลื่อมกันคนละระยะ
+      </div>
+    </div>
   );
 }

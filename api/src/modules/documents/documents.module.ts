@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { IsIn, IsISO8601, IsNumber, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { Audit } from '../../common/audit/audit.interceptor';
@@ -16,7 +17,7 @@ import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
 import { WorksheetController, WorksheetService } from './worksheets';
-import { IssuedDocument, renderDocument } from './templates';
+import { IssuedDocument, PrintOptions, applyPrintOptions, renderDocument } from './templates';
 
 /**
  * เอกสารของงานทะเบียนและรายงานสำหรับหน่วยงานรัฐ
@@ -65,6 +66,30 @@ class IssueDocumentDto {
    * ฐานข้อมูลปฏิเสธเองถ้าข้อมูลภาษาอังกฤษยังกรอกไม่ครบ พร้อมบอกว่าขาดอะไร
    */
   @IsOptional() @IsIn(['th', 'en']) lang?: 'th' | 'en';
+}
+
+/**
+ * ตัวเลือกตอนพิมพ์ — ส่งมาทาง query string เพราะเป็นเรื่องของการพิมพ์ครั้งนี้
+ * ไม่ใช่ของเอกสาร (ดูเหตุผลเต็มที่ `PrintOptions` ใน templates.ts)
+ *
+ * รับเป็นข้อความแล้วแปลงเองเพราะ `ValidationPipe` ตั้ง
+ * `enableImplicitConversion: false` ไว้ทั้งระบบ — ค่าจาก query จึงเป็น string เสมอ
+ */
+class PrintOptionsDto {
+  @IsOptional() @IsIn(['plain', 'letterhead'], {
+    message: 'ชนิดกระดาษต้องเป็น plain หรือ letterhead',
+  })
+  paper?: 'plain' | 'letterhead';
+
+  @IsOptional() @Matches(/^-?\d{1,2}(\.\d+)?$/, {
+    message: 'ระยะเลื่อนแนวนอนต้องเป็นตัวเลขหน่วย pt',
+  })
+  offsetX?: string;
+
+  @IsOptional() @Matches(/^-?\d{1,2}(\.\d+)?$/, {
+    message: 'ระยะเลื่อนแนวตั้งต้องเป็นตัวเลขหน่วย pt',
+  })
+  offsetY?: string;
 }
 
 class VoidDocumentDto {
@@ -244,10 +269,10 @@ export class DocumentsService {
    * แม้แต่ชื่อสถานศึกษา — ถ้าวิทยาลัยเปลี่ยนชื่อปีหน้า ใบเก่าต้องยังพิมพ์
    * ออกมาเป็นชื่อเดิมที่ใช้ตอนออกใบ
    */
-  async print(id: string) {
+  async print(id: string, opts?: PrintOptions) {
     const doc = (await this.get(id)) as unknown as IssuedDocument;
     try {
-      return renderDocument(doc);
+      return applyPrintOptions(renderDocument(doc), opts);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
@@ -407,8 +432,12 @@ class DocumentsController {
   @Audit('issued_document', 'id')
   @Header('content-type', 'text/html; charset=utf-8')
   @Get(':id/print')
-  print(@Param('id', ParseUuidPipe) id: string) {
-    return this.svc.print(id);
+  print(@Param('id', ParseUuidPipe) id: string, @Query() q: PrintOptionsDto) {
+    return this.svc.print(id, {
+      paper: q.paper,
+      offsetX: q.offsetX === undefined ? undefined : Number(q.offsetX),
+      offsetY: q.offsetY === undefined ? undefined : Number(q.offsetY),
+    });
   }
 
   @Audit('issued_document', 'id')

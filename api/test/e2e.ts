@@ -3101,6 +3101,78 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ ตัวเลือกตอนพิมพ์ (กระดาษตรา) ══');
+
+  await check('API-164 กระดาษตราไม่พิมพ์หัวซ้ำและย่อตารางลง', async () => {
+    /*
+     * วัดจากไฟล์คู่ `แนวตั้ง 62` กับ `แนวตั้ง 62 กระดาษตรา` ที่เป็นข้อมูล
+     * ชุดเดียวกัน — ฉบับกระดาษตรา**ไม่มีทั้งชื่อเรื่องและเลขที่** เพราะ
+     * กระดาษพิมพ์มาแล้ว ถ้าพิมพ์ซ้ำจะได้ใบที่มีหัวสองชั้น
+     * และเส้นบนสุดของตารางต่ำลง 17.6 pt · ขอบล่างเพิ่ม 43.7 pt ·
+     * ฟอนต์ในตารางย่อจาก 12.5 เหลือ 10
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const base = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    const head = String(
+      (await registrar(`/documents/${issued.body.id}/print?paper=letterhead`)).body,
+    );
+
+    expect(base.includes('<h1>'), 'ใบบนกระดาษเปล่าต้องมีชื่อเรื่อง');
+    expect(head.includes('display: none !important'),
+      'กระดาษตราต้องซ่อนชื่อเรื่องและเลขที่ มิฉะนั้นจะได้ใบที่มีหัวสองชั้น');
+    expect(head.includes('padding-top: 17.6pt') && head.includes('padding-bottom: 43.7pt'),
+      'กระดาษตราต้องเลื่อนเนื้อหาลงและเว้นขอบล่างตามที่วัดจากไฟล์จริง');
+    expect(head.includes('table.courses { font-size: 10pt; }'),
+      'ตารางต้องย่อลงเพื่อชดเชยพื้นที่ที่หายไป');
+    // เนื้อหาต้องเป็นใบเดียวกัน — ตัวเลือกนี้เปลี่ยนการวางหน้า ไม่ใช่เนื้อหา
+    expect(head.includes(String(issued.body.doc_no)),
+      'เลขที่ยังต้องอยู่ในเอกสาร (แค่ไม่พิมพ์ที่มุมขวาบน)');
+    return 'ซ่อนหัว · เลื่อนลง · ย่อตาราง';
+  });
+
+  await check('API-165 ระยะเลื่อนถูกจำกัดและค่าผิดรูปแบบถูกปฏิเสธ', async () => {
+    /*
+     * ─── ทำไมต้องมีเพดาน ───
+     * ไม่มีหน้าตัวอย่างให้ดูก่อนพิมพ์ คนที่พิมพ์ 200 ลงไปจะได้กระดาษเปล่า
+     * ทั้งใบโดยไม่รู้ว่าเนื้อหาไปอยู่ไหน — จำกัดที่ครึ่งนิ้วซึ่งเกินพอสำหรับ
+     * ความเหลื่อมของถาดป้อนกระดาษ
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const ok = String(
+      (await registrar(`/documents/${issued.body.id}/print?offsetX=4.5&offsetY=-8`)).body,
+    );
+    expect(ok.includes('left: 4.5pt; top: -8pt'), 'ระยะเลื่อนต้องถูกนำไปใช้จริง');
+
+    const clamped = String((await registrar(`/documents/${issued.body.id}/print?offsetY=99`)).body);
+    expect(clamped.includes('top: 36pt'), `ต้องจำกัดที่ 36 pt ได้ ${clamped.slice(0, 0)}`);
+
+    for (const bad of ['paper=banana', 'offsetX=abc', 'offsetY=1e9', 'zoom=2']) {
+      const r = await registrar(`/documents/${issued.body.id}/print?${bad}`);
+      expect(r.status === 400, `"${bad}" ควรถูกปฏิเสธ ได้ ${r.status}`);
+    }
+    return 'ใช้ได้ในช่วง · เกินถูกจำกัด · ค่าผิดถูกปฏิเสธ';
+  });
+
+  await check('API-166 เอกสารทำงานไม่รับตัวเลือกกระดาษตรา', async () => {
+    /*
+     * ใบรายชื่อและใบเช็คชื่อเปล่าเป็น**เอกสารทำงาน** (หลักข้อ 4ก) พิมพ์ลง
+     * กระดาษเปล่าเสมอ การเปิดตัวเลือกให้ด้วยจะทำให้เจ้าหน้าที่ตั้งครั้งเดียว
+     * แล้วใบรายชื่อย่อฟอนต์ลงตามไปด้วยโดยไม่มีเหตุผล
+     */
+    const r = await registrar(`/reports/roster/${F.section}?paper=letterhead`);
+    expect(r.status === 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+    const ok = await registrar(`/reports/roster/${F.section}`);
+    expect(ok.status < 400, `ใบรายชื่อปกติต้องยังพิมพ์ได้ ได้ ${ok.status}`);
+    return 'ปฏิเสธตัวเลือกที่ไม่เกี่ยว';
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {
