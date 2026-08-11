@@ -2903,6 +2903,204 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ แม่แบบใบ รบ. ตระกูล 62 (0060) ══');
+
+  /*
+   * ─── ทำไมต้องสลับรุ่นหลักสูตรชั่วคราว ───
+   * นักศึกษาตัวอย่างของชุดนี้อยู่หลักสูตรรุ่น 67 ซึ่งเป็นรุ่นปัจจุบันและ
+   * เป็นสิ่งที่เทสต์อีกหลายข้อพึ่งอยู่ ถ้าไม่สลับ แม่แบบตระกูล 62 จะไม่มี
+   * ทางถูกเรียกผ่าน HTTP เลยสักครั้ง — เทสต์ที่ทดสอบเฉพาะเส้นทางที่ระบบจริง
+   * เดินอยู่แล้ว ไม่ได้พิสูจน์ว่าเส้นทางอีกเส้นทำงาน (บทเรียนเดียวกับ AUTH-26
+   * ที่ผ่านมาตลอดเพราะหยิบ token จากทางที่ระบบจริงไม่มี)
+   *
+   * คืนค่าเดิมใน finally เสมอ มิฉะนั้นเทสต์ที่รันทีหลังจะเห็นรุ่นผิด
+   */
+  async function withEdition<T>(editionBe: number, fn: () => Promise<T>): Promise<T> {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    const before = await db.query(
+      `select cv.id, cv.edition_be from curriculum_version cv
+         join student_curriculum sc on sc.curriculum_version_id = cv.id
+        where sc.student_id = $1 limit 1`,
+      [F.studentRegrade],
+    );
+    const cvId = before.rows[0]?.id;
+    const cvWas = before.rows[0]?.edition_be;
+    try {
+      if (cvId) {
+        await db.query('update curriculum_version set edition_be = $2 where id = $1',
+          [cvId, editionBe]);
+      }
+      return await fn();
+    } finally {
+      if (cvId) {
+        await db.query('update curriculum_version set edition_be = $2 where id = $1',
+          [cvId, cvWas]);
+      }
+      await db.end();
+    }
+  }
+
+  await check('API-160 รุ่นก่อน 67 ได้แม่แบบที่จัดตามภาคเรียนและมีคอลัมน์ผลคูณ', async () => {
+    /*
+     * ใบตระกูล 62 ต่างจาก 67 สามอย่างที่วัดจากไฟล์จริง — จัดตามภาคเรียน ·
+     * มีคอลัมน์ (1)×(2) · และ**ฉบับไทยไม่มีบรรทัดชื่อเรื่องเลย** เพราะพิมพ์
+     * ลงกระดาษที่มีหัวอยู่แล้ว การพิมพ์ชื่อเรื่องซ้ำจะได้ใบที่มีหัวสองชั้น
+     */
+    // 2562 มีอยู่แล้วในหลักสูตรเดียวกัน (unique curriculum_id, edition_be)
+    // จึงใช้ 2556 ซึ่งเป็นรุ่นที่ยังมีนักศึกษาค้างอยู่จริงในวิทยาลัยหลายแห่ง
+    const html = await withEdition(2556, async () => {
+      const issued = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.studentRegrade, kind: 'transcript' }),
+      });
+      expect(issued.status < 400, `ออกใบไม่ได้ ${issued.status}`);
+      const tree = issued.body.payload.term_tree;
+      expect(Array.isArray(tree) && tree.length > 0,
+        'นักศึกษาคนนี้มีผลการเรียนอยู่ ต้องได้โครงภาคเรียนกลับมา');
+      return String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    });
+
+    expect(html.includes('(1)') && html.includes('(2)'),
+      'ต้องมีคอลัมน์ผลคูณ (1)×(2) ซึ่งตระกูล 67 ไม่มี');
+    expect(html.includes('หน่วยกิตที่ได้ในภาค') && html.includes('หน่วยกิตสะสม'),
+      'ต้องมีบรรทัดสรุปท้ายภาคทั้งสองตัว');
+    expect(/ปีการศึกษา \d{4}(&nbsp;)+ภาคเรียนที่ \d/.test(html),
+      'ต้องมีหัวภาคเรียนคั่นกลางตาราง — ตระกูลนี้จัดกลุ่มตามภาค ไม่ใช่ตามหมวด');
+    expect(!html.includes('<h1>'),
+      'ฉบับไทยของตระกูลนี้ต้องไม่มีบรรทัดชื่อเรื่อง — เว้นที่ไว้ให้หัวกระดาษ');
+    expect(!html.includes('รบ.1'),
+      'ฉบับไทยของตระกูลนี้ไม่มีเลขที่ รบ. ที่มุมขวาบน (วัดแล้วไม่มีข้อความใดเหนือ y = 76)');
+    expect(!html.includes('หมวดวิชา') && !html.includes('กลุ่มวิชา'),
+      'ต้องไม่ปนโครงหมวด/กลุ่มวิชาของตระกูล 67 เข้ามา');
+    expect(!/(src|href)\s*=\s*["']https?:/i.test(html), 'ต้องไม่อ้างไฟล์ภายนอก');
+    return 'เลือกแม่แบบตระกูล 62 ได้ถูก · มีคอลัมน์ผลคูณและหัวภาคเรียน';
+  });
+
+  await check('API-161 ภาคที่ยังไม่ได้ตัดยอดต้องพิมพ์ "-" ไม่ใช่ตัวเลขที่เดา', async () => {
+    /*
+     * นักศึกษาคนนี้มีผลการเรียนแล้วแต่ยังไม่มีแถวใน `term_summary`
+     * (ยังไม่ได้ตัดยอดภาค) ซึ่งเป็นสภาพปกติของคนที่ขอใบระหว่างเรียน
+     *
+     * ถ้าคืน 0 หรือบวกเท่าที่มี ใบจะพิมพ์หน่วยกิตสะสมที่ต่ำกว่าความจริงและ
+     * ดูสมเหตุสมผลทุกประการ — คนถือใบไปยื่นที่อื่นไม่มีทางรู้ว่าตัวเลขขาด
+     * `transcript_term_tree()` จึงคืน null แล้วแม่แบบพิมพ์ "-" ซึ่งอ่านออกว่า
+     * "ยังไม่รู้" (ส่วนการบวกสะสมเมื่อตัดยอดครบ พิสูจน์ที่ TEST 265)
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.studentRegrade, kind: 'transcript' }),
+    });
+    const tree = issued.body.payload.term_tree as Array<Record<string, unknown>>;
+    expect(Array.isArray(tree) && tree.length > 0, 'payload ต้องมี term_tree ที่ไม่ว่าง');
+
+    let unsummarised = 0;
+    for (const t of tree) {
+      expect('credits_cum' in t, 'ทุกภาคต้องมีหน่วยกิตสะสมมาด้วย ไม่ใช่ให้แม่แบบบวกเอง');
+      expect('gpax' in t && 'gpa' in t, 'ทุกภาคต้องมีทั้งคะแนนเฉลี่ยรายภาคและสะสม');
+      if (!t.has_summary) {
+        unsummarised++;
+        expect(t.credits_cum === null,
+          'ภาคที่ยังไม่ได้ตัดยอดต้องคืนหน่วยกิตสะสมเป็น null ไม่ใช่ 0');
+      }
+    }
+    expect(unsummarised > 0,
+      'ข้อนี้ต้องมีภาคที่ยังไม่ได้ตัดยอดอย่างน้อยหนึ่ง มิฉะนั้นผ่านโดยไม่ได้ตรวจอะไร');
+    return `${tree.length} ภาค · ยังไม่ตัดยอด ${unsummarised} ภาค`;
+  });
+
+  await check('API-162 ใบที่ออกก่อนมีโครงภาคเรียนต้องไม่พิมพ์ตารางเปล่า', async () => {
+    /*
+     * ใบที่ออกก่อน 0060 ไม่มี `term_tree` ใน payload และแก้เพิ่มไม่ได้เลย
+     * ถ้าเลือกแม่แบบจากรุ่นหลักสูตรอย่างเดียว การพิมพ์ซ้ำใบเก่าจะได้ตาราง
+     * รายวิชาว่างโดยที่หัวใบยังถูกทุกช่อง — เป็นใบที่ดูใช้ได้แต่ไม่มีเนื้อ
+     */
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const issued = await withEdition(2556, async () => {
+        const r = await registrar('/documents/issue', {
+          method: 'POST',
+          body: JSON.stringify({ studentId: F.studentRegrade, kind: 'transcript' }),
+        });
+        expect(r.status < 400, `ออกใบไม่ได้ ${r.status}`);
+        return r.body;
+      });
+      // จำลองใบเก่า — payload ของ issued_document แก้ไม่ได้ด้วย trigger
+      // จึงต้องปิด trigger ชั่วคราวด้วยสิทธิ์เจ้าของตาราง
+      await db.query('alter table issued_document disable trigger user');
+      await db.query(
+        `update issued_document set payload = payload - 'term_tree' - 'category_tree'
+          where id = $1`, [issued.id]);
+      await db.query('alter table issued_document enable trigger user');
+
+      const html = String((await registrar(`/documents/${issued.id}/print`)).body);
+      expect(html.includes('ระเบียนแสดงผลการเรียน'),
+        'ต้องตกไปใช้แม่แบบเดิมที่พิมพ์จาก courses ได้ ไม่ใช่แม่แบบที่ต้องมีโครง');
+      expect(!html.includes('หน่วยกิตที่ได้ในภาค'),
+        'ใบเก่าต้องไม่ถูกส่งเข้าแม่แบบตระกูล 62 ซึ่งจะได้ตารางเปล่า');
+      return 'ใบเก่าตกไปใช้แม่แบบเดิม';
+    } finally {
+      await db.query('alter table issued_document enable trigger user').catch(() => undefined);
+      await db.end();
+    }
+  });
+
+  await check('API-163 ใบฉบับอังกฤษต้องไม่มีเดือนไทยและปีพุทธศักราช', async () => {
+    /*
+     * ─── ทุกวันที่และทุกปีบนใบฉบับอังกฤษเป็นคริสต์ศักราช ───
+     * วัดจากไฟล์จริงคู่กัน — "5 เมษายน 2552" ตรงกับ "April 5, 2009" และ
+     * "ปีการศึกษาที่จบ 2567" ตรงกับ "Year of Graduated 2024"
+     *
+     * ก่อนหน้านี้แม่แบบทั้งสองตระกูลเรียก `thaiDate()` ทุกที่ ใบฉบับอังกฤษ
+     * จึงพิมพ์ "31 มีนาคม 2569" อยู่กลางเอกสารภาษาอังกฤษ ซึ่งผู้อ่านต่างชาติ
+     * อ่านไม่ออกทั้งเดือนและปี — และถ้าอ่านตัวเลขปีออก จะเข้าใจว่าเป็นวันที่
+     * ในอนาคตอีก 543 ปี ข้อนี้ไม่มีอะไรฟ้องเลยเพราะใบยังพิมพ์ออกมาสวยงาม
+     */
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      // เติมข้อมูลอังกฤษให้ครบก่อน มิฉะนั้น 0057 ปฏิเสธการออกใบ (ซึ่งถูก)
+      await db.query(
+        `update person set prefix_en = 'Mr.', first_name_en = 'Withaya',
+                last_name_en = 'Sombat'
+          where id = $1`, [F.personRegrade]);
+      await db.query(`update program_type set name_en = 'Industry' where name_en is null`);
+      await db.query(`update program set name_en = 'Automotive Technology' where name_en is null`);
+      await db.query(`update program_track set name_en = 'Automotive Works' where name_en is null`);
+      await db.query(`update course set name_en = 'Small Engine Work'
+                       where name_en is null or name_en = code`);
+
+      const issued = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.studentRegrade, kind: 'transcript', lang: 'en' }),
+      });
+      expect(issued.status < 400,
+        `ออกฉบับอังกฤษไม่ได้ ${issued.status} ${JSON.stringify(issued.body).slice(0, 200)}`);
+
+      const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+      const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+        'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+      for (const m of months) {
+        expect(!html.includes(m), `ใบฉบับอังกฤษต้องไม่มีชื่อเดือนไทย "${m}"`);
+      }
+      expect(/(January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2}, \d{4}/.test(html),
+        'ต้องมีวันที่แบบอังกฤษอย่างน้อยหนึ่งที่ (เช่น August 10, 2026)');
+      /*
+       * เลขที่เอกสารมีปีการศึกษาเป็น พ.ศ. อยู่ในตัว (E256900001) โดยตั้งใจ
+       * เพราะเป็นเลขทะเบียนของงานทะเบียนไทย ไม่ใช่ข้อความที่แปลได้ —
+       * ตัดออกก่อนตรวจ มิฉะนั้นข้อนี้จะบังคับให้เปลี่ยนระบบเลขที่ทั้งระบบ
+       */
+      const withoutDocNo = html.split(String(issued.body.doc_no)).join('');
+      expect(!/\b25[0-9]{2}\b/.test(withoutDocNo.replace(/[0-9]{6,}/g, '')),
+        'ใบฉบับอังกฤษต้องไม่มีปีพุทธศักราช 25xx นอกเหนือจากเลขที่เอกสาร');
+      return 'เดือนอังกฤษ · ปีคริสต์ศักราช';
+    } finally {
+      await db.end();
+    }
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

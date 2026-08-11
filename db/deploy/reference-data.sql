@@ -256,6 +256,42 @@ select i.id, p.year_be, 7, 100.00, 20.00, 1000.00, 30
   from _params p join institution i on i.code = p.institution_code
 on conflict (institution_id, effective_from_year_be) do nothing;
 
+-- ข้อความบนใบ รบ. — เกณฑ์การสำเร็จหลักสูตรและคำอธิบายเครื่องหมายดอกจัน
+--
+-- ─── ทำไมถึงเป็นข้อมูลอ้างอิง ทั้งที่ตารางบอกว่า "แต่ละวิทยาลัยเขียนเอง" ───
+-- ข้อความห้าบรรทัดนี้มาจากระเบียบของ สอศ. ไม่ใช่นโยบายของวิทยาลัย —
+-- ทุกใบที่วัดจากไฟล์จริงเขียนเหมือนกันหมด ตารางแยกเก็บรายวิทยาลัยเพราะ
+-- **แก้ได้** เมื่อระเบียบเปลี่ยนหรือหลักสูตรต่างระดับใช้ถ้อยคำต่างกัน
+-- ไม่ใช่เพราะต้องพิมพ์เอง
+--
+-- ถ้าไม่ใส่ให้ ใบ รบ. ของวิทยาลัยเปิดใหม่จะพิมพ์หัวข้อ "เกณฑ์การสำเร็จ
+-- หลักสูตร" พร้อมพื้นที่ว่างใต้หัวข้อ ซึ่งดูเหมือนกระดาษเสียมากกว่าดูเหมือน
+-- ระบบที่ยังตั้งค่าไม่ครบ — และไม่มีอะไรฟ้องจนกว่าจะมีคนถือใบไปยื่นที่อื่น
+insert into institution_document_text (institution_id, key, text_th, text_en)
+select i.id, v.key, v.th, v.en
+  from _params p join institution i on i.code = p.institution_code,
+  (values
+    ('transcript_criteria_1', 'ประเมินผ่านรายวิชาครบตามโครงสร้างหลักสูตร',
+      'Pass the required courses according to program structure'),
+    ('transcript_criteria_2', 'ประเมินผ่านกิจกรรมตามที่หลักสูตรกำหนด',
+      'Pass the activities required in the curriculum'),
+    ('transcript_criteria_3', 'ระดับคะแนนเฉลี่ยสะสมไม่ต่ำกว่า 2.00',
+      'Obtain cumulative G.P.A. not less than 2.00'),
+    ('transcript_criteria_4', 'ประเมินผ่านเกณฑ์มาตรฐานวิชาชีพ',
+      'Achieve the criteria of vocational education standard'),
+    ('transcript_note_1', 'โอนผลการเรียน',
+      'Refers to credit transferred'),
+    ('transcript_note_2', 'เทียบโอนความรู้และประสบการณ์',
+      'Refers to the recognition of prior learning'),
+    ('transcript_note_3', 'เรียนปรับระดับคะแนน',
+      'Refers to study to improve grades'),
+    ('transcript_note_4', 'เรียนหรือฝึกอาชีพในสถานประกอบการ',
+      'Refers to study or work experience in workplace'),
+    ('transcript_note_5', 'จัดการเรียนการสอนเป็นภาษาอังกฤษ',
+      'Refers to learning and teaching conducted in English')
+  ) as v(key, th, en)
+on conflict (institution_id, key) do nothing;
+
 -- ═══════════════════════════════════════════════════════════════════
 -- สรุปสิ่งที่วิทยาลัยนี้มีแล้ว — ทุกบรรทัดต้องไม่เป็นศูนย์
 -- อยู่ก่อน commit เพราะ _params เป็นตารางชั่วคราวที่ถูกทิ้งตอนจบทรานแซกชัน
@@ -283,6 +319,8 @@ union all select 'ledger_account', count(*)
 union all select 'funding_source', count(*)
   from funding_source x join inst on inst.id = x.institution_id
 union all select 'late_fee_policy', count(*)
-  from late_fee_policy x join inst on inst.id = x.institution_id;
+  from late_fee_policy x join inst on inst.id = x.institution_id
+union all select 'institution_document_text', count(*)
+  from institution_document_text x join inst on inst.id = x.institution_id;
 
 commit;

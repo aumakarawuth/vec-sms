@@ -29,6 +29,11 @@ import {
   renderTranscript67,
   type Transcript67Document,
 } from './transcript-67';
+import {
+  has62TermTree,
+  renderTranscript62,
+  type Transcript62Document,
+} from './transcript-62';
 
 export interface IssuedDocument {
   id: string;
@@ -186,6 +191,37 @@ export function thaiDate(iso: string | null | undefined): string {
   const [, y, mo, d] = m;
   const month = MONTHS_TH[Number(mo) - 1] ?? '';
   return `${Number(d)} ${month} ${Number(y) + 543}`;
+}
+
+const MONTHS_EN = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * วันที่แบบอังกฤษ เช่น April 5, 2009
+ *
+ * ─── ทุกปีบนใบฉบับอังกฤษเป็นคริสต์ศักราช ───
+ * วัดจากไฟล์จริงคู่กัน — ฉบับไทยเขียน "5 เมษายน 2552" ตรงกับฉบับอังกฤษ
+ * "April 5, 2009" · "ปีการศึกษาที่จบ 2567" ตรงกับ "Year of Graduated 2024"
+ * และหัวเรื่องเขียน "2024 CURRICULUM" ไม่ใช่ "B.E. 2567"
+ *
+ * ก่อนหน้านี้ใบฉบับอังกฤษเรียก `thaiDate()` จึงพิมพ์ "31 มีนาคม 2569"
+ * อยู่กลางเอกสารภาษาอังกฤษ — ผู้อ่านต่างชาติอ่านไม่ออกทั้งเดือนและปี
+ * และถ้าอ่านตัวเลขปีออก จะเข้าใจว่าเป็นวันที่ในอนาคตอีก 543 ปี
+ */
+export function engDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return String(iso);
+  const [, y, mo, d] = m;
+  return `${MONTHS_EN[Number(mo) - 1] ?? ''} ${Number(d)}, ${Number(y)}`;
+}
+
+/** ปีการศึกษาบนใบฉบับอังกฤษเป็นคริสต์ศักราช — 2567 → 2024 */
+export function engYear(yearBe: unknown): string {
+  const n = Number(yearBe);
+  return Number.isFinite(n) && n > 0 ? String(n - 543) : '';
 }
 
 function num(v: unknown, digits = 2): string {
@@ -835,6 +871,14 @@ export function renderDocument(doc: IssuedDocument): string {
        */
       if (is67Edition(doc.payload) && Array.isArray((doc.payload as { category_tree?: unknown[] }).category_tree)) {
         return renderTranscript67(doc as unknown as Transcript67Document);
+      }
+      /*
+       * รุ่นก่อน 67 ใช้แม่แบบตระกูล 62 ที่จัดตามภาคเรียน — แต่ต้องมี
+       * `term_tree` อยู่จริงใน payload ใบที่ออกก่อน 0060 ไม่มีโครงนี้
+       * การพิมพ์ซ้ำใบเก่าจึงตกไปใช้แม่แบบเดิม ไม่ใช่ได้ตารางเปล่า
+       */
+      if (has62TermTree(doc.payload as { term_tree?: unknown })) {
+        return renderTranscript62(doc as unknown as Transcript62Document);
       }
       return renderTranscript(doc);
     case 'certificate':

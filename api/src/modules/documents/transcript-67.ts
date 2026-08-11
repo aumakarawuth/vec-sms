@@ -27,7 +27,7 @@
  * ใบคนละแบบ ส่วนใบที่มีหัวข้อแต่ค่าว่างบอกได้ว่ายังกรอกไม่ครบ
  */
 import type { IssuedDocument } from './templates';
-import { thaiDate } from './templates';
+import { engDate, engYear, thaiDate } from './templates';
 
 /* ─── ชนิดข้อมูลของ payload ที่ 0057/0058 สร้าง ─────────────────── */
 
@@ -42,6 +42,26 @@ interface Course67 {
   grade: string;
   grade_point: string | number | null;
   credits_earned: string | number | null;
+  /**
+   * ตั้งแต่ 0060 — บอกว่ารายวิชานี้ถูกนับใน GPA ที่พิมพ์อยู่บนใบเดียวกันหรือไม่
+   * (เป็น "และ" ของ grade_symbol.counts_in_gpa กับ enrollment.counts_toward_gpa)
+   */
+  counts_in_gpa?: boolean;
+}
+
+/**
+ * สรุปรายภาคจาก `transcript_term_tree()` (0060)
+ *
+ * ต่างจาก `term_summaries` ตรงที่มี `credits_cum` ซึ่งเป็นตัวเลขที่หน้า 2
+ * ของใบจริงพิมพ์คู่กับหน่วยกิตรายภาคเสมอ และเป็นตัวที่แม่แบบนี้เคยพิมพ์ผิด
+ */
+interface TermNode {
+  year_be: number;
+  ordinal: number;
+  credits_earned: string | number | null;
+  credits_cum: string | number | null;
+  gpa: string | number | null;
+  gpax: string | number | null;
 }
 
 interface Group67 {
@@ -95,11 +115,14 @@ export interface Transcript67Payload {
   graduation: { completed_on: string; gpax: string; credits_earned: string } | null;
   summary: { credits_earned: string | number; gpax: string | number | null };
   term_summaries: TermSummary[];
+  term_tree?: TermNode[];
   category_tree: Head67[];
   prior_education?: {
     level_th: string; school_th: string; province_th: string;
     program_th: string; year_be: number | null; gpax: string | number | null;
   } | null;
+  /** หน่วยกิตที่ลงเรียน — คนละตัวกับหน่วยกิตที่ได้ (0060) */
+  credits_attempted?: string | number | null;
   institution_text?: Record<string, { th: string; en: string }>;
   professional_standard?: { no: string; passed: boolean | null; on_date: string | null };
 }
@@ -114,6 +137,30 @@ export interface Transcript67Document extends Omit<IssuedDocument, 'payload'> {
 function edition2(v: unknown): string {
   const n = Number(v);
   return Number.isFinite(n) ? String(n % 100).padStart(2, '0') : '';
+}
+
+/**
+ * ข้อความมุมขวาบน — คนละรูปแบบกันสองภาษา
+ *
+ * ฉบับไทย  "รบ.1 ปวช.67 เลขที่ <เลข>/"
+ * ฉบับอังกฤษ "Cert. Transcript No. <เลข>/"  (วัดจากไฟล์จริงทั้ง ปวช. และ ปวส.)
+ *
+ * ─── ที่จงใจไม่ทำตามต้นฉบับ ───
+ * ใบ ปวส. ของ SISA พิมพ์มุมขวาบนว่า "รบ.1 **ปวช.**67" เหมือนใบ ปวช. ทุกตัวอักษร
+ * ซึ่งเป็นข้อผิดพลาดของตัวโปรแกรม — ใบ ปวส. ที่ประทับว่าเป็น รบ. ของ ปวช.
+ * ทำให้เอกสารขัดแย้งกับหัวเรื่องของตัวเอง ที่นี่จึงใช้ตัวย่อตามระดับจริง
+ */
+function docCorner(
+  prog: { qualification_abbr_th?: string; level?: string; edition_be?: number } | null,
+  lang: 'th' | 'en',
+  docNo: string,
+): string {
+  if (lang === 'en') {
+    const kind = prog?.level === 'PVS' ? 'Dip.' : 'Cert.';
+    return `${kind} Transcript No. ${esc(docNo)}/`;
+  }
+  return `รบ.1 ${esc(prog?.qualification_abbr_th ?? '')}${esc(edition2(prog?.edition_be))}`
+    + ` เลขที่ ${esc(docNo)}/`;
 }
 
 function esc(v: unknown): string {
@@ -222,18 +269,30 @@ const GRADE_SCALE: [string, string, string][] = [
   ['0', 'ตก', 'Failed'],
 ];
 
-const GRADE_LETTERS: [string, string][] = [
-  ['ข.ร.', 'ขาดเรียน ไม่มีสิทธิ์วัดผลสัมฤทธิ์ปลายภาคเรียน'],
-  ['ข.ป.', 'ขาดการปฏิบัติงาน'],
-  ['ข.ส.', 'ขาดการวัดผลสัมฤทธิ์ปลายภาคเรียน'],
-  ['ท.', 'ทุจริต'],
-  ['ผ.', 'ผ่าน'],
-  ['ม.ผ.', 'ไม่ผ่าน'],
-  ['ถ.น.', 'ถอนรายวิชาภายในกำหนด'],
-  ['ถ.ล.', 'ถอนรายวิชาหลังกำหนด'],
-  ['ม.ส.', 'ไม่สมบูรณ์'],
-  ['ม.ท.', 'ไม่สามารถเข้าวัดผลสัมฤทธิ์ปลายภาคเรียนทดแทน'],
-  ['ม.ก.', 'ไม่นับหน่วยกิตเพื่อสำเร็จการศึกษา'],
+/**
+ * ตัวอักษรแสดงระดับผลการเรียน — สัญลักษณ์ไทย · สัญลักษณ์อังกฤษ · คำอธิบายทั้งคู่
+ *
+ * ─── ฉบับอังกฤษเคยพิมพ์สัญลักษณ์ไทยล้วน ───
+ * ตารางนี้เคยมีแค่สองช่อง (สัญลักษณ์ไทย + คำอธิบายไทย) ใบ รบ. ฉบับอังกฤษ
+ * จึงพิมพ์ "ข.ร. = ขาดเรียน…" อยู่กลางหน้าที่เหลือเป็นภาษาอังกฤษทั้งหมด
+ * ซึ่งทำให้ส่วนที่ **อธิบายความหมายของเกรด** เป็นส่วนเดียวที่ผู้อ่านชาว
+ * ต่างชาติอ่านไม่ออก — คือส่วนที่เขาต้องการที่สุดพอดี
+ *
+ * รหัสอังกฤษได้จากการเทียบไฟล์ฉบับอังกฤษกับฉบับไทยบรรทัดต่อบรรทัด
+ * ไม่ใช่การแปลเอง เพราะรหัสที่ไม่ตรงกับใบที่หน่วยงานอื่นเคยเห็นจะอ่านไม่ออก
+ */
+const GRADE_LETTERS: [string, string, string, string][] = [
+  ['ข.ร.', 'I.C.', 'ขาดเรียน ไม่มีสิทธิ์วัดผลสัมฤทธิ์ปลายภาคเรียน', 'Insufficient class attendance'],
+  ['ข.ป.', 'I.P.', 'ขาดการปฏิบัติงาน', 'Incomplete practical assignment'],
+  ['ข.ส.', 'I.L.', 'ขาดการวัดผลสัมฤทธิ์ปลายภาคเรียน', 'Incomplete learning assessment'],
+  ['ท.', 'C.', 'ทุจริต', 'Cheating'],
+  ['ผ.', 'P.', 'ผ่าน', 'Pass'],
+  ['ม.ผ.', 'F.', 'ไม่ผ่าน', 'Fail'],
+  ['ถ.น.', 'W.W.', 'ถอนรายวิชาภายในกำหนด', 'Withdraw within time line'],
+  ['ถ.ล.', 'W.A.', 'ถอนรายวิชาหลังกำหนด', 'Withdraw after date line'],
+  ['ม.ส.', 'N.C.', 'ไม่สมบูรณ์', 'Not complete'],
+  ['ม.ท.', 'U.T.', 'ไม่สามารถเข้าวัดผลสัมฤทธิ์ปลายภาคเรียนทดแทน', 'Unable to undertake substitute assessment'],
+  ['ม.ก.', 'N.Cr', 'ไม่นับหน่วยกิตเพื่อสำเร็จการศึกษา', 'Non-credit'],
 ];
 
 /* ─── สไตล์ที่ตรงกับตัวเลขที่วัดมา ──────────────────────────────── */
@@ -348,15 +407,34 @@ function buildRows(tree: Head67[], lang: 'th' | 'en'): Row[] {
   return rows;
 }
 
+/**
+ * ช่อง "ภาคเรียน/ปีการศึกษา" — ฉบับอังกฤษใช้ปีคริสต์ศักราช
+ *
+ * ─── ข้อนี้ไฟล์ต้นฉบับทำไม่ตรงกันเอง ───
+ * ใบ ปวช.67 ฉบับอังกฤษของ SISA พิมพ์ "1/2568" คือปีพุทธศักราช ทั้งที่
+ * ใบเดียวกันแปลง `Date of Birth` เป็น "April 5, 2009" · `Year of Graduated`
+ * เป็น "2024" และหัวเรื่องเป็น "2024 CURRICULUM" — คือแปลงทุกที่ยกเว้นตรงนี้
+ * และใบตระกูล 62 ฉบับอังกฤษของระบบเดียวกันก็แปลง ("Academic year 2025")
+ *
+ * เมื่อสองอย่างในเอกสารเดียวกันขัดกัน ต้องเลือกข้างที่ทำให้ทั้งใบอ่านได้
+ * เป็นชุดเดียว — ไม่อย่างนั้นผู้อ่านจะเห็นปี 2568 คู่กับปี 2024 บนกระดาษ
+ * แผ่นเดียวแล้วไม่รู้ว่าอันไหนคือเวลาจริง
+ */
+function termCell(c: Course67, lang: 'th' | 'en'): string {
+  const year = lang === 'en' ? Number(c.year_be) - 543 : Number(c.year_be);
+  return `${c.term_ordinal}/${year}`;
+}
+
 function renderRow(r: Row, lang: 'th' | 'en'): string {
   if (r.t === 'course') {
     const c = r.c;
     const name = lang === 'en' && c.name_en ? c.name_en : c.name_th;
     return `<tr>
-      <td class="term">${esc(c.term_label.replace('ภาคเรียนที่ ', ''))}</td>
+      <td class="term">${esc(termCell(c, lang))}</td>
       <td>${esc(c.code)}</td>
       <td>${esc(name)}</td>
-      <td class="credit">${esc(credits(c.credits))}</td>
+      <td class="credit">${esc(c.grade_point === null || c.grade_point === undefined
+                                 ? '-' : credits(c.credits))}</td>
       <td class="grade">${esc(gradeCell(c))}</td>
     </tr>`;
   }
@@ -410,6 +488,52 @@ function stamps(doc: Transcript67Document): string {
   return out.join('\n');
 }
 
+/**
+ * สรุปรายภาคเรียนท้ายหน้า 2
+ *
+ * ─── ข้อผิดพลาดที่เพิ่งแก้ (0060) ───
+ * แม่แบบนี้เคยพิมพ์ "หน่วยกิตที่ได้ในภาค" กับ "หน่วยกิตสะสม" จากค่าเดียวกัน
+ * คือ `credits_earned` ของภาคนั้น ภาคที่สองจึงพิมพ์ 11/11 แทนที่จะเป็น 11/28
+ * — ตัวเลขผิดบนเอกสารที่แก้ไม่ได้ ไม่มีอะไรฟ้องเพราะทั้งคู่ดูสมเหตุสมผล
+ *
+ * ค่าสะสมมาจาก `term_tree` ที่ฐานข้อมูลคำนวณให้ ไม่ใช่แม่แบบบวกเอง
+ * (หลักข้อ 1 — ถ้าบวกเอง จะกลายเป็นสูตรชุดที่สองที่ค่อย ๆ เพี้ยน)
+ * ใบที่ออกก่อน 0060 ไม่มี `term_tree` จึงตกไปใช้ `term_summaries` เดิม
+ * แล้วพิมพ์ "-" ในช่องสะสม — บอกว่า "ไม่รู้" ดีกว่าพิมพ์ตัวเลขที่รู้ว่าผิด
+ */
+function termLines(
+  d: Transcript67Payload,
+  lang: 'th' | 'en',
+  t: typeof L['th'] | typeof L['en'],
+): string {
+  const label = (year: number, ordinal: number) =>
+    lang === 'en'
+      ? `Semester ${ordinal} / ${year - 543}`
+      : `ภาคเรียนที่ ${ordinal} ปีการศึกษา ${year}`;
+
+  const rows = (d.term_tree ?? []).length > 0
+    ? (d.term_tree ?? []).map((s) => ({
+        label: label(s.year_be, s.ordinal),
+        earned: s.credits_earned, cum: s.credits_cum, gpa: s.gpa, gpax: s.gpax,
+      }))
+    : (d.term_summaries ?? [])
+        .slice()
+        .sort((a, b) => a.year_be - b.year_be || a.ordinal - b.ordinal)
+        .map((s) => ({
+          label: s.label, earned: s.credits_earned, cum: null, gpa: s.gpa, gpax: s.gpax,
+        }));
+
+  return rows
+    .map(
+      (s) => `<div style="text-align:center;font-weight:700">${esc(s.label)}</div>
+        <div style="text-align:center">${t.termCredits} ${esc(credits(s.earned))}
+          ${t.cumCredits} ${esc(credits(s.cum))}</div>
+        <div style="text-align:center">${t.termGpa} ${esc(gpa(s.gpa))}
+          ${t.cumGpa} ${esc(gpa(s.gpax))}</div>`,
+    )
+    .join('');
+}
+
 function signBlock(t: typeof L['th'] | typeof L['en'], issuedOn: string): string {
   return `<div class="signs">
     <div class="sign"><div>(&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;)</div>
@@ -437,12 +561,33 @@ export function renderTranscript67(doc: Transcript67Document): string {
    * EDUCATION) และเติม "(ต่อเนื่อง)" ให้หลักสูตรต่อเนื่องเฉพาะฉบับไทย
    * — ฉบับอังกฤษของ ปวส. ต่อเนื่องใช้ชื่อเดียวกับ ปวส. ปกติ (วัดจากไฟล์จริง)
    */
+
+  /*
+   * ─── ทุกวันที่และทุกปีบนใบฉบับอังกฤษเป็นคริสต์ศักราช ───
+   * วัดจากไฟล์จริง — "5 เมษายน 2552" ตรงกับ "April 5, 2009" และ
+   * "ปีการศึกษาที่จบ 2567" ตรงกับ "Year of Graduated 2024"
+   * ผูกไว้ที่ตัวแปรเดียวเพื่อไม่ให้มีที่ใดหลุดไปเรียก thaiDate() บนใบอังกฤษ
+   */
+  const D = lang === 'en' ? engDate : thaiDate;
+  const Y = (v: unknown) => (v === null || v === undefined || v === ''
+    ? '' : lang === 'en' ? engYear(v) : String(v));
+
   const cont = prog?.is_continuing ? ' (ต่อเนื่อง)' : '';
   const qual = lang === 'en'
     ? (prog?.level === 'PVS' ? 'DIPLOMA IN VOCATIONAL EDUCATION'
       : prog?.level === 'PVC' ? 'CERTIFICATE IN VOCATIONAL EDUCATION'
       : (prog?.qualification_en ?? ''))
     : `${prog?.qualification_th ?? ''}${cont}`;
+
+  /*
+   * ─── ฉบับอังกฤษของหลักสูตรต่อเนื่องมีบรรทัดที่สอง ───
+   * ผมเคยสรุปผิดใน 0059 ว่าฉบับอังกฤษของ ปวส. ต่อเนื่องใช้ชื่อเดียวกับ
+   * ปวส. ปกติ — เปิดไฟล์ดูละเอียดแล้วมีบรรทัด "(CONTINUING PROGRAM)"
+   * อยู่ใต้ชื่อเรื่องอีกบรรทัด ถ้าไม่มี ใบจะไม่ได้บอกเลยว่าเป็นหลักสูตร
+   * ต่อเนื่อง ทั้งที่ฉบับไทยบอกด้วยคำว่า "(ต่อเนื่อง)" ในชื่อเรื่อง
+   */
+  const titleBlock = `<h1>${esc(t.title(Number(prog?.edition_be ?? 0), qual))}${
+    lang === 'en' && prog?.is_continuing ? '<br>(CONTINUING PROGRAM)' : ''}</h1>`;
 
   const rows = buildRows(d.category_tree ?? [], lang);
   // แบ่งสองหน้าตามใบจริง — กิจกรรมเสริมหลักสูตรและบรรทัดสรุปท้ายอยู่หน้า 2
@@ -455,14 +600,13 @@ export function renderTranscript67(doc: Transcript67Document): string {
 
   // ใบจริงเว้นบรรทัดวันที่ไว้ให้เขียนมือ แต่ระบบรู้วันที่อยู่แล้ว
   // การพิมพ์ลงไปทำให้ใบที่พิมพ์ซ้ำในอีกห้าปียังบอกได้ว่าออกเมื่อไร
-  const issuedOn = `${lang === 'en' ? 'Issued on' : 'ออกให้เมื่อ'} ${thaiDate(doc.issued_on)}`;
+  const issuedOn = `${lang === 'en' ? 'Issued on' : 'ออกให้เมื่อ'} ${D(doc.issued_on)}`;
 
   const page1 = `
 <div class="page">
   ${stamps(doc)}
-  <div class="docno">รบ.1 ${esc(prog?.qualification_abbr_th ?? '')}${esc(edition2(prog?.edition_be))}
-    ${lang === 'en' ? 'No.' : 'เลขที่'} ${esc(doc.doc_no)}/</div>
-  <h1>${esc(t.title(Number(prog?.edition_be ?? 0), qual))}</h1>
+  <div class="docno">${docCorner(prog, lang, doc.doc_no)}</div>
+  ${titleBlock}
 
   <div class="head">
     <dl>
@@ -472,7 +616,7 @@ export function renderTranscript67(doc: Transcript67Document): string {
       ${field(t.studentCode, esc(d.student.student_code))}
       ${field(t.name, esc(name))}
       ${field(t.ethnic, '')}
-      ${field(t.birth, esc(thaiDate(d.student.birth_date)))}
+      ${field(t.birth, esc(D(d.student.birth_date)))}
       ${field(t.citizenId, '')}
       ${field(t.father, '')}
       ${field(t.mother, '')}
@@ -491,16 +635,20 @@ export function renderTranscript67(doc: Transcript67Document): string {
       ${prog?.level === 'PVS'
         ? field(t.prevProgram, esc(d.prior_education?.program_th ?? '-'))
         : ''}
-      ${field(t.prevYear, esc(d.prior_education?.year_be ?? ''))}
-      ${field(t.admitted, esc(d.student.admitted_year_be ?? ''))}
+      ${field(t.prevYear, esc(Y(d.prior_education?.year_be)))}
+      ${field(t.admitted, esc(Y(d.student.admitted_year_be)))}
       ${field(t.transferred, '-')}
-      ${field(t.attempted, esc(credits(d.summary?.credits_earned)))}
+      ${/*
+          "หน่วยกิตที่เรียน" กับ "หน่วยกิตที่ได้" เป็นคนละตัวเลข — เคยพิมพ์
+          ค่าเดียวกันสองครั้ง ทำให้ทุกใบบอกว่าไม่เคยตกและไม่เคยถอนรายวิชา
+        */ ''}
+      ${field(t.attempted, esc(credits(d.credits_attempted)))}
       ${field(t.earned, esc(credits(d.graduation?.credits_earned ?? d.summary?.credits_earned)))}
       ${field(t.gpax, esc(gpa(d.graduation?.gpax ?? d.summary?.gpax)))}
       ${field(t.profStd, esc(d.professional_standard?.on_date
-                             ? thaiDate(d.professional_standard.on_date) : '-'))}
+                             ? D(d.professional_standard.on_date) : '-'))}
       ${field(t.graduated, esc(d.graduation?.completed_on
-                               ? thaiDate(d.graduation.completed_on) : '-'))}
+                               ? D(d.graduation.completed_on) : '-'))}
     </dl>
     <div class="photo">${t.photo}</div>
   </div>
@@ -524,29 +672,18 @@ export function renderTranscript67(doc: Transcript67Document): string {
   const page2 = `
 <div class="page">
   ${stamps(doc)}
-  <h1>${esc(t.title(Number(prog?.edition_be ?? 0), qual))}</h1>
+  ${titleBlock}
   <div style="display:flex;justify-content:space-between;font-size:12pt">
     <span>${t.name} ${esc(name)}</span>
     <span>${t.studentCode} ${esc(d.student.student_code)}
-      รบ.1 ${esc(prog?.qualification_abbr_th ?? '')}${esc(edition2(prog?.edition_be))}
-      ${lang === 'en' ? 'No.' : 'เลขที่'} ${esc(doc.doc_no)}/</span>
+      ${docCorner(prog, lang, doc.doc_no)}</span>
     <span>${t.page2}</span>
   </div>
 
   ${p2.length > 0 ? courseTable(p2, lang) : ''}
 
   <div style="margin-top:6pt">
-    ${(d.term_summaries ?? [])
-      .slice()
-      .sort((a, b) => a.year_be - b.year_be || a.ordinal - b.ordinal)
-      .map(
-        (s) => `<div style="text-align:center;font-weight:700">${esc(s.label)}</div>
-        <div style="text-align:center">${t.termCredits} ${esc(credits(s.credits_earned))}
-          ${t.cumCredits} ${esc(credits(s.credits_earned))}</div>
-        <div style="text-align:center">${t.termGpa} ${esc(gpa(s.gpa))}
-          ${t.cumGpa} ${esc(gpa(s.gpax))}</div>`,
-      )
-      .join('')}
+    ${termLines(d, lang, t)}
   </div>
 
   <div class="legend">
@@ -574,7 +711,10 @@ export function renderTranscript67(doc: Transcript67Document): string {
     <h2>${t.gradeLetters}</h2>
     <table><tbody>
       ${(() => {
-        const cells = GRADE_LETTERS.map(([k, v]) => `<td>${k} = ${v}</td>`);
+        const cells = GRADE_LETTERS.map(
+          ([kth, ken, vth, ven]) =>
+            `<td>${lang === 'en' ? `${ken} = ${ven}` : `${kth} = ${vth}`}</td>`,
+        );
         const out: string[] = [];
         for (let i = 0; i < cells.length; i += 3) {
           out.push(`<tr>${cells.slice(i, i + 3).join('')}</tr>`);
