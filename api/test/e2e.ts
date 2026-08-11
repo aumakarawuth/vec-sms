@@ -2495,6 +2495,102 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ เอกสารทำงานที่พิมพ์สด ══');
+
+  await check('API-141 ใบลงทะเบียนพิมพ์สดและตรงกับใบแจ้งหนี้ที่ออกจริง', async () => {
+    /*
+     * ยอดเงินอ่านจาก `invoice` ที่ออกจริง ไม่ใช่คำนวณจาก fee_schedule ใหม่
+     * เพราะใบแจ้งหนี้อาจมีส่วนลดหรือทุนที่ระบบคิดเองไม่ได้ — ถ้าคำนวณใหม่
+     * ตัวเลขบนใบลงทะเบียนจะไม่ตรงกับที่นักศึกษาต้องจ่ายจริง
+     */
+    const r = await registrar(`/reports/registration/${F.student}?termId=${TERM1}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    const html = String(r.body);
+    expect(html.includes('ใบลงทะเบียนเรียน'), 'ต้องเป็นใบลงทะเบียน');
+    expect(html.includes('รวมหน่วยกิต'), 'ต้องสรุปหน่วยกิตรวม');
+    expect(html.includes('พิมพ์เมื่อ'),
+      'เอกสารทำงานต้องบอกว่าเป็นภาพ ณ เวลาไหน มิฉะนั้นคนที่หยิบขึ้นมาอีกเดือนจะไม่รู้ว่ามันเก่าแค่ไหน');
+    expect(!/(src|href)\s*=\s*["']https?:/i.test(html), 'ต้องไม่อ้างไฟล์ภายนอก');
+
+    // ยอดบนกระดาษต้องตรงกับใบแจ้งหนี้จริง
+    const inv = await registrar(`/students/${F.student}/invoices`);
+    if (inv.body.length > 0) {
+      const live = inv.body.find((x: any) => x.term_id === TERM1);
+      if (live) {
+        expect(html.includes(String(live.invoice_no)),
+          'ต้องอ้างเลขที่ใบแจ้งหนี้ที่ออกจริง ไม่ใช่คำนวณยอดใหม่เอง');
+      }
+    }
+    return `${html.length} ตัวอักษร`;
+  });
+
+  await check('API-142 ใบรายชื่อมีสองโหมด — ดูสถานะ และเปล่าไว้เขียนมือ', async () => {
+    /*
+     * ใบเปล่าคือกระดาษที่ครูถือเดินเข้าห้องตอนอินเทอร์เน็ตล่มหรือแบตหมด
+     * ถ้าไม่มีช่องว่างเลย มันเป็นแค่รายชื่อที่ดูสวย ไม่ใช่เครื่องมือทำงาน
+     */
+    const view = await teacher(`/reports/roster/${F.section}`);
+    expect(view.status === 200, `ควรได้ 200 ได้ ${view.status}`);
+    expect(String(view.body).includes('เวลาเรียน'), 'โหมดปกติต้องแสดงเวลาเรียน');
+
+    const blank = await teacher(`/reports/roster/${F.section}?mode=blank`);
+    expect(blank.status === 200, `ควรได้ 200 ได้ ${blank.status}`);
+    const b = String(blank.body);
+    expect(b.includes('class="blank"'), 'โหมดเปล่าต้องมีช่องว่างให้เขียน');
+    expect(b.includes('landscape'), 'โหมดเปล่าควรเป็นแนวนอนเพื่อให้มีที่พอ');
+    expect(!b.includes('เวลาเรียน</th>'), 'โหมดเปล่าไม่ควรมีคอลัมน์เวลาเรียนมาแย่งที่');
+    return 'สองโหมดต่างกันจริง';
+  });
+
+  await check('API-143 คอลัมน์แรกของใบรายชื่อต้องไม่ปนเลขที่จริงกับลำดับแถว', async () => {
+    /*
+     * ถ้าบางคนมีเลขที่ในห้องและบางคนไม่มี แล้วเติมด้วยลำดับแถวแทน
+     * จะได้คอลัมน์ที่ปนกันสองความหมาย — ครูที่ขานชื่อตามเลขจะเรียกผิดคน
+     * และไม่มีอะไรบนกระดาษบอกว่ามันปนกันอยู่
+     * (เจอตอนอ่านใบที่พิมพ์ออกมาจริง คนแรกขึ้น "7" แล้วคนถัดไปขึ้น 2, 3, 4)
+     */
+    const html = String((await teacher(`/reports/roster/${F.section}`)).body);
+    const hasClassCol = html.includes('>เลขที่</th>');
+    const hasSeqCol = html.includes('>ลำดับ</th>');
+    expect(hasClassCol !== hasSeqCol, 'ต้องเลือกอย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่หรือไม่มีเลย');
+
+    if (hasSeqCol) {
+      expect(html.includes('ไม่ใช่เลขที่ในห้อง'),
+        'เมื่อใช้ลำดับแถว ต้องบอกบนกระดาษว่าไม่ใช่เลขที่ในห้อง');
+    }
+    return hasClassCol ? 'ทุกคนมีเลขที่ → ใช้เลขที่จริง' : 'มีคนยังไม่มีเลขที่ → ใช้ลำดับพร้อมคำอธิบาย';
+  });
+
+  await check('API-144 ประกาศผู้มีสิทธิ์สอบแยกสองรายการบนแผ่นเดียว', async () => {
+    /*
+     * ประกาศที่มีแต่รายชื่อผู้มีสิทธิ์ ทำให้คนที่ไม่เห็นชื่อตัวเองไม่รู้ว่า
+     * "ตกหล่น" หรือ "หมดสิทธิ์" ซึ่งต้องไปทำคนละอย่าง
+     */
+    const r = await teacher(`/reports/exam-eligibility/${F.section}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    const html = String(r.body);
+    expect(html.includes('ผู้มีสิทธิ์เข้าสอบ'), 'ต้องมีรายการผู้มีสิทธิ์');
+    expect(html.includes('ผู้หมดสิทธิ์เข้าสอบ'), 'ต้องมีรายการผู้หมดสิทธิ์บนแผ่นเดียวกัน');
+    expect(html.includes('ยังไม่ได้ลงทะเบียน'),
+      'ต้องอธิบายว่าคนที่ไม่พบชื่อในทั้งสองรายการหมายถึงอะไร');
+    return 'ครบทั้งสองรายการพร้อมคำอธิบาย';
+  });
+
+  await check('API-145 นักศึกษาเปิดใบรายชื่อของกลุ่มเรียนไม่ได้', async () => {
+    // ใบรายชื่อมีชื่อและรหัสของเพื่อนทั้งห้อง รวมถึงเปอร์เซ็นต์เวลาเรียน
+    // ซึ่งเป็นข้อมูลของคนอื่น
+    const r = await student(`/reports/roster/${F.section}`);
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-146 วิทยาลัยอื่นเปิดเอกสารทำงานของเราไม่ได้', async () => {
+    const a = await other(`/reports/registration/${F.student}?termId=${TERM1}`);
+    expect(a.status === 404, `ควรได้ 404 ได้ ${a.status}`);
+    const b = await other(`/reports/roster/${F.section}`);
+    expect(b.status === 404, `ควรได้ 404 ได้ ${b.status}`);
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

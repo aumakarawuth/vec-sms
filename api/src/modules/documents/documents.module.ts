@@ -15,6 +15,7 @@ import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { WorksheetController, WorksheetService } from './worksheets';
 import { IssuedDocument, renderDocument } from './templates';
 
 /**
@@ -410,8 +411,8 @@ class GraduationController {
 }
 
 @Module({
-  controllers: [DocumentsController, GraduationController],
-  providers: [DocumentsService, GraduationService],
+  controllers: [DocumentsController, GraduationController, WorksheetController],
+  providers: [DocumentsService, GraduationService, WorksheetService],
   exports: [DocumentsService, GraduationService],
 })
 export class DocumentsModule {}

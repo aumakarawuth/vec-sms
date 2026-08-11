@@ -12,7 +12,7 @@
  * แล้วให้ครูกดทีละคนทั้งห้อง แปลว่าคาบที่ครูลืมกดจะกลายเป็นขาดทั้งห้อง
  */
 import { useEffect, useState } from 'react';
-import { api } from '../core/api';
+import { API_BASE, api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { pct, thaiDate } from '../core/fmt';
 import { AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
@@ -114,6 +114,36 @@ export function AttendanceScreen() {
           </label>
         </div>
       </Card>
+
+      {sectionId && (
+        <Card>
+          <div className="row">
+            {/*
+              สามใบนี้พิมพ์สด ไม่ใช่ issued_document — ใบรายชื่อที่ตรึงไว้
+              ตั้งแต่สัปดาห์แรกใช้ไม่ได้ในสัปดาห์ที่สิบ เพราะมีคนเพิ่ม-ถอนไปแล้ว
+            */}
+            <div className="shrink">
+              <button onClick={() => window.open(`${API_BASE}/reports/roster/${sectionId}`, '_blank', 'noopener')}>
+                พิมพ์ใบรายชื่อ
+              </button>
+            </div>
+            <div className="shrink">
+              <button onClick={() => window.open(`${API_BASE}/reports/roster/${sectionId}?mode=blank`, '_blank', 'noopener')}>
+                พิมพ์ใบเช็คชื่อเปล่า
+              </button>
+            </div>
+            <div className="shrink">
+              <button onClick={() => window.open(`${API_BASE}/reports/exam-eligibility/${sectionId}`, '_blank', 'noopener')}>
+                ประกาศผู้มีสิทธิ์สอบ
+              </button>
+            </div>
+            <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+              ใบเช็คชื่อเปล่าไว้ถือเข้าห้องตอนอินเทอร์เน็ตล่ม —
+              บันทึกด้วยมือแล้วต้องนำกลับมาลงระบบภายหลัง
+            </div>
+          </div>
+        </Card>
+      )}
 
       {sectionId && (
         <MeetingList
