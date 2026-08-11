@@ -289,9 +289,12 @@ SISA เก็บสี่ช่อง — `mass_transcript_prefix` + `mass_tran
 `eng_mass_transcript_prefix` + `eng_mass_transcript_no` (**ฉบับอังกฤษใช้เลขคนละสาย**) ·
 `mass_certificate_no` · `mass_certificate_code`
 
-ของเรามี `student_graduation.transcript_no` · `certificate_no` ·
-`professional_standard_no` — **ไม่มีสายเลขของฉบับภาษาอังกฤษ** และ
-`document_series` แยกสายตาม `document_kind` เท่านั้น ไม่แยกตามภาษา
+**ปิดแล้วใน 0057** — เพิ่ม `student_graduation.transcript_no_en` และ
+`document_series.lang` ทำให้ฉบับอังกฤษเดินเลขคนละสายตามที่ SISA ใช้จริง
+พร้อมผลมาตรฐานวิชาชีพผ่าน/ไม่ผ่าน + วันที่ (เดิมมีแต่เลขที่ ซึ่งตอบไม่ได้ว่า
+ยังไม่ได้สอบหรือสอบแล้วไม่ผ่าน) และ `institution_document_text` สำหรับ
+เกณฑ์การสำเร็จการศึกษาห้าบรรทัดสองภาษา · **เหลือแค่แม่แบบการวางหน้า**
+ซึ่งเป็นโค้ดที่แก้เมื่อไรก็ได้ ต่างจาก payload ที่ออกไปแล้วแก้ไม่ได้
 
 ### ฟิลด์ที่ใบ รบ. ต้องใช้แต่ payload ของเราไม่มี
 

@@ -2735,6 +2735,72 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ เอกสารฉบับภาษาอังกฤษ (0057) ══');
+
+  await check('API-152 บอกได้ก่อนกดว่าออกฉบับอังกฤษได้หรือยัง', async () => {
+    /*
+     * การรู้**ก่อน**กดต่างจากการรู้ตอนกดมาก สำหรับงานที่ทำทีละหลายสิบคน —
+     * เจ้าหน้าที่ที่กดแล้วล้มทีละคนจะเลิกใช้ แล้วกลับไปพิมพ์ด้วยมือ
+     */
+    const r = await registrar(`/documents/english-readiness/${F.student}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(typeof r.body.ready === 'boolean', 'ต้องตอบว่าพร้อมหรือยัง');
+    expect(Array.isArray(r.body.missing), 'ต้องบอกรายชื่อช่องที่ยังว่าง');
+    return r.body.ready
+      ? 'พร้อมออกฉบับอังกฤษ'
+      : `ยังขาด ${r.body.missing.length} ช่อง · ${r.body.courses.length} รายวิชา`;
+  });
+
+  await check('API-153 ออกฉบับอังกฤษไม่ได้ถ้าข้อมูลยังไม่ครบ และบอกว่าขาดอะไร', async () => {
+    /*
+     * ปล่อยให้ออกโดยเติมภาษาไทยแทนช่องที่ว่าง จะได้เอกสารทางการที่หัวเป็น
+     * อังกฤษแต่ชื่อสาขาเป็นไทย และแก้ไม่ได้อีกเลยเพราะ payload ตรึงแล้ว
+     */
+    const ready = await registrar(`/documents/english-readiness/${F.student}`);
+    if (ready.body.ready) return 'ข้าม — ข้อมูลอังกฤษครบแล้วในฐานทดสอบ';
+
+    const r = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript', lang: 'en' }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+    expect(String(JSON.stringify(r.body)).includes('ภาษาอังกฤษ'),
+      'ข้อความต้องบอกว่าขาดข้อมูลภาษาอังกฤษ ไม่ใช่ error ดิบจากฐานข้อมูล');
+    return 'ปฏิเสธพร้อมบอกสิ่งที่ขาด';
+  });
+
+  await check('API-154 ฉบับไทยกับอังกฤษเดินเลขคนละสาย', async () => {
+    // ถ้าใช้สายเดียวกัน เลขที่บนใบไทยจะกระโดดทุกครั้งที่มีคนออกใบอังกฤษ
+    // ซึ่งงานทะเบียนอธิบายกับผู้ตรวจไม่ได้
+    const a = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'certification', yearBe: 2569 }),
+    });
+    expect(a.status < 400, `ออกฉบับไทยไม่สำเร็จ ${a.status} ${JSON.stringify(a.body)}`);
+
+    const b = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'certification', yearBe: 2569 }),
+    });
+    expect(b.status < 400, `ออกฉบับไทยใบที่สองไม่สำเร็จ ${b.status}`);
+
+    const seqA = Number(String(a.body.doc_no).slice(-5));
+    const seqB = Number(String(b.body.doc_no).slice(-5));
+    expect(seqB === seqA + 1, `ฉบับไทยต้องเดินต่อกัน ได้ ${a.body.doc_no} → ${b.body.doc_no}`);
+    expect(String(a.body.doc_no).startsWith('2569'),
+      `เลขที่ต้องมีปีการศึกษานำหน้า มิฉะนั้นปีถัดไปจะออกเลขซ้ำ ได้ ${a.body.doc_no}`);
+    return `${a.body.doc_no} → ${b.body.doc_no}`;
+  });
+
+  await check('API-155 ภาษาที่ไม่รองรับถูกปฏิเสธตั้งแต่ชั้น API', async () => {
+    const r = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'certification', lang: 'jp' }),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

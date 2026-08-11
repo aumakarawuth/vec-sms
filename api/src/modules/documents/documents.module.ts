@@ -58,6 +58,13 @@ class IssueDocumentDto {
    * ต้องมีที่เดียว มิฉะนั้นวันที่เงื่อนไขเปลี่ยนจะแก้ไม่ครบทั้งสองที่
    */
   @IsOptional() @IsUuid() termId?: string;
+
+  /**
+   * ภาษาของฉบับที่ออก — ฉบับอังกฤษเป็น**เอกสารคนละฉบับ** ที่เดินเลขคนละสาย
+   * ไม่ใช่การพิมพ์ใบเดิมด้วยฟอนต์อื่น (ตรงกับ eng_mass_transcript_no ของ SISA)
+   * ฐานข้อมูลปฏิเสธเองถ้าข้อมูลภาษาอังกฤษยังกรอกไม่ครบ พร้อมบอกว่าขาดอะไร
+   */
+  @IsOptional() @IsIn(['th', 'en']) lang?: 'th' | 'en';
 }
 
 class VoidDocumentDto {
@@ -144,10 +151,35 @@ export class DocumentsService {
   async issue(dto: IssueDocumentDto) {
     const row = await this.db.queryOne(
       `select id, doc_no, kind, copy_no, issued_on, payload
-         from issue_document($1, $2::document_kind, $3::smallint, $4)`,
-      [dto.studentId, dto.kind, dto.yearBe ?? null, dto.termId ?? null],
+         from issue_document($1, $2::document_kind, $3::smallint, $4, $5)`,
+      [dto.studentId, dto.kind, dto.yearBe ?? null, dto.termId ?? null, dto.lang ?? 'th'],
     );
     return row;
+  }
+
+  /**
+   * ตรวจก่อนกดว่าออกฉบับภาษาอังกฤษได้หรือยัง
+   *
+   * มีเส้นทางนี้เพราะการรู้ตอนกดว่า "ยังกรอกไม่ครบ" กับการรู้**ก่อน**กด
+   * ต่างกันมากสำหรับงานที่ทำทีละหลายสิบคน — เจ้าหน้าที่ที่กดแล้วล้มทีละคน
+   * จะเลิกใช้ฟีเจอร์นี้ แล้วกลับไปพิมพ์ด้วยมือ
+   */
+  async englishReadiness(studentId: string) {
+    return this.db.tx(async (c) => {
+      const missing = (
+        await c.query<{ fields: string[] }>(
+          `select missing_english_fields($1) as fields`, [studentId],
+        )
+      ).rows[0].fields;
+
+      const courses = (
+        await c.query<{ code: string; name_th: string }>(
+          `select code, name_th from courses_missing_english($1) limit 20`, [studentId],
+        )
+      ).rows;
+
+      return { ready: missing.length === 0 && courses.length === 0, missing, courses };
+    });
   }
 
   /**
@@ -332,6 +364,11 @@ class DocumentsController {
   @Get('students/:studentId')
   list(@Param('studentId', ParseUuidPipe) studentId: string) {
     return this.svc.listForStudent(studentId);
+  }
+
+  @Get('english-readiness/:studentId')
+  englishReadiness(@Param('studentId', ParseUuidPipe) studentId: string) {
+    return this.svc.englishReadiness(studentId);
   }
 
   /*
