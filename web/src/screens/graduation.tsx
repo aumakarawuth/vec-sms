@@ -55,6 +55,57 @@ interface PvrsResult {
   rows: Record<string, unknown>[];
 }
 
+/**
+ * แก้วันสำเร็จการศึกษาของนักศึกษาที่อนุมัติจบไปแล้ว
+ *
+ * ─── ทำไมช่องนี้อยู่ที่ระเบียนจบ ไม่ใช่ที่หน้าออกเอกสาร ───
+ * `issued_document.payload` ตรึงตั้งแต่วันที่ออกและแก้ไม่ได้ ถ้าให้กรอก
+ * วันที่ตอนกดพิมพ์ คนที่พิมพ์ผิดต้องยกเลิกใบแล้วออกใหม่ ซึ่งกินเลขที่เพิ่ม
+ * ทุกครั้งและทิ้งใบที่ยกเลิกไว้ในระบบถาวร
+ *
+ * และวันสำเร็จการศึกษาเป็นข้อเท็จจริงของนักศึกษา ไม่ใช่ของกระดาษใบนั้น —
+ * ใบทุกใบที่ออกให้คนคนเดียวกันต้องเขียนวันเดียวกันเสมอ
+ *
+ * ─── ใบที่ออกไปแล้วไม่เปลี่ยนตาม ───
+ * ซึ่งถูกแล้ว เพราะมีคนถือใบนั้นอยู่ ถ้าต้องการใบที่มีวันใหม่ ต้องยกเลิก
+ * ใบเก่าแล้วออกใหม่อย่างเปิดเผย
+ */
+function CompletedOnEditor({ studentId }: { studentId: string }) {
+  const [date, setDate] = useState('');
+  const [saved, setSaved] = useState<string | null>(null);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="row">
+        <Field label="แก้วันสำเร็จการศึกษา (จบช้า หรือกรอกผิด)">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <div className="field">
+          <span>&nbsp;</span>
+          <ActionButton
+            onRun={() =>
+              api.patch<{ completed_on: string }>(
+                `/graduation/students/${studentId}/completed-on`,
+                { completedOn: date },
+              )
+            }
+            onDone={(r) => setSaved((r as { completed_on: string }).completed_on)}
+          >
+            บันทึกวันจบ
+          </ActionButton>
+        </div>
+      </div>
+      {saved && (
+        <Notice kind="ok">
+          บันทึกแล้ว — ใบที่ออกไปก่อนหน้านี้ยังเขียนวันเดิม เพราะเนื้อหาของ
+          เอกสารที่ออกแล้วแก้ไม่ได้ ถ้าต้องการใบที่มีวันใหม่ ต้องยกเลิกใบเก่า
+          แล้วออกใหม่
+        </Notice>
+      )}
+    </div>
+  );
+}
+
 export function GraduationScreen() {
   const approvals = useAsync(() => api.get<Approval[]>('/graduation/approvals'), []);
   const students = useAsync(() => api.get<StudentRow[]>('/students?limit=200'), []);
@@ -135,6 +186,8 @@ export function GraduationScreen() {
             )}
           </AsyncView>
         )}
+
+        {studentId && <CompletedOnEditor studentId={studentId} />}
       </Card>
 
       <Card title="เปิดรอบอนุมัติสำเร็จการศึกษา">

@@ -8,6 +8,7 @@ import {
   Module,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -150,6 +151,16 @@ class CreateApprovalDto {
   @IsOptional() @IsString() documentNo?: string;
   @IsOptional() @IsString() note?: string;
   @IsUuid() approvedBy: string;
+}
+
+/**
+ * แก้วันสำเร็จการศึกษา — มีช่องเดียวโดยตั้งใจ
+ *
+ * ตัวเลข gpax กับหน่วยกิตตรึงตอนอนุมัติจบ (หลักข้อ 5) การใส่ไว้ใน DTO
+ * เดียวกันจะทำให้แก้พลาดได้ด้วยฟิลด์ที่หลงมาจากฟอร์ม
+ */
+class CompletedOnDto {
+  @IsISO8601() completedOn: string;
 }
 
 class AddGraduateDto {
@@ -390,6 +401,33 @@ export class GraduationService {
    * การเดารูปแบบแล้วให้เจ้าหน้าที่ส่งไปเลยอันตรายกว่าการให้ข้อมูลดิบ
    * แล้วให้คนที่รู้สเปกจัดรูปเอง — ดูหมายเหตุขอบเขตที่หัวไฟล์ 0027
    */
+  /**
+   * แก้เฉพาะวันสำเร็จการศึกษา
+   *
+   * ไม่แตะ `gpax` และ `credits_earned` — สองค่านั้นตรึงตอนอนุมัติจบ
+   * ถ้าแก้ได้ที่นี่ ตัวเลขบนใบจะเปลี่ยนได้โดยไม่ผ่านมติอนุมัติจบ (หลักข้อ 5)
+   *
+   * ─── ใบที่ออกไปแล้วไม่เปลี่ยนตาม และนั่นถูกแล้ว ───
+   * `issued_document.payload` ตรึงตั้งแต่วันที่ออก ใบที่พิมพ์ไปก่อนแก้จะ
+   * ยังเขียนวันเดิม — ซึ่งเป็นสิ่งที่ต้องเป็น เพราะมีคนถือใบนั้นอยู่
+   * ถ้าต้องการใบที่มีวันใหม่ ต้องยกเลิกใบเก่าแล้วออกใหม่อย่างเปิดเผย
+   */
+  async setCompletedOn(studentId: string, dto: { completedOn: string }) {
+    const row = await this.db.queryOne(
+      `update student_graduation
+          set completed_on = $2::date
+        where student_id = $1
+      returning student_id, completed_on, gpax, credits_earned`,
+      [studentId, dto.completedOn],
+    );
+    if (!row) {
+      throw new NotFoundException(
+        'ไม่พบระเบียนสำเร็จการศึกษาของนักศึกษารายนี้ — ต้องอนุมัติจบก่อนจึงจะแก้วันที่ได้',
+      );
+    }
+    return row;
+  }
+
   async pvrs(approvalId: string) {
     const rows = await this.db.query(
       `select seq, student_code, full_name, program_name, qualification,
@@ -521,6 +559,32 @@ class GraduationController {
   @Get('approvals/:id/pvrs')
   pvrs(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.pvrs(id);
+  }
+
+  /**
+   * แก้วันสำเร็จการศึกษาของนักศึกษาที่อนุมัติจบไปแล้ว
+   *
+   * ─── ทำไมแก้ที่ระเบียนจบ ไม่ใช่ใส่ตอนกดพิมพ์ ───
+   * `issued_document.payload` ตรึงตั้งแต่วันที่ออกและแก้ไม่ได้ ถ้าให้กรอก
+   * วันที่ตอนพิมพ์ คนที่พิมพ์ผิดจะต้องยกเลิกใบแล้วออกใหม่ ซึ่งกินเลขที่
+   * เพิ่มทุกครั้งและทิ้งใบที่ยกเลิกไว้ในระบบถาวร — ส่วนการแก้ที่ระเบียนจบ
+   * แก้ได้จนกว่าจะพอใจแล้วค่อยออกใบ
+   *
+   * และวันสำเร็จการศึกษาเป็น**ข้อเท็จจริงของนักศึกษา** ไม่ใช่ของกระดาษใบนั้น
+   * ใบทุกใบที่ออกให้คนคนเดียวกันต้องเขียนวันเดียวกันเสมอ
+   *
+   * ─── แก้ได้เฉพาะวันที่ ───
+   * `gpax` กับ `credits_earned` ตรึงตอนอนุมัติจบโดยตั้งใจ (หลักข้อ 5)
+   * ถ้าเปิดให้แก้ที่นี่ ตัวเลขบนใบจะเปลี่ยนได้โดยไม่ผ่านมติอนุมัติจบ
+   */
+  @Roles('registrar', 'academic', 'director', 'admin')
+  @Audit('student_graduation', 'studentId')
+  @Patch('students/:studentId/completed-on')
+  setCompletedOn(
+    @Param('studentId', ParseUuidPipe) studentId: string,
+    @Body() dto: CompletedOnDto,
+  ) {
+    return this.svc.setCompletedOn(studentId, dto);
   }
 }
 

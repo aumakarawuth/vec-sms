@@ -1,11 +1,14 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
   Get,
   Injectable,
   Module,
+  NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -21,7 +24,7 @@ import {
 } from 'class-validator';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
-import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { IsUuid, IsUuidArray, ParseUuidPipe } from '../../common/validation/uuid';
 
 /**
  * หลักสูตรฐานสมรรถนะ
@@ -58,6 +61,19 @@ class AddCourseDto {
   @IsOptional() @IsInt() @Min(1) @Max(4) suggestedYear?: number;
   @IsOptional() @IsInt() @Min(1) @Max(3) suggestedTerm?: number;
   @IsOptional() @IsInt() sortOrder?: number;
+}
+
+/** แก้ทีละรายวิชา — ทุกช่องเป็นตัวเลือก ส่งมาเฉพาะที่จะเปลี่ยน */
+class UpdateCourseDto {
+  @IsOptional() @IsIn(REQUIREMENT as unknown as string[]) requirement?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(4) suggestedYear?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(3) suggestedTerm?: number;
+  @IsOptional() @IsInt() @Min(0) sortOrder?: number;
+}
+
+class ReorderCoursesDto {
+  /** ลำดับใหม่ทั้งชุด — ตำแหน่งในอาร์เรย์คือ sort_order ที่จะได้ */
+  @IsUuidArray() courseIds: string[];
 }
 
 class CategoryDto {
@@ -267,6 +283,61 @@ export class CurriculumService {
     );
   }
 
+  /**
+   * แก้ลำดับและภาคเรียนตามแผนของรายวิชาในหลักสูตร
+   *
+   * ─── ทำไมสองเรื่องนี้อยู่เส้นทางเดียวกัน ───
+   * เพราะใบ รบ. ใช้ทั้งคู่พร้อมกัน — `suggestedYear`/`suggestedTerm` เป็นตัว
+   * บอกว่ารายวิชาไปอยู่ภาคไหนบนใบ (0063) ส่วน `sortOrder` เป็นตัวบอกลำดับ
+   * ภายในภาคนั้น คนที่เปิดหน้าจอมาจัดลำดับคือคนเดียวกับที่ย้ายภาค
+   */
+  async updateCourse(id: string, dto: UpdateCourseDto) {
+    const row = await this.db.queryOne(
+      `update curriculum_course
+          set suggested_year = coalesce($2, suggested_year),
+              suggested_term = coalesce($3, suggested_term),
+              sort_order     = coalesce($4, sort_order),
+              requirement    = coalesce($5::requirement_kind, requirement)
+        where id = $1
+      returning id, suggested_year, suggested_term, sort_order, requirement`,
+      [id, dto.suggestedYear ?? null, dto.suggestedTerm ?? null,
+       dto.sortOrder ?? null, dto.requirement ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบรายวิชาในหลักสูตรฉบับนี้');
+    return row;
+  }
+
+  /**
+   * จัดลำดับรายวิชาใหม่ทั้งชุด
+   *
+   * ─── ทำไมรับรายการทั้งชุด ไม่ใช่ "เลื่อนขึ้นหนึ่งขั้น" ───
+   * เพราะการเลื่อนทีละขั้นต้องอ่านลำดับปัจจุบันมาก่อนแล้วเขียนกลับสองแถว
+   * ซึ่งถ้ามีคนสองคนเปิดหน้าจอเดียวกันอยู่ จะสลับกันจนลำดับเพี้ยนโดยไม่มี
+   * ใครเห็น — ส่งทั้งชุดแปลว่าคนที่กดบันทึกทีหลังชนะทั้งชุด ซึ่งอธิบายได้
+   *
+   * และเขียนในทรานแซกชันเดียว มิฉะนั้นการล้มกลางทางจะทิ้งลำดับที่ซ้ำกันไว้
+   */
+  async reorderCourses(versionId: string, ids: string[]) {
+    if (ids.length === 0) throw new BadRequestException('ต้องส่งลำดับรายวิชามาอย่างน้อยหนึ่งตัว');
+    return this.db.tx(async (c) => {
+      const done = await c.query(
+        `update curriculum_course cc
+            set sort_order = x.ord
+           from unnest($2::uuid[]) with ordinality as x(id, ord)
+          where cc.id = x.id
+            and cc.curriculum_version_id = $1
+        returning cc.id`,
+        [versionId, ids],
+      );
+      if (done.rows.length !== ids.length) {
+        throw new BadRequestException(
+          `จัดลำดับได้ ${done.rows.length} จาก ${ids.length} รายวิชา — มีรายวิชาที่ไม่ได้อยู่ในหลักสูตรฉบับนี้`,
+        );
+      }
+      return { versionId, reordered: done.rows.length };
+    });
+  }
+
   /** ออกฉบับใหม่จากฉบับเดิมทั้งก้อน */
   async cloneVersion(sourceId: string, dto: CloneVersionDto) {
     const row = await this.db.queryOne<{ id: string }>(
@@ -331,6 +402,28 @@ class CurriculumController {
   @Post('versions/:id/courses')
   addCourse(@Param('id', ParseUuidPipe) id: string, @Body() dto: AddCourseDto) {
     return this.svc.addCourse(id, dto);
+  }
+
+  /**
+   * แก้ภาคเรียนตามแผนและลำดับของรายวิชาในหลักสูตร
+   *
+   * ทั้งสองค่าเป็นตัวกำหนดหน้าตาของใบ รบ. — `suggested_year`/`suggested_term`
+   * บอกว่ารายวิชาไปอยู่ภาคไหน (0063) ส่วน `sort_order` บอกลำดับภายในภาคนั้น
+   * ก่อนหน้านี้ตั้งได้ครั้งเดียวตอนเพิ่มรายวิชา แก้ทีหลังไม่ได้เลย
+   */
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('courses/:id')
+  updateCourse(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateCourseDto) {
+    return this.svc.updateCourse(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('versions/:id/courses/reorder')
+  reorderCourses(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: ReorderCoursesDto,
+  ) {
+    return this.svc.reorderCourses(id, dto.courseIds);
   }
 
   @Roles('academic', 'director', 'admin')

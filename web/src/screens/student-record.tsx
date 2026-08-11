@@ -14,7 +14,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
-import { thaiDate, thaiDateTime, money, num } from '../core/fmt';
+import { STUDENT_STATUS, thaiDate, thaiDateTime, money, num } from '../core/fmt';
 import { useSession, type Role } from '../core/session';
 import { ActionButton, Badge, Card, Field, Notice, TableCard } from '../ui/kit';
 
@@ -1019,5 +1019,167 @@ export function AdvisorTab({ p, reload }: { p: FullProfile; reload: () => void }
         ที่บังคับอยู่ที่ฐานข้อมูล ไม่ใช่ที่หน้าจอ
       </Notice>
     </>
+  );
+}
+
+/* ─── สถานะนักศึกษา ─────────────────────────────────────────────── */
+
+/** สถานะที่แปลว่าออกจากสถานศึกษาจริง — ใบ รบ. พิมพ์วันที่และเหตุผลของกลุ่มนี้ */
+const LEAVING = ['withdrawn', 'transferred_out', 'dismissed', 'graduated'];
+
+/**
+ * เปลี่ยนสถานะนักศึกษาพร้อมวันที่และเหตุผล
+ *
+ * ─── ทำไมช่อง "เหตุที่ออก" อยู่ที่นี่ ไม่ใช่ที่หน้าออกเอกสาร ───
+ * เพราะมันเป็นข้อเท็จจริงของนักศึกษา ไม่ใช่ของกระดาษใบนั้น — ใบ รบ. ทุกใบ
+ * ที่ออกให้คนคนเดียวกันต้องเขียนเหตุผลเดียวกันเสมอ และคนที่รู้เหตุผลจริง
+ * คือคนที่กดเปลี่ยนสถานะ ไม่ใช่คนที่กดพิมพ์ใบในอีกสองปีถัดมา
+ *
+ * ─── ทำไมบังคับเหตุผลเฉพาะบางสถานะ ───
+ * สี่สถานะที่แปลว่าออกจากสถานศึกษาจะถูกพิมพ์ลงใบ ระเบียนแสดงผลการเรียน
+ * ใบที่เว้นช่อง "เหตุที่ออก" ว่างไว้คือเอกสารที่ตอบคำถามของคนอ่านไม่ได้
+ * ส่วนการลาพักหรือกลับมาเรียนต่อไม่ได้ขึ้นใบ จึงไม่ต้องบังคับ —
+ * ถ้าบังคับทุกสถานะ คนกรอกจะใส่จุดเดียวไปให้พ้น ๆ ซึ่งแย่กว่าไม่ถาม
+ */
+export function StatusTab({ p, reload }: { p: FullProfile; reload: () => void }) {
+  const canWrite = useCan('registrar', 'academic', 'director', 'admin');
+  const [status, setStatus] = useState(p.status);
+  const [effectiveOn, setEffectiveOn] = useState(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState('');
+  const [documentNo, setDocumentNo] = useState('');
+
+  const needsReason = LEAVING.includes(status);
+  const ready = status !== '' && effectiveOn !== '' && (!needsReason || reason.trim() !== '');
+
+  return (
+    <Card title="สถานะนักศึกษา">
+      <div className="row">
+        <Field label="สถานะปัจจุบัน">
+          <input value={STUDENT_STATUS[p.status] ?? p.status} readOnly />
+        </Field>
+      </div>
+
+      {!canWrite ? (
+        <Notice kind="warn">
+          ไม่มีสิทธิ์เปลี่ยนสถานะ — งานทะเบียน งานวิชาการ และผู้อำนวยการเท่านั้น
+        </Notice>
+      ) : (
+        <>
+          <div className="row">
+            <label className="field">
+              <span>เปลี่ยนเป็น</span>
+              <select value={status} onChange={(e) => setStatus(e.target.value)}>
+                {Object.entries(STUDENT_STATUS).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </label>
+            <Field label="มีผลวันที่">
+              <input
+                type="date"
+                value={effectiveOn}
+                onChange={(e) => setEffectiveOn(e.target.value)}
+              />
+            </Field>
+            <Field label="เลขที่คำสั่ง/หนังสือ">
+              <input value={documentNo} onChange={(e) => setDocumentNo(e.target.value)} />
+            </Field>
+          </div>
+          <div className="row">
+            <Field
+              label={needsReason ? 'เหตุที่ออก (พิมพ์บนใบ รบ.)' : 'เหตุผล'}
+            >
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={needsReason ? 'เช่น สำเร็จการศึกษาตามหลักสูตร' : '(ไม่บังคับ)'}
+              />
+            </Field>
+          </div>
+
+          {needsReason && (
+            <Notice kind="warn">
+              สถานะนี้จะถูกพิมพ์ในช่อง “ออกจากสถานศึกษาเมื่อ” และ “เหตุที่ออก”
+              บนใบระเบียนแสดงผลการเรียน — ใบที่ออกไปแล้วจะยังเขียนค่าเดิม
+              เพราะเนื้อหาของเอกสารที่ออกแล้วแก้ไม่ได้
+            </Notice>
+          )}
+
+          <ActionButton
+            confirm={
+              needsReason
+                ? 'สถานะนี้จะขึ้นบนใบ รบ. และประวัติการเปลี่ยนสถานะลบไม่ได้ ยืนยันหรือไม่'
+                : undefined
+            }
+            onRun={() =>
+              ready
+                ? api.post(`/students/${p.id}/status`, {
+                    status,
+                    effectiveOn,
+                    reason: reason.trim() || undefined,
+                    documentNo: documentNo.trim() || undefined,
+                  })
+                : Promise.reject(new Error('กรอกไม่ครบ'))
+            }
+            onDone={reload}
+          >
+            บันทึกสถานะ
+          </ActionButton>
+          {!ready && (
+            <Notice kind="warn">
+              {needsReason && reason.trim() === ''
+                ? 'ต้องระบุเหตุที่ออก เพราะจะถูกพิมพ์บนใบ รบ.'
+                : 'กรอกสถานะและวันที่ให้ครบก่อน'}
+            </Notice>
+          )}
+        </>
+      )}
+
+      <div style={{ marginTop: 12 }}>
+        <StatusHistory studentId={p.id} />
+      </div>
+    </Card>
+  );
+}
+
+/** ประวัติการเปลี่ยนสถานะ — ลบไม่ได้ จึงใช้ยันย้อนหลังได้ว่าใครเปลี่ยนอะไรเมื่อไร */
+function StatusHistory({ studentId }: { studentId: string }) {
+  const [rows, setRows] = useState<
+    { to_status: string; effective_on: string; reason: string | null; document_no: string | null }[]
+  >([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<typeof rows>(`/students/${studentId}/status-history`)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoaded(true));
+  }, [studentId]);
+
+  if (!loaded || rows.length === 0) return null;
+  return (
+    <TableCard title="ประวัติการเปลี่ยนสถานะ">
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: 140 }}>มีผลวันที่</th>
+            <th style={{ width: 170 }}>สถานะ</th>
+            <th>เหตุผล</th>
+            <th style={{ width: 170 }}>เลขที่คำสั่ง</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.effective_on}-${i}`}>
+              <td>{thaiDate(r.effective_on)}</td>
+              <td>{STUDENT_STATUS[r.to_status] ?? r.to_status}</td>
+              <td style={{ whiteSpace: 'normal' }}>{r.reason ?? '—'}</td>
+              <td>{r.document_no ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }

@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
-import { AsyncView, Badge, Card, PageHead, TableCard, useAsync } from '../ui/kit';
+import { ActionButton, AsyncView, Badge, Card, PageHead, TableCard, useAsync } from '../ui/kit';
 
 interface Version {
   id: string;
@@ -34,6 +34,67 @@ interface CourseInVersion {
   credits?: string;
   suggested_year?: number | null;
   suggested_term?: number | null;
+}
+
+/**
+ * เลื่อนรายวิชาขึ้น/ลงหนึ่งขั้นแล้วส่งลำดับทั้งชุดไปให้ API
+ *
+ * ─── ทำไมส่งทั้งชุด ทั้งที่ผู้ใช้เลื่อนแค่แถวเดียว ───
+ * เพราะ "เลื่อนขึ้นหนึ่งขั้น" ต้องอ่านลำดับปัจจุบันมาก่อนแล้วเขียนกลับสองแถว
+ * ถ้ามีคนสองคนเปิดหน้าจอเดียวกันอยู่ จะสลับกันจนลำดับเพี้ยนโดยไม่มีใครเห็น
+ * — ส่งทั้งชุดแปลว่าคนที่กดทีหลังชนะทั้งชุด ซึ่งอธิบายให้ผู้ใช้ฟังได้
+ */
+function moveCourse(
+  versionId: string, courses: CourseInVersion[], index: number, delta: number,
+) {
+  const to = index + delta;
+  if (to < 0 || to >= courses.length) return Promise.resolve();
+  const ids = courses.map((c) => c.id);
+  const moved = ids[index]!;
+  ids[index] = ids[to]!;
+  ids[to] = moved;
+  return api.post(`/curriculum/versions/${versionId}/courses/reorder`, { courseIds: ids });
+}
+
+/**
+ * แก้ภาคเรียนตามหลักสูตรของรายวิชา
+ *
+ * ค่านี้เป็นตัวบอกว่ารายวิชาไปโผล่ภาคไหนบน**ใบ ระเบียนแสดงผลการเรียน**
+ * ไม่ใช่แค่คำแนะนำ — นักศึกษาที่ลงเรียนคนละภาคกับแผนจะยังถูกพิมพ์ตามแผน
+ */
+function PlanTermEditor(
+  { course, onSaved }: { course: CourseInVersion; onSaved: () => void },
+) {
+  const [year, setYear] = useState(String(course.suggested_year ?? ''));
+  const [term, setTerm] = useState(String(course.suggested_term ?? ''));
+  const dirty = year !== String(course.suggested_year ?? '')
+    || term !== String(course.suggested_term ?? '');
+
+  return (
+    <span className="plan-term">
+      <select value={year} onChange={(e) => setYear(e.target.value)}>
+        <option value="">ชั้นปี —</option>
+        {[1, 2, 3, 4].map((y) => <option key={y} value={y}>ชั้นปีที่ {y}</option>)}
+      </select>{' '}
+      <select value={term} onChange={(e) => setTerm(e.target.value)}>
+        <option value="">ภาค —</option>
+        {[1, 2, 3].map((t) => <option key={t} value={t}>ภาค {t}</option>)}
+      </select>
+      {dirty && year !== '' && term !== '' && (
+        <>
+          {' '}
+          <ActionButton
+            onRun={() => api.patch(`/curriculum/courses/${course.id}`, {
+              suggestedYear: Number(year), suggestedTerm: Number(term),
+            })}
+            onDone={onSaved}
+          >
+            บันทึก
+          </ActionButton>
+        </>
+      )}
+    </span>
+  );
 }
 
 interface Category {
@@ -198,11 +259,12 @@ export function CurriculumScreen() {
                           <th>ชื่อวิชา</th>
                           <th className="num" style={{ width: 70 }}>นก.</th>
                           <th style={{ width: 110 }}>ประเภท</th>
-                          <th style={{ width: 150 }}>แนะนำให้เรียน</th>
+                          <th style={{ width: 190 }}>ภาคเรียนตามหลักสูตร</th>
+                          <th style={{ width: 90 }}>ลำดับ</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {c.courses.map((co) => (
+                        {c.courses.map((co, i) => (
                           <tr key={co.id}>
                             <td className="mono">{co.code}</td>
                             <td>{co.name_th}</td>
@@ -213,9 +275,29 @@ export function CurriculumScreen() {
                               </Badge>
                             </td>
                             <td>
-                              {co.suggested_year
-                                ? `ชั้นปีที่ ${co.suggested_year}${co.suggested_term ? ` ภาค ${co.suggested_term}` : ''}`
-                                : '—'}
+                              <PlanTermEditor course={co} onSaved={() => structure.reload()} />
+                            </td>
+                            <td>
+                              {/*
+                                เลื่อนทีละขั้นแต่ส่งลำดับ**ทั้งชุด**ไปให้ API
+                                — ถ้าส่งแค่สองแถวที่สลับกัน คนสองคนที่เปิด
+                                หน้าจอเดียวกันอยู่จะเขียนทับกันจนลำดับเพี้ยน
+                                โดยไม่มีใครเห็น
+                              */}
+                              <ActionButton
+                                className="ghost"
+                                onRun={() => moveCourse(versionId, c.courses, i, -1)}
+                                onDone={() => structure.reload()}
+                              >
+                                ↑
+                              </ActionButton>{' '}
+                              <ActionButton
+                                className="ghost"
+                                onRun={() => moveCourse(versionId, c.courses, i, 1)}
+                                onDone={() => structure.reload()}
+                              >
+                                ↓
+                              </ActionButton>
                             </td>
                           </tr>
                         ))}

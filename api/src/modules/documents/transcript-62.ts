@@ -3,11 +3,18 @@
  *
  * ═══ ตัวเลขทั้งหมดวัดจากไฟล์จริง ไม่ได้เดา ═══
  * วัดจาก `ระเบียนแสดงผลการเรียนภาษาไทย (แนวตั้ง 62).pdf` และฉบับอังกฤษคู่กัน
- *   A4 แนวตั้ง 595 × 842 pt · ฟอนต์ TH Sarabun New 12.5 pt
- *   ขอบซ้าย 22.6 · ขวา 24 · ล่าง 13
- *   ขอบคอลัมน์ครึ่งซ้าย x = 23 · 71 · 228 · 251 · 274 · 296
- *   → รหัสวิชา 48 · ชื่อวิชา 157 · หน่วยกิต 23 · ผลการเรียน 23 · (1)×(2) 22
- *   ครึ่งขวาสมมาตร เริ่มที่ 298
+ *   A4 แนวตั้ง 595 × 842 pt · ฟอนต์ THSarabunNew 12.5 pt
+ *   กรอบตารางอยู่ที่ x 22.0 → 572.1 · เส้นหนา 0.72 pt (บางกว่าตระกูล 67
+ *   ที่ใช้ 1.5 pt) และเส้นใต้หัวตารางเป็น**เส้นคู่** รวมหนา 1.45 pt
+ *   ขอบคอลัมน์ x = 22.4 · 70.8 · 227.7 · 250.8 · 273.9 · 297.1 (ครึ่งซ้าย)
+ *   → รหัสวิชา 48.4 · ชื่อวิชา 156.9 · หน่วยกิต 23.1 · ผลการเรียน 23.1 ·
+ *     (1)×(2) 23.2
+ *   ครึ่งขวาสมมาตร เริ่มที่ 297.1
+ *
+ * ═══ ตารางถูกตีกรอบไว้ก่อน รายวิชาค่อยไหลลงไป ═══
+ * เหมือนตระกูล 67 ทุกประการ ต่างแค่ตัวเลข — กรอบสูงคงที่ (หน้า 1 สูง 481.4 pt ·
+ * หน้า 2 สูง 437.6 pt) หนึ่งบรรทัดสูง 15.43 pt จึงจุคอลัมน์ละ 28 บรรทัด
+ * ที่หน้า 1 และ 25 บรรทัดที่หน้า 2 ไม่ว่านักศึกษาจะลงกี่วิชา
  *
  * ═══ สามอย่างที่ต่างจากตระกูล 67 อย่างมีนัย ═══
  * 1. **จัดกลุ่มตามปีการศึกษา → ภาคเรียน** ไม่ใช่ตามหมวด/กลุ่มวิชา
@@ -31,6 +38,7 @@
  * ความเหมือนต้นฉบับไม่ได้มีค่ามากกว่าความถูกต้องของภาษาบนกระดาษ
  */
 import type { IssuedDocument } from './templates';
+import { TRANSCRIPT_FONT_FACE } from './fonts';
 import { engDate, engYear, thaiDate } from './templates';
 
 /**
@@ -281,6 +289,43 @@ export const GRADE_LETTERS_62: [string, string, string, string][] = [
   ['ม.ผ.', 'F.', 'ไม่ผ่าน', 'Fail'],
 ];
 
+/* ─── เรขาคณิตที่วัดจากไฟล์จริง (pt) ────────────────────────────── */
+
+/**
+ * เหมือน `G` ของตระกูล 67 แต่เป็นตัวเลขของตระกูลนี้ — ห้ามใช้ปนกัน
+ *
+ * พิกัดทุกตัวนับจากมุมซ้ายบนของกรอบตาราง (x = 22.4 · y = 271.04 ที่หน้า 1)
+ */
+const G = {
+  /** ความหนาเส้น — บางกว่าตระกูล 67 ครึ่งหนึ่ง */
+  rule: 0.72,
+  /** เส้นตั้ง 11 เส้น (x จริง 22.4 · 70.8 · 227.7 · 250.8 · 273.9 · 297.1 · … · 571.7) */
+  vRules: [0, 48.4, 205.3, 228.4, 251.5, 274.7, 323.1, 479.9, 503.0, 526.2, 549.3],
+  /** ความกว้างกรอบ = เส้นขวาสุด + ความหนาเส้น */
+  width: 550.02,
+  /** ความกว้างคอลัมน์ครึ่งซ้าย รวม 274.7 */
+  cols: [48.4, 156.9, 23.1, 23.1, 23.2],
+  halfWidth: 274.7,
+  /** ครึ่งขวาใช้เส้นกลางร่วมกับครึ่งซ้าย */
+  rightHalf: 274.7,
+  /** หัวตารางสูง 45.53 pt แล้วต่อด้วย**เส้นคู่**หนารวม 1.45 */
+  headHeight: 45.53,
+  headRule: 1.45,
+  /** เส้นใต้หัวตารางอยู่ที่ 46.25 จากขอบบนกรอบ */
+  headRuleTop: 46.25,
+  /** แถวแรกของเนื้อตารางเริ่มที่ 47.70 จากขอบบนกรอบ */
+  bodyTop: 47.7,
+  /** ความสูงหนึ่งบรรทัด — 15.43 pt ที่ฟอนต์ 12.5 pt */
+  rowEm: 1.2344,
+  rowPt: 15.43,
+  /** ความสูงกรอบ (คงที่) — หน้า 1 271.04→751.67 · หน้า 2 93.96→531.23 */
+  gridH: { p1: 480.63, p2: 437.27 },
+  /** ที่ว่างใต้หัวตาราง */
+  body: { p1: 432.21, p2: 388.85 },
+  /** ความกว้างที่ข้อความในคอลัมน์ชื่อวิชาใช้ได้ (156.9 − ระยะขอบ) */
+  nameWidth: 153.5,
+} as const;
+
 /* ─── สไตล์ที่ตรงกับตัวเลขที่วัดมา ──────────────────────────────── */
 
 /**
@@ -291,13 +336,23 @@ export const GRADE_LETTERS_62: [string, string, string, string][] = [
 function style(lang: 'th' | 'en', form: Transcript62Form): string {
   const topMargin = lang === 'en' ? 12 : 76;
   // แบบ สอศ. วัดได้ 10.6 pt ในตาราง เพราะต้องเว้นที่ให้ตารางสรุปหน้า 2
-  const tableFont = form === 'sorsor' ? '10.6pt' : '12.5pt';
+  const tableFont = form === 'sorsor' ? 10.6 : 12.5;
   return `
-  @page { size: A4 portrait; margin: ${topMargin}pt 24pt 13pt 23pt; }
+  ${TRANSCRIPT_FONT_FACE}
+  @page { size: A4 portrait; margin: ${topMargin}pt 22.6pt 13pt 22.4pt; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: 'TH Sarabun New', 'Sarabun', 'Leelawadee UI', 'Tahoma', sans-serif;
+    /*
+     * ─── ฟอนต์เป้าหมายคือ THSarabunNew และ**ฝังมากับหน้าแล้ว** ───
+     * ชื่อในรายการนี้ตรงกับ @font-face ที่ฝังไว้ ไม่ใช่ฟอนต์ในเครื่อง
+     * ตัวสำรองมีไว้เผื่อฟอนต์ฝังโหลดไม่ขึ้น และเรียงตามความกว้างที่วัดจริง —
+     * THSarabunNew 0.361 em/อักขระไทย · AngsanaNew 0.389 · **LeelawadeeUI 0.530**
+     * ของเดิมวาง Leelawadee UI ไว้ก่อน ซึ่งกว้างกว่าเป้าหมาย 45% แล้วตารางล้น
+     * กรอบทั้งใบ (เหตุผลเต็มอยู่ใน transcript-67.ts ซึ่งใช้ตรรกะเดียวกัน)
+     */
+    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'THSarabunNew', 'Sarabun',
+                 'Angsana New', 'AngsanaUPC', 'Cordia New', serif;
     font-size: 12.5pt; line-height: 1.27; color: #000;
   }
   .page { position: relative; page-break-after: always; }
@@ -307,8 +362,10 @@ function style(lang: 'th' | 'en', form: Transcript62Form): string {
   h1 { font-size: 19.3pt; font-weight: 700; text-align: center; margin: 0 0 2pt; }
   h1.sub { font-size: 19.3pt; margin-bottom: 10pt; }
 
-  /* บล็อกหัว — สองคอลัมน์ label/value พร้อมกรอบรูปถ่ายขวาสุด */
-  .head { display: flex; gap: 0; align-items: flex-start; margin-bottom: 8pt; }
+  /* บล็อกหัว — สองคอลัมน์ label/value พร้อมกรอบรูปถ่ายขวาสุด
+     ระยะใต้บล็อกตั้งไว้ 4.24 pt เพื่อให้เส้นบนสุดของตารางตกที่ y = 271.0
+     พอดีตามที่วัดจากใบจริง (76 ขอบบน + 190.8 บล็อกหัว + 4.24) */
+  .head { display: flex; gap: 0; align-items: flex-start; margin-bottom: 4.24pt; }
   .head dl {
     display: grid; grid-template-columns: max-content 1fr;
     column-gap: 6pt; row-gap: 0; margin: 0;
@@ -323,31 +380,72 @@ function style(lang: 'th' | 'en', form: Transcript62Form): string {
     margin-left: auto; font-size: 12.5pt;
   }
 
-  /* ตารางรายวิชาสองคอลัมน์ที่ไหลซ้าย → ขวา */
-  table.courses { border-collapse: collapse; table-layout: fixed; font-size: ${tableFont}; }
-  table.courses th, table.courses td {
-    border: 0.6pt solid #000; padding: 0 2pt; vertical-align: top;
+  /*
+   * ─── กรอบตารางสูงคงที่ ตีเส้นก่อน แล้วรายวิชาค่อยไหลลงไป ───
+   * เหตุผลเดียวกับตระกูล 67 — ตาราง HTML สูงตามเนื้อหาเสมอ กรอบจึง
+   * ต้องเป็นกล่องต่างหากที่รู้ความสูงของตัวเอง ส่วนตารางข้างในไม่มี
+   * เส้นของตัวเองเลย ทำหน้าที่จัดข้อความลงช่องอย่างเดียว
+   */
+  .grid { position: relative; width: ${G.width}pt; height: var(--gh); }
+  .grid.g1 { --gh: calc(${G.gridH.p1}pt - var(--shrink, 0pt)); }
+  .grid.g2 { --gh: calc(${G.gridH.p2}pt - var(--shrink, 0pt)); }
+  .grid i { position: absolute; background: #000; }
+  .grid i.v { top: 0; bottom: 0; width: ${G.rule}pt; }
+  .grid i.h { left: 0; right: 0; height: ${G.rule}pt; }
+  .grid i.h.top { top: 0; }
+  /* เส้นใต้หัวตารางของตระกูลนี้เป็น**เส้นคู่** (วัดได้ 317.29–318.02 และ
+     318.02–318.74) ต่างจากตระกูล 67 ที่เป็นเส้นเดี่ยวหนา 1.5 */
+  .grid i.h.mid { top: ${G.headRuleTop}pt; height: ${G.headRule}pt; }
+  .grid i.h.bot { bottom: 0; }
+
+  table.courses {
+    position: absolute; width: ${G.halfWidth}pt;
+    table-layout: fixed; border-collapse: collapse;
+    font-size: calc(${tableFont}pt * var(--k, 1));
   }
-  table.courses th { font-weight: 400; text-align: center; line-height: 1.05; }
+  table.courses.hd { top: ${G.rule}pt; }
+  table.courses.bd { top: ${G.bodyTop}pt; }
+  table.courses.r  { left: ${G.rightHalf}pt; }
+  table.courses th, table.courses td {
+    border: 0; padding: 0 1.6pt 0 1.6pt; vertical-align: top;
+  }
+  table.courses.hd th { height: ${G.headHeight}pt; font-weight: 400;
+    text-align: center; vertical-align: middle; }
+  table.courses.hd th span {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: ${G.headHeight}pt; line-height: 1.05; overflow: hidden;
+  }
+  table.courses td { height: ${G.rowEm}em; line-height: ${G.rowEm}em; }
   table.courses td.code { white-space: nowrap; }
   table.courses td.num  { text-align: center; }
-  /* หัวภาคเรียนกินเต็มความกว้างของครึ่งหน้า */
-  table.courses td.term { text-align: center; font-weight: 700; border-top-width: 0.6pt; }
-  table.courses td.termsum { text-align: center; font-size: 11.6pt; border: 0; }
+  /* หัวภาคเรียนและบรรทัดสรุปอยู่ในคอลัมน์ชื่อวิชา ไม่กินคอลัมน์ตัวเลข */
+  table.courses td.term { text-align: center; font-weight: 700; }
+  table.courses td.termsum { text-align: center; font-size: 0.928em; }
 
-  .leave { margin-top: 6pt; }
-  .signs { display: flex; justify-content: space-around; margin-top: 10pt; text-align: center; }
+  /* ใต้ตารางหน้า 1 — วัดจากใบจริง: ออกจากสถานศึกษาเมื่อ 763.2 · เหตุที่ออก
+     777.0 · ชื่อในวงเล็บ 790.7 · ตำแหน่ง 807.3 · บรรทัดวันที่ 823.2
+     ตรึงความสูงไว้เพื่อไม่ให้ช่องลงนามตกขอบล่างของกระดาษ */
+  .leave { margin-top: 0; padding-left: 7.6pt; }
+  .leave div { height: 13.8pt; line-height: 13.8pt; }
+  .signs { display: flex; justify-content: space-around; margin-top: 0; text-align: center; }
   .sign { width: 40%; font-size: 13.5pt; }
+  .sign div { height: 16.5pt; line-height: 16.5pt; }
   .sign .role { font-size: 12.5pt; }
 
-  /* ท้ายหน้า 2 — สามบล็อกคำอธิบาย */
-  .legend { display: flex; gap: 10pt; font-size: 11.6pt; margin-top: 10pt; }
-  .legend .col1 { width: 30%; }
-  .legend .col2 { width: 34%; }
-  .legend .col3 { width: 36%; }
+  /*
+   * ท้ายหน้า 2 — วางตาม x ที่วัดได้ 16 · 183 · 382 และช่องบันทึกอยู่
+   * **ใต้สองคอลัมน์แรก** ไม่ใช่ใต้ทั้งสามคอลัมน์ (เส้นประวัดได้ x 51.9–323.8)
+   */
+  .legend { display: flex; gap: 0; font-size: 11.6pt; margin-top: 14.5pt; }
+  .legend .lcol { width: 365.6pt; }
+  .legend .sub { display: flex; gap: 0; }
+  .legend .col1 { width: 166.6pt; }
+  .legend .col2 { width: 199pt; }
+  .legend .col3 { width: 184.4pt; }
   .legend h2 { font-size: 11.6pt; font-weight: 700; margin: 0 0 3pt; }
   .legend table { border-collapse: collapse; width: 100%; }
   .legend td { padding: 0; vertical-align: top; }
+  .legend div { line-height: 14.45pt; }
   /* ตารางสรุปผลการเรียนของแบบ สอศ. — หนึ่งคอลัมน์ต่อหนึ่งภาคเรียน */
   .matrix { margin-top: 8pt; font-size: 11.6pt; }
   .matrix h2 { font-size: 11.6pt; font-weight: 700; margin: 0 0 3pt; }
@@ -358,8 +456,12 @@ function style(lang: 'th' | 'en', form: Transcript62Form): string {
   }
   .matrix th.lab { text-align: left; font-weight: 400; white-space: nowrap; }
 
-  .memo { margin-top: 8pt; font-size: 13.5pt; }
-  .memo .lines { font-size: 12.5pt; letter-spacing: 0.4pt; }
+  /* ช่องบันทึก — หัวข้อ 13.5 pt แล้วเส้นประห้าบรรทัดกว้าง 272 pt ที่ x 51.9
+     (เดิมพิมพ์เป็นจุด 120 ตัวซึ่งความยาวขึ้นกับฟอนต์ที่เครื่องมี — ใช้เส้น
+      ใต้กรอบแทน ความยาวจึงเท่าที่วัดมาเสมอ) */
+  .memo { margin-top: 22.6pt; font-size: 13.5pt; }
+  .memo .lines { margin-left: 29.5pt; width: 271.9pt; }
+  .memo .lines div { border-bottom: 0.6pt dotted #000; height: 14.45pt; }
 
   .stamp {
     position: absolute; top: 300pt; left: 0; right: 0; text-align: center;
@@ -368,6 +470,19 @@ function style(lang: 'th' | 'en', form: Transcript62Form): string {
   }
   .stamp.copy { top: 420pt; font-size: 44pt; }
   .void-note { color: #a00; font-size: 11pt; text-align: center; }
+
+  /*
+   * ─── หน้าจอต้องเท่ากับกระดาษ ───
+   * เจ้าหน้าที่เปิดหน้านี้ในแท็บใหม่แล้วกด Ctrl+P ถ้าบนจอไหลเต็มความกว้าง
+   * เบราว์เซอร์ จะไม่มีทางรู้ก่อนกดพิมพ์ว่าตารางล้นกรอบหรือตกหน้าหรือเปล่า
+   * — ซึ่งเป็นเรื่องเดียวกับที่ทำให้ปุ่มพิมพ์ทุกปุ่มเคยได้ 401 โดยไม่มีใครเห็น
+   */
+  @media screen {
+    body { background: #f4f4f4; padding: 14px; }
+    .page { background: #fff; width: 595pt; height: 841.9pt;
+            margin: 0 auto 14px; padding: ${topMargin}pt 22.6pt 13pt 22.4pt;
+            box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+  }
 `;
 }
 
@@ -443,10 +558,19 @@ function summaryMatrix(
 }
 
 function renderRow(r: Row62, lang: 'th' | 'en'): string {
-  if (r.kind === 'term') return `<tr><td class="term" colspan="5">${r.text}</td></tr>`;
+  /*
+   * ─── หัวภาคและบรรทัดสรุปอยู่ในคอลัมน์ชื่อวิชาช่องเดียว ไม่ใช่ colspan ───
+   * เหตุผลเดียวกับตระกูล 67 — ใบจริงเว้นช่องหน่วยกิต/ผลการเรียน/ผลคูณไว้ว่าง
+   * ถ้ากินทั้งแถว ข้อความยาวจะไหลไปทับคอลัมน์ตัวเลข แล้วบรรทัดสรุปจะดูเหมือน
+   * รายวิชาที่ไม่มีหน่วยกิต
+   */
+  if (r.kind === 'term') {
+    return `<tr><td></td><td class="term">${r.text}</td><td></td><td></td><td></td></tr>`;
+  }
   if (r.kind === 'sum') {
-    return `<tr><td class="termsum" colspan="5">${esc(r.line1)}</td></tr>
-            <tr><td class="termsum" colspan="5">${esc(r.line2)}</td></tr>`;
+    const line = (x: string) =>
+      `<tr><td></td><td class="termsum">${esc(x)}</td><td></td><td></td><td></td></tr>`;
+    return line(r.line1) + line(r.line2);
   }
   const c = r.course;
   /*
@@ -480,34 +604,123 @@ function renderRow(r: Row62, lang: 'th' | 'en'): string {
   </tr>`;
 }
 
-/** ความกว้างคอลัมน์เป็นสัดส่วนของครึ่งหน้า (273 pt) ตามที่วัดมา */
-const COLS = `<colgroup>
-  <col style="width:17.6%"><col style="width:57.5%"><col style="width:8.4%">
-  <col style="width:8.4%"><col style="width:8.1%"></colgroup>`;
+/* ─── ความจุของกรอบ ─────────────────────────────────────────────── */
 
-function courseTable(rows: Row62[], t: typeof L['th'] | typeof L['en'], lang: 'th' | 'en'): string {
-  const head = `<tr>
-    <th>${t.colCode}</th><th>${t.colName}</th>
-    <th>${t.colCredit}</th><th>${t.colGrade}</th><th>${t.colProduct}</th>
-  </tr>`;
-  /*
-   * ─── ห้ามให้หัวภาคเป็นบรรทัดสุดท้ายของครึ่งซ้าย ───
-   * ถ้าตัดตรงนั้น รายวิชาของภาคนั้นจะขึ้นไปอยู่ครึ่งขวาโดยไม่มีหัวกำกับ
-   * ผู้อ่านจะนับรวมกับภาคก่อนหน้า ซึ่งเป็นความผิดพลาดที่อ่านไม่ออกจากใบ
-   * — เลื่อนหัวภาคไปอยู่ต้นครึ่งขวาแทน
-   */
-  let half = Math.ceil(rows.length / 2);
-  while (half > 0 && rows[half - 1]?.kind === 'term') half -= 1;
+/** สระบน/ล่างและวรรณยุกต์ไทยลอยอยู่เหนือหรือใต้ตัวอักษร ไม่กินความกว้าง */
+const THAI_MARKS = /[ัิ-ฺ็-๎]/g;
 
-  const left = rows.slice(0, half);
-  const right = rows.slice(half);
-  return `<table class="courses" style="width:49.6%;float:left">
-    ${COLS}<thead>${head}</thead><tbody>${left.map((r) => renderRow(r, lang)).join('')}</tbody>
-  </table>
-  <table class="courses" style="width:49.6%;float:right">
-    ${COLS}<thead>${head}</thead><tbody>${right.map((r) => renderRow(r, lang)).join('')}</tbody>
-  </table>
-  <div style="clear:both"></div>`;
+/**
+ * เผื่อความกว้างไว้ 5% เพราะเครื่องที่ไม่มี TH Sarabun จะได้ Angsana ซึ่ง
+ * กว้างกว่า 6.6% — เผื่อมากไปแค่ทำให้คอลัมน์จบก่อนถึงเส้นล่างนิดหน่อย
+ * ส่วนเผื่อน้อยไปทำให้รายวิชาทะลุกรอบไปทับบรรทัดใต้ตาราง
+ */
+const WIDTH_SAFETY = 1.05;
+
+/** ความกว้างเฉลี่ยต่ออักขระของ THSarabunNew วัดจากไฟล์ต้นฉบับ */
+function estimateLines(text: string, availPt: number, fontPt: number): number {
+  let em = 0;
+  for (const ch of text.replace(THAI_MARKS, '')) {
+    em += ch >= '฀' && ch <= '๿' ? 0.365 : 0.33;
+  }
+  return Math.max(1, Math.ceil((em * fontPt * WIDTH_SAFETY) / availPt));
+}
+
+/** จำนวนบรรทัดที่แถวหนึ่งกินจริง — แถวสรุปเป็นสองบรรทัดเสมอ */
+function rowLines(r: Row62, lang: 'th' | 'en', fontPt: number): number {
+  if (r.kind === 'course') {
+    return estimateLines(lang === 'en' ? r.course.name_en : r.course.name_th,
+                         G.nameWidth, fontPt);
+  }
+  if (r.kind === 'term') return estimateLines(r.text, G.nameWidth, fontPt);
+  // บรรทัดสรุปพิมพ์ที่ 0.928 em ของขนาดตาราง จึงเตี้ยกว่าแถวปกติเล็กน้อย
+  return estimateLines(r.line1, G.nameWidth, fontPt * 0.928)
+       + estimateLines(r.line2, G.nameWidth, fontPt * 0.928);
+}
+
+function packColumns(
+  rows: Row62[], lang: 'th' | 'en', baseFont: number, k: number,
+): Row62[][] | null {
+  const fontPt = baseFont * k;
+  const caps = [G.body.p1, G.body.p1, G.body.p2, G.body.p2]
+    .map((h) => Math.floor(h / (G.rowPt * k)));
+  const out: Row62[][] = [[], [], [], []];
+  let slot = 0;
+  let used = 0;
+  for (const r of rows) {
+    const need = rowLines(r, lang, fontPt);
+    if (used + need > caps[slot]) { slot += 1; used = 0; }
+    /*
+     * ─── ห้ามให้หัวภาคเป็นบรรทัดสุดท้ายของคอลัมน์ ───
+     * ถ้าตัดตรงนั้น รายวิชาของภาคนั้นจะขึ้นไปอยู่คอลัมน์ถัดไปโดยไม่มีหัวกำกับ
+     * ผู้อ่านจะนับรวมกับภาคก่อนหน้า ซึ่งเป็นความผิดพลาดที่อ่านไม่ออกจากใบ
+     */
+    if (slot >= out.length) return null;
+    out[slot].push(r);
+    used += need;
+  }
+  // ย้ายหัวภาคที่ค้างอยู่ท้ายคอลัมน์ไปต้นคอลัมน์ถัดไป
+  for (let i = 0; i < out.length - 1; i += 1) {
+    while (out[i].length > 0 && out[i][out[i].length - 1].kind === 'term') {
+      out[i + 1].unshift(out[i].pop()!);
+    }
+  }
+  return out;
+}
+
+const FIT_SCALES = [1, 0.95, 0.9, 0.85, 0.8, 0.75] as const;
+
+/**
+ * หาขนาดฟอนต์ที่ทำให้รายวิชาลงครบในกรอบสองหน้าที่มีอยู่
+ *
+ * เหตุผลเดียวกับตระกูล 67 — ต่อหน้าที่สามไม่ได้เพราะของประจำหน้า 2 ต้องอยู่
+ * หน้าสุดท้าย · ปล่อยล้นคือให้รายวิชาทับช่องลงนาม · ตัดทิ้งคือออกใบที่ขาด
+ * รายวิชาโดยไม่มีอะไรบอก ซึ่งแย่ที่สุดเพราะ payload ที่ตรึงแล้วแก้ไม่ได้
+ */
+function fitColumns(
+  rows: Row62[], lang: 'th' | 'en', baseFont: number,
+): { k: number; cols: Row62[][] } {
+  for (const k of FIT_SCALES) {
+    const cols = packColumns(rows, lang, baseFont, k);
+    if (cols) return { k, cols };
+  }
+  const k = FIT_SCALES[FIT_SCALES.length - 1];
+  const cap = Math.floor(G.body.p1 / (G.rowPt * k));
+  const out: Row62[][] = [[], [], [], []];
+  let slot = 0;
+  let used = 0;
+  for (const r of rows) {
+    const need = rowLines(r, lang, baseFont * k);
+    if (used + need > cap && slot < out.length - 1) { slot += 1; used = 0; }
+    out[slot].push(r);
+    used += need;
+  }
+  return { k, cols: out };
+}
+
+/**
+ * กรอบตารางหนึ่งหน้า — ตีเส้นก่อน แล้วค่อยวางรายวิชาลงไป
+ *
+ * เส้นตั้ง 9 เส้นภายใน (ขอบนอกซ้าย-ขวาเป็น border ของกรอบเอง) กับเส้นคู่
+ * ใต้หัวตารางหนึ่งเส้น ทั้งหมดวางตามพิกัดที่วัดมาและไม่ขึ้นกับเนื้อหาเลย
+ */
+function courseGrid(
+  page: 'g1' | 'g2', left: Row62[], right: Row62[],
+  t: typeof L['th'] | typeof L['en'], lang: 'th' | 'en', k: number,
+): string {
+  const cols = `<colgroup>${G.cols.map((w) => `<col style="width:${w}pt">`).join('')}</colgroup>`;
+  const head = (side: 'l' | 'r') => `<table class="courses hd ${side}">${cols}<tbody><tr>`
+    + [t.colCode, t.colName, t.colCredit, t.colGrade, t.colProduct]
+      .map((h) => `<th><span>${h}</span></th>`).join('')
+    + '</tr></tbody></table>';
+  const body = (rows: Row62[], side: 'l' | 'r') => `<table class="courses bd ${side}">`
+    + `${cols}<tbody>${rows.map((r) => renderRow(r, lang)).join('')}</tbody></table>`;
+
+  const rules = G.vRules.map((x) => `<i class="v" style="left:${x}pt"></i>`).join('')
+    + '<i class="h top"></i><i class="h mid"></i><i class="h bot"></i>';
+
+  return `<div class="grid ${page}" style="--k:${k}">${rules}`
+    + head('l') + head('r') + body(left, 'l') + body(right, 'r')
+    + '</div>';
 }
 
 /**
@@ -564,10 +777,12 @@ export function renderTranscript62(
     : `${prog?.qualification_th ?? ''}${cont}`;
 
   const rows = buildRows(d.term_tree ?? [], lang, t, form);
-  // สองหน้าตายตัวเหมือนตระกูล 67 — หน้า 2 มีของประจำที่ต้องอยู่หน้า 2
-  const perPage = 96;
-  const p1 = rows.slice(0, perPage);
-  const p2 = rows.slice(perPage);
+  /*
+   * สองหน้าตายตัวเหมือนตระกูล 67 — หน้า 2 มีของประจำที่ต้องอยู่หน้า 2
+   * ตัดตาม**จำนวนบรรทัดที่กินจริง** ไม่ใช่จำนวนแถว เพราะกรอบสูงคงที่
+   */
+  const { k, cols: [c1, c2, c3, c4] } =
+    fitColumns(rows, lang, form === 'sorsor' ? 10.6 : 12.5);
 
   const field = (label: string, value: string) => `<dt>${label}</dt><dd>${value}</dd>`;
 
@@ -641,9 +856,9 @@ export function renderTranscript62(
     <div class="photo">${t.photo}</div>
   </div>
 
-  ${courseTable(p1, t, lang)}
+  ${courseGrid('g1', c1, c2, t, lang, k)}
 
-  <div class="leave">${t.leftOn}<br>${t.leftWhy}</div>
+  <div class="leave"><div>${t.leftOn}</div><div>${t.leftWhy}</div></div>
   ${signs}
 </div>`;
 
@@ -668,22 +883,38 @@ export function renderTranscript62(
     <span>${t.page2}</span>
   </div>
 
-  ${courseTable(p2, t, lang)}
+  ${courseGrid('g2', c3, c4, t, lang, k)}
 
   ${form === 'sorsor' ? summaryMatrix(d.term_tree ?? [], lang, t) : ''}
 
+  ${/*
+      ─── ท้ายหน้า 2 เป็นสองภาค ไม่ใช่สามคอลัมน์เรียงกัน ───
+      วัดจากใบจริง — เกณฑ์การสำเร็จหลักสูตร (x 16) กับหมายเหตุ (x 183) จบที่
+      y ≈ 628 แล้ว **ช่องบันทึกเริ่มที่ y 651 กินความกว้างของสองคอลัมน์นั้น**
+      (เส้นประวัดได้ x 51.9–323.8) ส่วนคอลัมน์ระดับผลการเรียน (x 382) ไหลยาว
+      ลงไปถึง y 772 อยู่ข้าง ๆ ช่องบันทึก
+      ถ้าวางช่องบันทึกไว้ใต้ทั้งสามคอลัมน์ตามที่เคยทำ เนื้อหาจะยาวเกินกระดาษ
+      แล้วหน้า 2 จะล้นไปหน้า 3 ซึ่งทำให้ใบไม่ใช่ใบสองหน้าอีกต่อไป
+    */ ''}
   <div class="legend">
-    <div class="col1">
-      <h2>${t.criteria}</h2>
-      ${criteria.length
-        ? criteria.map((c, i) => `<div>${i + 1}&nbsp; ${esc(c)}</div>`).join('')
-        : '<div>&nbsp;</div>'}
-    </div>
-    <div class="col2">
-      <h2>${t.notes}</h2>
-      ${notes.length
-        ? notes.map((n, i) => `<div>(*${i + 1})&nbsp; ${t.meaning}&nbsp; ${esc(n)}</div>`).join('')
-        : '<div>&nbsp;</div>'}
+    <div class="lcol">
+      <div class="sub">
+        <div class="col1">
+          <h2>${t.criteria}</h2>
+          ${criteria.length
+            ? criteria.map((c, i) => `<div>${i + 1}&nbsp; ${esc(c)}</div>`).join('')
+            : '<div>&nbsp;</div>'}
+        </div>
+        <div class="col2">
+          <h2>${t.notes}</h2>
+          ${notes.length
+            ? notes.map((n, i) => `<div>(*${i + 1})&nbsp; ${t.meaning}&nbsp; ${esc(n)}</div>`).join('')
+            : '<div>&nbsp;</div>'}
+        </div>
+      </div>
+      <div class="memo">${t.memo}
+        <div class="lines">${('<div></div>').repeat(5)}</div>
+      </div>
     </div>
     <div class="col3">
       <h2>${t.gradeScale}</h2>
@@ -707,10 +938,6 @@ export function renderTranscript62(
         })()}
       </tbody></table>
     </div>
-  </div>
-
-  <div class="memo">${t.memo}
-    <div class="lines">${'.'.repeat(120)}<br>${'.'.repeat(120)}<br>${'.'.repeat(120)}<br>${'.'.repeat(120)}<br>${'.'.repeat(120)}</div>
   </div>
 </div>`;
 

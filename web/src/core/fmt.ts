@@ -56,7 +56,9 @@ export const STUDENT_STATUS: Record<string, string> = {
   graduated: 'สำเร็จการศึกษา',
   withdrawn: 'ลาออก',
   dismissed: 'พ้นสภาพ',
-  transferred: 'ย้ายสถานศึกษา',
+  // ชื่อใน enum คือ transferred_out — คีย์ที่สะกดไม่ตรงทำให้หน้าจอ
+  // แสดงค่าดิบแทนคำไทยโดยไม่มีอะไรฟ้อง
+  transferred_out: 'ย้ายสถานศึกษา',
 };
 
 export const TERM_STATUS: Record<string, string> = {

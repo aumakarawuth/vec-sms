@@ -2853,10 +2853,22 @@ async function main() {
     ]) {
       expect(html.includes(block), `หน้า 2 ต้องมีบล็อก "${block}"`);
     }
-    // สองหน้าเสมอ ไม่ใช่ไหลตามจำนวนรายวิชา
-    expect((html.match(/class="page"/g) ?? []).length === 2,
+    /*
+     * สองหน้าเสมอ ไม่ใช่ไหลตามจำนวนรายวิชา
+     * นับด้วย `class="page` ไม่ใช่ `class="page"` เพราะหน้า 2 มีคลาสกำกับ
+     * เพิ่ม (`page p2`) — การนับแบบเดิมผูกกับสตริงที่บังเอิญตรง ไม่ใช่กับ
+     * สิ่งที่ต้องพิสูจน์ ซึ่งคือ "มีสองหน้า"
+     */
+    expect((html.match(/class="page[ "]/g) ?? []).length === 2,
       'ใบต้องมีสองหน้าตายตัว');
-    return 'ครบหกบล็อก · สองหน้า';
+    /*
+     * และกรอบตารางต้องถูกตีไว้ครบทั้งสองหน้า — ใบของนักศึกษาที่ลงวิชาน้อย
+     * ต้องได้กรอบเปล่าที่หน้า 2 ไม่ใช่หน้าที่ไม่มีตารางเลย มิฉะนั้นใบสองใบ
+     * ของวิทยาลัยเดียวกันจะหน้าตาไม่เหมือนกัน
+     */
+    expect((html.match(/class="grid g[12]"/g) ?? []).length === 2,
+      'ต้องตีกรอบตารางไว้ทั้งสองหน้า ไม่ว่าจะมีรายวิชากี่ตัว');
+    return 'ครบหกบล็อก · สองหน้า · กรอบตารางครบสองหน้า';
   });
 
   await check('API-158 ใบรุ่น 67 ที่ยกเลิกแล้วต้องมีตราและวันที่ออก', async () => {
@@ -3217,6 +3229,232 @@ async function main() {
     const bad = await registrar(`/documents/${'0'.repeat(8)}-0000-0000-0000-000000000000/print?form=xx`);
     expect(bad.status === 400, `รูปแบบที่ไม่รู้จักควรได้ 400 ได้ ${bad.status}`);
     return 'ตารางแนวนอน · ถ้อยคำต่างกันหนึ่งคำ · ไม่พิมพ์ซ้ำสองที่';
+  });
+
+  await check('API-171 ใบ รบ. ต้องฝังฟอนต์มาในหน้า ไม่ใช่พึ่งฟอนต์ในเครื่อง', async () => {
+    /*
+     * ─── ทำไมข้อนี้ต้องมี ───
+     * เรขาคณิตของใบ รบ. ทั้งใบคิดบนความกว้างตัวอักษรของ TH Sarabun New
+     * เครื่องที่ไม่มีฟอนต์นี้จะตกไปใช้ตัวสำรองซึ่งกว้างกว่า 8% (Angsana)
+     * ถึง 47% (Leelawadee UI) แล้วชื่อวิชาจะตัดบรรทัดคนละที่กับใบจริง
+     * จนตารางล้นกรอบ — **โดยที่ไม่มีอะไรฟ้องนอกจากตาคนที่ถือกระดาษ**
+     *
+     * และฟอนต์อยู่ใน `fonts.ts` ไม่ใช่ไฟล์ .woff2 ข้าง ๆ เพราะ `tsc`
+     * ไม่คัดลอกไฟล์ที่ไม่ใช่ .ts ไป dist/ — ถ้าวันหนึ่งมีคนย้ายไปเป็นไฟล์
+     * ฟอนต์จริง ระบบจริงจะไม่มีฟอนต์ติดไปด้วยโดยที่เทสต์ยังเขียว
+     * ข้อนี้จึงตรวจที่ **ผลลัพธ์ที่ส่งออกไป** ไม่ใช่ตรวจว่าไฟล์มีอยู่
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+
+    // นับเฉพาะประกาศจริง ไม่ใช่คำว่า @font-face ที่โผล่ในคอมเมนต์ของ CSS
+    const faces = (html.match(/@font-face\s*\{/g) ?? []).length;
+    expect(faces === 2, `ต้องฝังทั้งน้ำหนักปกติและตัวหนา พบ ${faces} หน้าตัด`);
+    expect(html.includes("font-family: 'TH Sarabun New'"),
+      'ฟอนต์ที่ฝังต้องชื่อตรงกับที่ font-family ของแม่แบบเรียกใช้');
+    for (const weight of ['font-weight: 400', 'font-weight: 700']) {
+      expect(html.includes(weight), `ต้องมี @font-face ของ ${weight}`);
+    }
+    const embedded = (html.match(/url\(data:font\/woff2;base64,/g) ?? []).length;
+    expect(embedded >= 2, `ฟอนต์ต้องฝังเป็น data: URI พบ ${embedded} ชุด`);
+
+    /*
+     * และต้องไม่มีทางที่หน้านี้จะไปดึงอะไรจากเน็ต — เจ้าหน้าที่ต้องพิมพ์ใบได้
+     * แม้อินเทอร์เน็ตของวิทยาลัยล่ม (API-156 ตรวจเฉพาะ src=/href= ซึ่งจับ
+     * `url(https://…)` ใน CSS ไม่ได้ — ฟอนต์เข้ามาทางนั้นพอดี)
+     */
+    expect(!/url\(\s*["']?https?:/i.test(html), 'CSS ต้องไม่ดึงไฟล์จากภายนอก');
+    return `ฝัง ${faces} หน้าตัด · ${Math.round(html.length / 1024)} KB`;
+  });
+
+  await check('API-172 ช่องบนหัวใบต้องมีค่าจริง ไม่ใช่หัวข้อพร้อมช่องว่าง', async () => {
+    /*
+     * ─── สิ่งที่ข้อนี้ดัก ───
+     * แม่แบบเคย**ฮาร์ดโค้ดค่าว่าง**ลงในช่องเชื้อชาติ · สัญชาติ · ศาสนา ·
+     * ชื่อบิดา · ชื่อมารดา · จังหวัด · กลุ่มอาชีพ ทั้งที่ฐานข้อมูลมีข้อมูล
+     * อยู่ตั้งแต่ 0053 — ใบทุกใบจึงพิมพ์หัวข้อครบแล้วเว้นค่าว่างไว้หมด
+     *
+     * เป็นความผิดพลาดที่**เทสต์ payload จับไม่ได้เลย** เพราะ payload ถูกต้อง
+     * มาตลอด ต้องดูที่ HTML ที่พิมพ์ออกมาจริงถึงจะเห็น — รูปเดียวกับสามข้อ
+     * ที่เจอตอนอ่านกระดาษที่พิมพ์ออกมา (หน่วยกิตสะสม · หน่วยกิตที่เรียน ·
+     * วันที่ไทยบนใบอังกฤษ)
+     */
+    const save = async (path: string, body: unknown) => {
+      const r = await registrar(path, { method: 'POST', body: JSON.stringify(body) });
+      expect(r.status < 400, `บันทึกไม่ได้ ${path} → ${r.status} ${JSON.stringify(r.body)}`);
+    };
+    await save(`/students/${F.student}/sensitive`,
+      { ethnicity: 'ไทยทดสอบ', religion: 'พุทธทดสอบ' });
+    await save(`/students/${F.student}/parents`,
+      { role: 'father', prefixTh: 'นาย', firstNameTh: 'บิดาทดสอบ', lastNameTh: 'นามสมมติ' });
+    await save(`/students/${F.student}/parents`,
+      { role: 'mother', prefixTh: 'นาง', firstNameTh: 'มารดาทดสอบ', lastNameTh: 'นามสมมติ' });
+
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    expect(issued.status < 400, `ออกใบไม่ได้ ${issued.status}`);
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+
+    for (const [what, value] of [
+      ['เชื้อชาติ', 'ไทยทดสอบ'], ['ศาสนา', 'พุทธทดสอบ'],
+      ['ชื่อบิดา', 'บิดาทดสอบ'], ['ชื่อมารดา', 'มารดาทดสอบ'],
+    ] as const) {
+      expect(html.includes(value), `ช่อง "${what}" ต้องมีค่าจริงบนใบ ไม่ใช่หัวข้อเปล่า`);
+    }
+    /*
+     * และ payload ต้องมีเฉพาะสามช่องของ person_sensitive ที่ใบแสดงจริง
+     * ไม่ใช่ทั้งตาราง — หมู่เลือด โรคประจำตัว ความพิการ ห้ามติดไปด้วย
+     * เพราะ payload ลบไม่ได้ (หลักข้อ 5ก)
+     */
+    const extra = issued.body.payload.person_extra ?? {};
+    expect(Object.keys(extra).sort().join(',') === 'ethnicity,nationality,religion',
+      `payload ต้องมีสามช่องเท่านั้น พบ ${Object.keys(extra).join(',')}`);
+    return 'เชื้อชาติ · ศาสนา · บิดา · มารดา ขึ้นใบจริง · payload ไม่เกินสามช่อง';
+  });
+
+  await check('API-173 เหตุที่ออกกรอกได้จริงและขึ้นใบ รบ.', async () => {
+    /*
+     * ─── สิ่งที่ข้อนี้ดัก ───
+     * `student_status_history.reason` กับ `document_no` มีคอลัมน์มาตั้งแต่
+     * 0002 แล้ว **ไม่มีอะไรเขียนลงไปเลยสักแถว** เพราะ trigger เขียนแค่สี่ช่อง
+     * ใบ รบ. จึงพิมพ์หัวข้อ "เหตุที่ออก" ไว้แล้วเว้นว่างเสมอ และไม่มีที่ให้กรอก
+     *
+     * ตรวจถึง HTML ที่พิมพ์ออกมา ไม่ใช่แค่ว่า API ตอบ 200 — เพราะโซ่นี้ยาว
+     * (API → student → trigger → history → transcript_extra → payload → แม่แบบ)
+     * ขาดข้อไหนก็ได้ใบเปล่าเหมือนกันหมด
+     */
+    const st = await registrar(`/students/${F.student}/status`, {
+      method: 'POST',
+      body: JSON.stringify({
+        status: 'graduated', effectiveOn: '2569-03-31',
+        reason: 'สำเร็จการศึกษาตามหลักสูตร', documentNo: 'คำสั่งที่ 12/2569',
+      }),
+    });
+    expect(st.status < 400, `เปลี่ยนสถานะไม่ได้ ${st.status} ${JSON.stringify(st.body)}`);
+
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    expect(html.includes('สำเร็จการศึกษาตามหลักสูตร'),
+      'เหตุที่ออกต้องขึ้นบนใบ ไม่ใช่หัวข้อพร้อมช่องว่าง');
+    expect(issued.body.payload.leaving?.reason === 'สำเร็จการศึกษาตามหลักสูตร',
+      'payload ต้องมีเหตุที่ออก');
+
+    /*
+     * ─── สถานะที่แปลว่าออกจากสถานศึกษาต้องบังคับเหตุผล ───
+     * ใบที่พิมพ์ "เหตุที่ออก" ว่างไว้คือเอกสารที่ตอบคำถามของคนอ่านไม่ได้
+     * และตอนที่นักศึกษามาขอใบก็สายเกินกว่าจะย้อนไปถามว่าตอนนั้นเกิดอะไรขึ้น
+     */
+    const noReason = await registrar(`/students/${F.student}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'dismissed', effectiveOn: '2569-03-31' }),
+    });
+    expect(noReason.status === 400, `สถานะที่ออกจากสถานศึกษาต้องบังคับเหตุผล ได้ ${noReason.status}`);
+
+    // ส่วนสถานะที่ยังอยู่ในสถานศึกษาไม่ต้องบังคับ — ถามในสิ่งที่ไม่มีใครใช้
+    // จะได้จุดเดียวไปให้พ้น ๆ ซึ่งแย่กว่าไม่ถาม
+    const back = await registrar(`/students/${F.student}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'active', effectiveOn: '2569-04-01' }),
+    });
+    expect(back.status < 400, `สถานะที่ยังอยู่ต้องไม่บังคับเหตุผล ได้ ${back.status}`);
+    return 'กรอกได้ · ขึ้นใบ · บังคับเฉพาะสถานะที่ออกจริง';
+  });
+
+  await check('API-174 แก้วันสำเร็จการศึกษาได้ แต่แก้ GPAX ไม่ได้', async () => {
+    /*
+     * จบช้าหรือกรอกวันผิดต้องแก้ได้ — แต่แก้ที่**ระเบียนจบ** ไม่ใช่ตอนกดพิมพ์
+     * เพราะ payload ตรึงแล้ว คนที่พิมพ์ผิดจะต้องยกเลิกใบแล้วออกใหม่ ซึ่งกิน
+     * เลขที่เพิ่มทุกครั้ง · และ gpax ตรึงตอนอนุมัติจบ (หลักข้อ 5) ห้ามแก้ทางนี้
+     */
+    /*
+     * ─── อ่านค่าเดิมจากผลของ PATCH เอง ไม่พึ่งเส้นทางอื่น ───
+     * ถ้าตรวจก่อนว่ามีระเบียนจบไหมแล้วข้ามเมื่อไม่มี ข้อนี้จะกลายเป็นเทสต์ที่
+     * ผ่านโดยไม่ได้ตรวจอะไร — ซึ่งแย่กว่าไม่มีเทสต์ เพราะดูเหมือนมีคนดูแลอยู่
+     */
+    const first = await registrar(`/graduation/students/${F.student}/completed-on`, {
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2569-09-30' }),
+    });
+    expect(first.status < 400,
+      `แก้วันจบไม่ได้ ${first.status} ${JSON.stringify(first.body)} — ` +
+      'ข้อนี้ต้องรันหลังเทสต์ที่อนุมัติจบให้นักศึกษาตัวอย่างแล้ว');
+    expect(String(first.body.completed_on).startsWith('2569-09-30'),
+      `วันจบต้องเปลี่ยนจริง ได้ ${first.body.completed_on}`);
+    const gpaxBefore = String(first.body.gpax);
+
+    const r = await registrar(`/graduation/students/${F.student}/completed-on`, {
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2570-03-31' }),
+    });
+    expect(r.status < 400, `แก้วันจบรอบสองไม่ได้ ${r.status}`);
+    expect(String(r.body.completed_on).startsWith('2570-03-31'),
+      `วันจบต้องเปลี่ยนได้อีก ได้ ${r.body.completed_on}`);
+    expect(String(r.body.gpax) === gpaxBefore,
+      `GPAX ต้องไม่เปลี่ยน — ${gpaxBefore} → ${r.body.gpax}`);
+
+    // ฟิลด์ที่ไม่ได้ประกาศใน DTO ต้องถูกปฏิเสธ ไม่ใช่เมินเงียบ ๆ
+    const sneaky = await registrar(`/graduation/students/${F.student}/completed-on`, {
+      method: 'PATCH',
+      body: JSON.stringify({ completedOn: '2569-09-30', gpax: 4.0 }),
+    });
+    expect(sneaky.status === 400, `ฟิลด์แปลกปลอมต้องถูกปฏิเสธ ได้ ${sneaky.status}`);
+    return 'แก้วันได้ · GPAX ไม่ขยับ · ฟิลด์แปลกปลอมถูกปฏิเสธ';
+  });
+
+  await check('API-175 จัดลำดับและย้ายภาคของรายวิชาในหลักสูตรได้', async () => {
+    /*
+     * สองค่านี้เป็นตัวกำหนดหน้าตาของใบ รบ. — suggested_year/term บอกว่า
+     * รายวิชาไปอยู่ภาคไหน (0063) ส่วน sort_order บอกลำดับภายในภาคนั้น
+     * ก่อนหน้านี้ตั้งได้ครั้งเดียวตอนเพิ่มรายวิชา แก้ทีหลังไม่ได้เลย
+     */
+    const versions = await registrar('/curriculum/versions');
+    const version = (versions.body as any[])?.find((v) => Number(v.courses) >= 2);
+    if (!version) return 'ข้ามเพราะไม่มีฉบับหลักสูตรที่มีรายวิชาพอให้สลับ';
+
+    const st = await registrar(`/curriculum/versions/${version.id}`);
+    const flat: any[] = [];
+    const walk = (nodes: any[]) => {
+      for (const n of nodes ?? []) {
+        flat.push(...(n.courses ?? []));
+        walk(n.children ?? []);
+      }
+    };
+    walk(st.body?.categories ?? []);
+    if (flat.length < 2) return 'ข้ามเพราะโครงสร้างมีรายวิชาไม่พอ';
+
+    const one = await registrar(`/curriculum/courses/${flat[0].id}`, {
+      method: 'PATCH', body: JSON.stringify({ suggestedYear: 2, suggestedTerm: 2 }),
+    });
+    expect(one.status < 400, `แก้ภาคตามแผนไม่ได้ ${one.status} ${JSON.stringify(one.body)}`);
+    expect(Number(one.body.suggested_year) === 2 && Number(one.body.suggested_term) === 2,
+      'ภาคตามแผนต้องเปลี่ยนจริง');
+
+    // สลับลำดับสองตัวแรกแล้วอ่านกลับมาดู
+    const ids = flat.map((c) => c.id);
+    const swapped = [ids[1], ids[0], ...ids.slice(2)];
+    const re = await registrar(`/curriculum/versions/${version.id}/courses/reorder`, {
+      method: 'POST', body: JSON.stringify({ courseIds: swapped }),
+    });
+    expect(re.status < 400, `จัดลำดับไม่ได้ ${re.status} ${JSON.stringify(re.body)}`);
+    expect(Number(re.body.reordered) === swapped.length,
+      `ต้องจัดครบทุกตัว ได้ ${re.body.reordered}/${swapped.length}`);
+
+    /*
+     * รายวิชาของหลักสูตรฉบับอื่นต้องถูกปฏิเสธทั้งชุด ไม่ใช่ข้ามเงียบ ๆ
+     * — ถ้าข้าม คนกดจะเห็นว่าสำเร็จแล้วลำดับไม่ตรงกับที่จัด โดยไม่รู้ว่าทำไม
+     */
+    const bogus = await registrar(`/curriculum/versions/${version.id}/courses/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ courseIds: [...swapped, '00000000-0000-0000-0000-000000000001'] }),
+    });
+    expect(bogus.status === 400, `รายวิชานอกฉบับต้องถูกปฏิเสธ ได้ ${bogus.status}`);
+    return `ย้ายภาคได้ · จัดลำดับ ${swapped.length} รายวิชา · ตัวนอกฉบับถูกปฏิเสธ`;
   });
 
   console.log('');

@@ -20,6 +20,7 @@ import {
   PriorEducationTab,
   SensitiveTab,
   type FullProfile,
+  StatusTab,
 } from './student-record';
 
 interface StudentRow {
@@ -163,6 +164,7 @@ const TABS = [
   { key: 'prior', label: 'การศึกษาเดิม' },
   { key: 'advisor', label: 'ที่ปรึกษาและผู้ปกครอง' },
   { key: 'study', label: 'การเรียนและการเงิน' },
+  { key: 'status', label: 'สถานะและการออก' },
 ];
 
 export function StudentDetailScreen({ id }: { id: string }) {
@@ -256,6 +258,7 @@ export function StudentDetailScreen({ id }: { id: string }) {
                     {tab === 'sensitive' && <SensitiveTab p={pf} reload={profile.reload} />}
                     {tab === 'prior' && <PriorEducationTab p={pf} reload={profile.reload} />}
                     {tab === 'advisor' && <AdvisorTab p={pf} reload={profile.reload} />}
+                    {tab === 'status' && <StatusTab p={pf} reload={profile.reload} />}
                   </>
                 )}
               </AsyncView>

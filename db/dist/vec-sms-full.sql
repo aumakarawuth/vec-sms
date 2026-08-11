@@ -2,8 +2,8 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้าง + ข้อมูลตัวอย่าง
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- migration ล่าสุด  0061
--- ลายนิ้วมือต้นทาง  889a85638d6058d7
+-- migration ล่าสุด  0064
+-- ลายนิ้วมือต้นทาง  ade220ba1f883183
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -19379,6 +19379,462 @@ returns jsonb language sql stable as $$
         order by pe.completed_year_be desc nulls last, pe.level_th desc
         limit 1))
 $$;
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0062_transcript_header_fields.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0062 — ช่องบนหัวใบ รบ. ที่พิมพ์อยู่บนกระดาษแต่ payload ไม่เคยมี
+--
+-- ═══ อาการ ═══
+-- แม่แบบใบ รบ. พิมพ์หัวข้อ "จังหวัด" · "เชื้อชาติ สัญชาติ ศาสนา" ·
+-- "ชื่อบิดา" · "ชื่อมารดา" · "กลุ่มอาชีพ" · "ออกจากสถานศึกษาเมื่อ" ·
+-- "เหตุที่ออก" ไว้ครบ แล้วเว้นค่าว่างไว้ทุกใบ — เพราะแม่แบบ**ฮาร์ดโค้ด
+-- ค่าว่าง**ลงไปตรง ๆ ไม่ใช่เพราะฐานข้อมูลไม่มีข้อมูล
+--
+-- ข้อมูลส่วนใหญ่มีอยู่แล้วตั้งแต่ 0053 (`person_sensitive` · `student_parent` ·
+-- `person.nationality`) และ 0002 (`student_status_history`) แต่ไม่เคยมีใคร
+-- ต่อสายจากตารางพวกนั้นมาถึง payload ของใบ รบ. เลย
+--
+-- **เป็นรูปเดียวกับข้อ 8 และข้อ 15 ในรายการ "พังแบบเงียบ ๆ"** — ของที่
+-- ประกาศเจตนาไว้แล้วไม่มีอะไรทำให้เจตนานั้นเกิดขึ้น ต่างกันแค่ที่นี่
+-- เจตนาถูกประกาศไว้บน**กระดาษที่ส่งให้คนอื่น** ไม่ใช่ในคอมเมนต์
+--
+-- ═══ สองช่องที่ไม่มีที่เก็บจริง ═══
+-- `จังหวัด` ของสถานศึกษา กับ `กลุ่มอาชีพ` ของสาขาวิชา — ค้นทั้งสคีมาแล้ว
+-- ไม่มีคอลัมน์ไหนเก็บ (docs/transcript-formats.md ระบุไว้ว่า "ไม่มี")
+-- จึงเพิ่มคอลัมน์ให้ที่ตารางที่เป็นเจ้าของเรื่องนั้นจริง ๆ
+--
+-- ═══ PDPA — ทำไมข้อมูลอ่อนไหวลง payload ได้ ═══
+-- หลักข้อ 5ก บอกว่า payload ต้องมี**เฉพาะสิ่งที่กระดาษใบนั้นแสดง**
+-- เชื้อชาติ ศาสนา และชื่อบิดามารดา **พิมพ์อยู่บนใบ รบ. จริง** (วัดจากไฟล์
+-- ต้นฉบับใน pdf/) จึงเข้าเงื่อนไข — ต่างจากผลคัดกรอง SDQ หรือบันทึก
+-- เยี่ยมบ้านที่ใบไม่ได้แสดงและห้ามคัดลอกลงมาเด็ดขาด
+-- และเพราะ payload ลบไม่ได้ จึงเก็บเฉพาะสามช่องนี้ ไม่ใช่ทั้ง
+-- `person_sensitive` ซึ่งมีหมู่เลือด โรคประจำตัว และความพิการอยู่ด้วย
+-- ═══════════════════════════════════════════════════════════════════
+
+begin;
+
+-- ── จังหวัดของสถานศึกษา ────────────────────────────────────────────
+-- อยู่บน `institution` เพราะเป็นข้อเท็จจริงของสถานศึกษา ไม่ใช่ข้อความ
+-- ที่วิทยาลัยเขียนเอง (ซึ่งจะไปอยู่ `institution_document_text`)
+alter table institution add column if not exists province_th text;
+
+comment on column institution.province_th is
+  'จังหวัดที่ตั้งสถานศึกษา — พิมพ์บนหัวใบ รบ. ใต้ชื่อสถานศึกษา';
+
+-- ── กลุ่มอาชีพ ─────────────────────────────────────────────────────
+-- ใบ ปวช.67 มีช่องนี้อยู่ระหว่าง "ประเภทวิชา" กับ "สาขาวิชา"
+-- จึงเป็นคุณสมบัติของ program (สาขาวิชา) ไม่ใช่ของนักศึกษา
+alter table program add column if not exists career_group_th text;
+
+comment on column program.career_group_th is
+  'กลุ่มอาชีพตามการจัดกลุ่มของ สอศ. — พิมพ์บนหัวใบ รบ. ระหว่างประเภทวิชากับสาขาวิชา';
+
+-- ── ต่อสายจากตารางที่มีข้อมูลอยู่แล้วมาถึง payload ของใบ รบ. ────────
+/*
+ * เพิ่มช่องให้ใบ รบ. แก้ที่ `transcript_extra()` ที่เดียวตามที่ 0059 วางไว้
+ * — ไม่ต้องเขียน `issue_document_core()` ทับทั้ง 300 บรรทัดอีก
+ */
+create or replace function transcript_extra(p_student_id uuid)
+returns jsonb language sql stable as $$
+  select jsonb_build_object(
+    'category_tree', transcript_category_tree(p_student_id),
+    'term_tree',     transcript_term_tree(p_student_id),
+    'credits_attempted',
+      (select sum(ts.credits_attempted) from term_summary ts
+        where ts.student_id = p_student_id),
+    /*
+     * เก็บค่าที่เข้ารหัส ไม่ใช่เลขเปล่า — payload ลบไม่ได้ (0061)
+     * ชั้น API ถอดตอนพิมพ์แล้วเลขไปอยู่บนกระดาษอย่างเดียว
+     */
+    'national_id_enc',
+      (select encode(p.national_id_enc, 'hex')
+         from student s join person p on p.id = s.person_id
+        where s.id = p_student_id),
+    'prior_education',
+      (select jsonb_build_object(
+                'level_th',   pe.level_th,
+                'school_th',  coalesce(pe.school_th, ''),
+                'province_th', coalesce(pe.province_th, ''),
+                'program_th', coalesce(pe.program_th, ''),
+                'year_be',    pe.completed_year_be,
+                'gpax',       pe.gpax)
+         from student_prior_education pe
+        where pe.student_id = p_student_id
+        order by pe.completed_year_be desc nulls last, pe.level_th desc
+        limit 1),
+    -- จังหวัดของสถานศึกษา — ช่องใต้ชื่อสถานศึกษาบนหัวใบ
+    'institution_province',
+      (select coalesce(i.province_th, '')
+         from student s join institution i on i.id = s.institution_id
+        where s.id = p_student_id),
+    -- กลุ่มอาชีพของสาขาวิชาที่นักศึกษาสังกัด
+    'career_group_th',
+      (select coalesce(pr.career_group_th, '')
+         from student_curriculum sc
+         join curriculum_version cv on cv.id = sc.curriculum_version_id
+         join curriculum cur    on cur.id = cv.curriculum_id
+         join program_track ptr on ptr.id = cur.program_track_id
+         join program pr        on pr.id  = ptr.program_id
+        where sc.student_id = p_student_id
+          and (sc.effective_to is null or sc.effective_to >= current_date)
+        order by sc.effective_from desc nulls last
+        limit 1),
+    /*
+     * เชื้อชาติ · สัญชาติ · ศาสนา — สามช่องนี้อยู่บนบรรทัดเดียวของใบจริง
+     * เก็บเฉพาะสามช่อง ไม่ใช่ทั้ง person_sensitive เพราะ payload ลบไม่ได้
+     */
+    'person_extra',
+      (select jsonb_build_object(
+                'ethnicity',   coalesce(ps.ethnicity, ''),
+                'nationality', coalesce(p.nationality, ''),
+                'religion',    coalesce(ps.religion, ''))
+         from student s
+         join person p on p.id = s.person_id
+         left join person_sensitive ps on ps.person_id = p.id
+        where s.id = p_student_id),
+    /*
+     * ชื่อบิดา · ชื่อมารดา — ใบพิมพ์แค่ชื่อ ไม่พิมพ์อาชีพ รายได้ เบอร์โทร
+     * หรือที่อยู่ ซึ่ง `student_parent` เก็บไว้ด้วย จึงหยิบมาเฉพาะชื่อ
+     */
+    'parents',
+      (select jsonb_object_agg(
+                sp.role::text,
+                trim(coalesce(sp.prefix_th, '') || coalesce(sp.first_name_th, '')
+                     || ' ' || coalesce(sp.last_name_th, '')))
+         from student_parent sp
+        where sp.student_id = p_student_id),
+    /*
+     * ออกจากสถานศึกษาเมื่อ · เหตุที่ออก
+     *
+     * เอาเฉพาะสถานะที่**แปลว่าออกจากสถานศึกษาจริง** ไม่ใช่ทุกการเปลี่ยน
+     * สถานะ — `on_leave` กับ `suspended` คือยังอยู่ในสถานศึกษา คนที่เคย
+     * พักการเรียนแล้วกลับมาเรียนต่อจึงต้องไม่ถูกนับ ถ้าหยิบแถวล่าสุดมา
+     * ดื้อ ๆ ใบจะเขียนว่าออกไปแล้วทั้งที่กำลังเรียนอยู่
+     *
+     * และต้องตรงกับสถานะ**ปัจจุบัน**ของนักศึกษาด้วย มิฉะนั้นคนที่เคยพ้นสภาพ
+     * แล้วได้กลับเข้าเรียนใหม่จะยังมีวันที่ออกค้างอยู่บนใบ
+     */
+    'leaving',
+      (select jsonb_build_object(
+                'on_date', h.effective_on,
+                'reason',  coalesce(h.reason, ''),
+                'status',  h.to_status::text)
+         from student_status_history h
+         join student s on s.id = h.student_id
+        where h.student_id = p_student_id
+          and h.to_status = s.status
+          and h.to_status in ('graduated', 'withdrawn', 'transferred_out',
+                              'dismissed')
+        order by h.effective_on desc, h.recorded_at desc
+        limit 1))
+$$;
+
+comment on function transcript_extra(uuid) is
+  'payload ส่วนที่มีเฉพาะใบ รบ. — เพิ่มช่องให้ใบ รบ. แก้ที่นี่ที่เดียว ไม่ต้องเขียน issue_document_core ทับทั้งตัว';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0063_transcript_plan_term.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0063 — ใบ รบ. แสดงภาคเรียนตาม**โครงสร้างหลักสูตร** ไม่ใช่ภาคที่ลงทะเบียนจริง
+--
+-- ═══ สิ่งที่เปลี่ยน ═══
+-- นักศึกษาลงวิชาหนึ่งไว้ที่ปี 1 ภาคเรียนที่ 1 แต่โครงสร้างหลักสูตรวางวิชานั้น
+-- ไว้ที่ปี 2 ภาคเรียนที่ 1 — ใบ รบ. ต้องพิมพ์ว่า **1/ปีที่สอง**
+--
+-- เพราะใบ รบ. เป็นเอกสารที่แสดงว่านักศึกษาเรียนครบตาม**หลักสูตร** ไม่ใช่
+-- ปูมว่าไปนั่งเรียนห้องไหนเมื่อไร คนที่รับใบไปเทียบกับโครงสร้างหลักสูตร
+-- ของ สอศ. ต้องเห็นรายวิชาอยู่ตำแหน่งเดียวกับที่หลักสูตรกำหนด มิฉะนั้น
+-- จะดูเหมือนเรียนผิดแผนทั้งที่จบครบตามเกณฑ์
+--
+-- ═══ ของที่มีอยู่แล้วแต่ไม่เคยมีใครอ่าน ═══
+-- `curriculum_course.suggested_year` กับ `suggested_term` มีมาตั้งแต่ 0004
+-- พร้อมคอมเมนต์ว่า "แผนการเรียนแนะนำ … ใช้เตือนเมื่อนักศึกษาเรียนไม่ตามแผน"
+-- ค้นทั้ง repo แล้ว**ไม่มีโค้ดไหนอ้างถึงเลยสักบรรทัด** ตลอดหกสิบ migration
+-- รูปเดียวกับ `student_guardian.can_approve_leave` (ข้อ 15) และ
+-- `take_usage_snapshot()` (ข้อ 8) — ของที่ประกาศเจตนาไว้แล้วไม่มีอะไร
+-- ทำให้เจตนานั้นเกิดขึ้น
+--
+-- ═══ ชั้นปีไม่ใช่ปีการศึกษา ═══
+-- `suggested_year` เป็น **ชั้นปี 1-4** ส่วนช่องบนใบพิมพ์ **ปีการศึกษา พ.ศ.**
+-- แปลงด้วยปีที่เข้าศึกษา — ชั้นปี 1 = ปีที่เข้า · ชั้นปี 2 = ปีที่เข้า + 1
+-- นักศึกษาที่ซ้ำชั้นหรือเทียบโอนเข้ากลางคันจะได้ปีที่ต่างจากที่ลงจริง
+-- ซึ่งเป็นผลที่ตั้งใจ เพราะใบแสดงตำแหน่งตามหลักสูตร
+--
+-- ═══ เก็บทั้งสองค่า ไม่ใช่เขียนทับ ═══
+-- `year_be` / `term_ordinal` ยังเป็น**ภาคที่ลงทะเบียนจริง**เหมือนเดิม
+-- และเพิ่ม `plan_year_be` / `plan_term_ordinal` มาข้าง ๆ เพราะ
+-- 1. ใบที่ออกไปแล้วไม่มีช่องใหม่ → แม่แบบตกไปใช้ค่าเดิม พิมพ์ซ้ำได้เหมือนเดิม
+--    (payload ตรึงแล้วแก้ไม่ได้ การเปลี่ยนความหมายของช่องเดิมจะทำให้ใบเก่า
+--     พิมพ์ออกมาไม่เหมือนวันที่ออก ซึ่งเป็นสิ่งที่หลักข้อ 5 ห้ามไว้)
+-- 2. ตรวจย้อนหลังได้ว่านักศึกษาลงจริงเมื่อไร ต่างจากที่หลักสูตรวางไว้ตรงไหน
+--
+-- ═══ ทำไมตระกูล 62 ยังจัดกลุ่มตามภาคที่ลงจริง ═══
+-- ใบตระกูล 62 จัดกลุ่มรายวิชา**ใต้หัวภาคเรียน** แล้วพิมพ์สรุปสี่ตัวเลข
+-- (หน่วยกิตในภาค · สะสม · GPA · GPAX) ต่อท้ายทุกภาค ซึ่งมาจาก `term_summary`
+-- คือผลการเรียนรายภาคที่ระบบใช้ตัดสินการจบและสถานะรอพินิจ
+--
+-- ถ้าย้ายรายวิชาไปอยู่ใต้หัวภาคตามแผน ตัวเลขสรุปจะไม่ตรงกับรายวิชาที่อยู่
+-- ข้างบนมันเอง และการคำนวณสรุปใหม่จากรายวิชาที่แสดงจะได้ **GPA รายภาคชุดที่สอง**
+-- ที่ต่างจากชุดที่ระบบใช้จริง — สองอย่างนี้แย่ทั้งคู่และแย่กว่าการแสดงภาคจริง
+-- ตระกูล 62 จึงยังจัดตามภาคที่ลงทะเบียน ส่วน payload เก็บภาคตามแผนไว้ให้แล้ว
+-- เผื่อวันที่ตัดสินใจเป็นอย่างอื่น (หลักเดียวกับ 0057 — ฝั่งที่แพงถ้าช้าทำก่อน)
+-- ═══════════════════════════════════════════════════════════════════
+
+begin;
+
+/*
+ * ต้อง drop ก่อน เพราะ `create or replace` เปลี่ยนชนิดที่คืนของ table
+ * function ไม่ได้ — และตัวนี้ต้องเพิ่มสามคอลัมน์
+ */
+drop function if exists transcript_courses_grouped(uuid);
+
+create or replace function transcript_courses_grouped(p_student_id uuid)
+returns table (
+  head_code   text,
+  head_name   text,
+  head_sort   smallint,
+  head_min    numeric,
+  group_code  text,
+  group_name  text,
+  group_sort  smallint,
+  group_min   numeric,
+  year_be     smallint,
+  term_ordinal smallint,
+  term_label  text,
+  plan_year_be smallint,
+  plan_term_ordinal smallint,
+  plan_sort   smallint,
+  course_code text,
+  course_name_th text,
+  course_name_en text,
+  credits     numeric,
+  grade_symbol text,
+  grade_point numeric,
+  credits_earned numeric,
+  counts_in_gpa boolean
+) language sql stable as $$
+  select
+    coalesce(head.code, 'UNSORTED')            as head_code,
+    coalesce(head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด') as head_name,
+    coalesce(head.sort_order, 99)::smallint    as head_sort,
+    head.min_credits                           as head_min,
+    coalesce(grp.code, head.code, 'UNSORTED')  as group_code,
+    coalesce(grp.name_th, head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด') as group_name,
+    coalesce(grp.sort_order, 0)::smallint      as group_sort,
+    coalesce(grp.min_credits, head.min_credits) as group_min,
+    ay.year_be,
+    t.ordinal,
+    'ภาคเรียนที่ ' || t.ordinal || '/' || ay.year_be,
+    /*
+     * ชั้นปีตามแผน → ปีการศึกษา พ.ศ.
+     * null เมื่อรายวิชาไม่ได้อยู่ในโครงสร้างหลักสูตร (วิชาเลือกเสรีนอกแผน ·
+     * วิชาที่เทียบโอนมา) หรือหลักสูตรยังไม่ได้ระบุแผนไว้ หรือไม่รู้ปีที่เข้า
+     * — แม่แบบจะตกไปใช้ภาคที่ลงจริง ซึ่งดีกว่าพิมพ์ช่องว่าง
+     */
+    (s.admitted_year_be + cc.suggested_year - 1)::smallint as plan_year_be,
+    cc.suggested_term                          as plan_term_ordinal,
+    cc.sort_order                              as plan_sort,
+    c.code,
+    c.name_th,
+    coalesce(c.name_en, ''),
+    c.credits,
+    gsym.symbol,
+    er.grade_point,
+    er.credits_earned,
+    (gsym.counts_in_gpa and e.counts_toward_gpa)
+  from enrollment e
+  join student s            on s.id  = e.student_id
+  join class_section cs     on cs.id = e.class_section_id
+  join course c             on c.id  = cs.course_id
+  join term t               on t.id  = e.term_id
+  join academic_year ay     on ay.id = t.academic_year_id
+  join enrollment_result er on er.enrollment_id = e.id and er.superseded_by is null
+  join grade_symbol gsym    on gsym.id = er.grade_symbol_id
+  left join curriculum_course cc
+         on cc.curriculum_version_id = cs.curriculum_version_id
+        and cc.course_id = c.id
+  left join curriculum_category cat  on cat.id = cc.curriculum_category_id
+  left join curriculum_category grp  on grp.id = cat.id and cat.parent_id is not null
+  left join curriculum_category head on head.id = coalesce(cat.parent_id, cat.id)
+  where e.student_id = p_student_id
+$$;
+
+comment on function transcript_courses_grouped(uuid) is
+  'รายวิชาของนักศึกษาพร้อมหมวด/กลุ่มตามหลักสูตร · year_be คือภาคที่ลงจริง ส่วน plan_year_be คือภาคตามโครงสร้างหลักสูตร (null เมื่อไม่อยู่ในแผน)';
+
+
+/*
+ * ส่งภาคตามแผนเข้า payload และ**เรียงตามค่าที่จะพิมพ์จริง**
+ *
+ * ถ้าเรียงตามภาคที่ลงแต่พิมพ์ภาคตามแผน คอลัมน์ภาคเรียนบนใบจะกระโดดไปมา
+ * (1/2566 · 1/2567 · 1/2566) ซึ่งอ่านแล้วเหมือนพิมพ์ผิด — เรียงลำดับต้อง
+ * ตรงกับสิ่งที่ตาเห็นเสมอ
+ *
+ * `plan_sort` คือ `curriculum_course.sort_order` ซึ่งเป็นลำดับที่วิทยาลัย
+ * จัดไว้เองในหลักสูตร ใช้ก่อนรหัสวิชา เพราะหลักสูตรเรียงวิชาตามเนื้อหา
+ * ไม่ได้เรียงตามเลขรหัส
+ */
+create or replace function transcript_category_tree(p_student_id uuid)
+returns jsonb language sql stable as $$
+  select coalesce(jsonb_agg(head order by head ->> 'sort'), '[]'::jsonb)
+    from (
+      select jsonb_build_object(
+               'code',        h.head_code,
+               'name_th',     h.name_th,
+               'sort',        h.sort_key,
+               'min_credits', h.min_credits,
+               'credits_earned', h.credits_earned,
+               'gpa',         h.gpa,
+               'groups',
+                 coalesce((
+                   select jsonb_agg(jsonb_build_object(
+                            'code',        g.group_code,
+                            'name_th',     g.name_th,
+                            'sort',        g.sort_key,
+                            'min_credits', g.min_credits,
+                            'credits_earned', g.credits_earned,
+                            'gpa',         g.gpa,
+                            'courses',
+                              coalesce((
+                                select jsonb_agg(jsonb_build_object(
+                                         'term_label',  c.term_label,
+                                         'year_be',     c.year_be,
+                                         'term_ordinal', c.term_ordinal,
+                                         'plan_year_be', c.plan_year_be,
+                                         'plan_term_ordinal', c.plan_term_ordinal,
+                                         'code',        c.course_code,
+                                         'name_th',     c.course_name_th,
+                                         'name_en',     c.course_name_en,
+                                         'credits',     c.credits,
+                                         'grade',       c.grade_symbol,
+                                         'grade_point', c.grade_point,
+                                         'grade_points',
+                                           case when c.counts_in_gpa
+                                                then c.grade_point * c.credits end,
+                                         'counts_in_gpa', c.counts_in_gpa,
+                                         'credits_earned', c.credits_earned)
+                                         order by coalesce(c.plan_year_be, c.year_be),
+                                                  coalesce(c.plan_term_ordinal, c.term_ordinal),
+                                                  coalesce(c.plan_sort, 0),
+                                                  c.course_code)
+                                  from transcript_courses_grouped(p_student_id) c
+                                 where c.head_code = h.head_code
+                                   and c.group_code = g.group_code), '[]'::jsonb))
+                          order by g.sort_key)
+                     from transcript_category_summary(p_student_id) g
+                    where g.level = 'group' and g.head_code = h.head_code), '[]'::jsonb)) as head
+        from transcript_category_summary(p_student_id) h
+       where h.level = 'head'
+    ) x
+$$;
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0064_student_status_reason.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0064 — เหตุที่ออกจากสถานศึกษา ต้องมีคนกรอกได้จริง
+--
+-- ═══ อาการ ═══
+-- `student_status_history.reason` มีคอลัมน์มาตั้งแต่ 0002 พร้อม
+-- `document_no` (เลขที่คำสั่ง/หนังสือที่อ้างอิง) — และ **ไม่มีอะไรเขียนลงไป
+-- เลยสักแถว** เพราะ trigger ที่บันทึกประวัติเขียนแค่สี่ช่อง
+--
+--     insert into student_status_history
+--       (student_id, from_status, to_status, effective_on, actor_id)
+--
+-- ทั้งสองคอลัมน์จึงเป็น null ทุกแถวมาตลอด ผลคือใบ รบ. พิมพ์หัวข้อ
+-- "เหตุที่ออก" ไว้แล้วเว้นว่างเสมอ ไม่ว่าเจ้าหน้าที่จะรู้เหตุผลหรือไม่
+-- และไม่มีที่ให้กรอกด้วยซ้ำ
+--
+-- ═══ ทำไมเป็นคอลัมน์บน student ไม่ใช่พารามิเตอร์ของฟังก์ชัน ═══
+-- `status_since` ทำแบบนี้อยู่แล้วตั้งแต่ 0002 — ชั้น API ตั้งค่าลง student
+-- แล้ว trigger หยิบไปเขียนประวัติ การเพิ่มอีกสองช่องด้วยรูปแบบเดียวกัน
+-- แปลว่าการเปลี่ยนสถานะยังเป็น `update student` คำสั่งเดียวเหมือนเดิม
+--
+-- ทางเลือกอีกทางคือทำฟังก์ชัน `change_student_status()` แล้วบังคับให้ทุกคน
+-- เรียกผ่านมัน — แต่ trigger ยังต้องอยู่ดี (หลักข้อ 1 · กฎต้องบังคับกับ
+-- **ทุกทาง**ที่เข้าถึงข้อมูล ไม่ใช่เฉพาะทางที่ผ่านฟังก์ชัน) แล้วจะได้สองที่
+-- ที่เขียนประวัติได้ ซึ่งเป็นจุดที่ประวัติจะเริ่มไม่ตรงกัน
+--
+-- ═══ สองคอลัมน์นี้เป็น "ช่องพัก" ไม่ใช่ที่เก็บถาวร ═══
+-- trigger ย้ายค่าลงประวัติแล้ว**ล้างทิ้ง** — ค่าถาวรอยู่ที่ประวัติที่ลบไม่ได้
+--
+-- ทางแรกที่ลองคือเก็บค่าไว้บน `student` เป็น "เหตุผลของสถานะปัจจุบัน" แล้วให้
+-- trigger เขียนลงประวัติเฉพาะเมื่อค่านั้นเปลี่ยน เพื่อกันไม่ให้เหตุผลของครั้ง
+-- ก่อนติดไปกับแถวใหม่ — **ซึ่งผิดในกรณีที่เหตุผลซ้ำของเดิม**
+--
+--   นักศึกษาสองคนพ้นสภาพด้วยเหตุผลเดียวกัน · คนที่กลับเข้าเรียนแล้วจบด้วย
+--   ถ้อยคำเดิม · หรือแค่กดบันทึกซ้ำ — ทุกกรณีได้ประวัติที่ `reason` เป็น null
+--   ทั้งที่เจ้าหน้าที่กรอกมาแล้ว แล้วช่อง "เหตุที่ออก" บนใบ รบ. ว่างเปล่า
+--   โดยที่หน้าจอบอกว่าบันทึกสำเร็จ
+--
+-- การล้างทิ้งทำให้ปัญหานั้นเป็นไปไม่ได้ตั้งแต่ต้น — ค่าที่ยังอยู่บนแถวคือ
+-- ค่าที่ตั้งมาในคำสั่งนี้เสมอ ไม่มีค่าค้างให้สับสน ส่วนการอ่านเหตุผลปัจจุบัน
+-- อ่านจากประวัติแถวล่าสุด ซึ่งเป็นที่ที่ตรวจย้อนหลังได้อยู่แล้ว
+-- ═══════════════════════════════════════════════════════════════════
+
+begin;
+
+alter table student
+  add column if not exists status_reason      text,
+  add column if not exists status_document_no text;
+
+comment on column student.status_reason is
+  'ช่องพัก — ตั้งพร้อมกับ status ในคำสั่งเดียว แล้ว trigger ย้ายลง student_status_history และล้างทิ้ง · ค่าถาวรอยู่ที่ประวัติ · พิมพ์บนใบ รบ. ช่อง "เหตุที่ออก"';
+comment on column student.status_document_no is
+  'ช่องพักเลขที่คำสั่ง/หนังสือที่อ้างอิง — ย้ายลงประวัติแล้วล้างทิ้งเช่นเดียวกับ status_reason';
+
+/*
+ * ─── ย้ายค่าลงประวัติแล้วล้างช่องพักทิ้งในคำสั่งเดียวกัน ───
+ * เป็น before trigger เพราะต้องแก้ NEW ได้ — after trigger แก้ไม่ได้ ต้องยิง
+ * update ซ้อนอีกคำสั่ง ซึ่งเป็นทางที่พลาดเป็นวงวนได้ง่ายกว่ามาก
+ *
+ * insert จาก before trigger อยู่ในทรานแซกชันเดียวกับ update ที่เรียกมัน
+ * ถ้า update ล้มทีหลัง แถวประวัติก็ย้อนไปด้วย จึงไม่มีทางเหลือประวัติค้าง
+ * ของการเปลี่ยนสถานะที่ไม่เคยเกิด
+ */
+create or replace function student_status_guard() returns trigger
+language plpgsql as $$
+begin
+  if new.status is distinct from old.status then
+    insert into student_status_history
+      (student_id, from_status, to_status, effective_on, reason, document_no, actor_id)
+    values (
+      new.id, old.status, new.status,
+      coalesce(new.status_since, current_date),
+      new.status_reason, new.status_document_no, current_actor_id());
+  end if;
+  -- ล้างช่องพักเสมอ แม้สถานะไม่ได้เปลี่ยน — ค่าที่ค้างอยู่จะไปติดกับ
+  -- การเปลี่ยนสถานะครั้งถัดไปที่ไม่ได้ตั้งค่ามา
+  new.status_reason      := null;
+  new.status_document_no := null;
+  return new;
+end $$;
+
+/*
+ * trigger เดิมเป็น `after update of status` ซึ่งแก้ NEW ไม่ได้ — ต้องสร้างใหม่
+ * และต้องฟัง update ทุกคอลัมน์ ไม่ใช่เฉพาะ status เพราะการล้างช่องพักต้อง
+ * เกิดแม้ในคำสั่งที่ตั้งเหตุผลมาแต่ไม่ได้เปลี่ยนสถานะ
+ */
+drop trigger if exists student_status_audit on student;
+create trigger student_status_audit before update on student
+  for each row execute function student_status_guard();
 
 commit;
 

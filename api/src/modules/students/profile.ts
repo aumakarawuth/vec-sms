@@ -164,6 +164,28 @@ class AssignAdvisorDto {
   @IsOptional() @IsString() note?: string;
 }
 
+/** ตรงกับ enum `student_status` ในฐานข้อมูล — กฎจริงอยู่ที่นั่น ที่นี่ไว้บอกผู้ใช้ */
+const STUDENT_STATUS = [
+  'active', 'on_leave', 'suspended', 'withdrawn',
+  'transferred_out', 'dismissed', 'graduated',
+] as const;
+
+class StatusChangeDto {
+  @IsIn(STUDENT_STATUS) status: string;
+  /** วันที่มีผล — ใบ รบ. พิมพ์ค่านี้ในช่อง "ออกจากสถานศึกษาเมื่อ" */
+  @IsISO8601() effectiveOn: string;
+  /**
+   * เหตุผล — ใบ รบ. พิมพ์ในช่อง "เหตุที่ออก"
+   *
+   * บังคับกรอกเมื่อเป็นสถานะที่แปลว่าออกจากสถานศึกษา เพราะใบที่พิมพ์
+   * "เหตุที่ออก" ว่างไว้คือเอกสารที่ตอบคำถามของคนอ่านไม่ได้ และตอนที่
+   * นักศึกษามาขอใบก็สายเกินกว่าจะย้อนไปถามว่าตอนนั้นเกิดอะไรขึ้น
+   */
+  @IsOptional() @IsString() reason?: string;
+  /** เลขที่คำสั่ง/หนังสือที่อ้างอิง */
+  @IsOptional() @IsString() documentNo?: string;
+}
+
 @Injectable()
 export class StudentProfileService {
   /*
@@ -661,6 +683,52 @@ export class StudentProfileService {
   }
 
   /**
+   * เปลี่ยนสถานะนักศึกษา — trigger `student_status_guard()` เขียนประวัติให้เอง
+   *
+   * ตั้งสี่ช่องพร้อมกันใน `update` คำสั่งเดียว เพราะ trigger อ่านทั้งสี่ค่า
+   * จากแถวใหม่ ถ้าแยกเป็นสองคำสั่ง (เปลี่ยนสถานะก่อน แล้วค่อยเติมเหตุผล)
+   * ประวัติแถวที่ trigger เพิ่งเขียนจะได้เหตุผลเป็น null ตลอดไป
+   */
+  async changeStatus(studentId: string, dto: StatusChangeDto) {
+    /*
+     * ─── บังคับเหตุผลเฉพาะสถานะที่แปลว่าออกจากสถานศึกษา ───
+     * เพราะสี่สถานะนี้คือชุดที่ใบ รบ. พิมพ์ในช่อง "เหตุที่ออก" (0062)
+     * ส่วนการกลับมาเรียนต่อหรือลาพักไม่ต้องมีเหตุผลบนเอกสารทางการ
+     * — บังคับทุกสถานะจะกลายเป็นการขอข้อมูลที่ไม่มีใครใช้ แล้วคนกรอกจะ
+     * ใส่จุดเดียวไปให้พ้น ๆ ซึ่งแย่กว่าไม่ถาม
+     */
+    const leaving = ['withdrawn', 'transferred_out', 'dismissed', 'graduated'];
+    if (leaving.includes(dto.status) && !(dto.reason ?? '').trim()) {
+      throw new BadRequestException(
+        'ต้องระบุเหตุผล เพราะสถานะนี้จะถูกพิมพ์ในช่อง "เหตุที่ออก" บนใบ ระเบียนแสดงผลการเรียน',
+      );
+    }
+    const row = await this.db.queryOne(
+      `update student
+          set status             = $2::student_status,
+              status_since       = $3::date,
+              status_reason      = $4,
+              status_document_no = $5
+        where id = $1
+      returning id, status, status_since, status_reason, status_document_no`,
+      [studentId, dto.status, dto.effectiveOn, dto.reason ?? null, dto.documentNo ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบนักศึกษา หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async statusHistory(studentId: string) {
+    return this.db.query(
+      `select h.to_status, h.from_status, h.effective_on, h.reason,
+              h.document_no, h.recorded_at
+         from student_status_history h
+        where h.student_id = $1
+        order by h.effective_on desc, h.recorded_at desc`,
+      [studentId],
+    );
+  }
+
+  /**
    * รายชื่อเด็กในที่ปรึกษาของผู้ใช้ปัจจุบัน
    *
    * ไม่รับ staffId เป็นพารามิเตอร์โดยตั้งใจ — ถ้ารับ ครูคนหนึ่งจะขอรายชื่อ
@@ -813,6 +881,38 @@ class StudentProfileController {
   @Delete(':id/advisors/:rowId')
   endAdvisor(@Param('rowId', ParseUuidPipe) rowId: string) {
     return this.svc.endAdvisor(rowId);
+  }
+
+  /**
+   * เปลี่ยนสถานะนักศึกษาพร้อม**วันที่และเหตุผล**
+   *
+   * ─── ทำไมต้องเป็นเส้นทางของตัวเอง ไม่ใช่ช่องหนึ่งใน PATCH /profile ───
+   * เพราะการเปลี่ยนสถานะเขียนประวัติที่ลบไม่ได้ (`student_status_history`)
+   * และเป็นข้อมูลที่ใช้ยันจำนวนนักศึกษาตอนขอเงินอุดหนุน — ต่างจากการแก้
+   * ชื่อเล่นหรือเบอร์โทรที่แก้กี่ครั้งก็ได้ การรวมไว้ในเส้นทางเดียวกัน
+   * แปลว่าคนที่กดแก้ที่อยู่จะเปลี่ยนสถานะพลาดได้ด้วยฟิลด์ที่หลงมา
+   *
+   * และช่อง "เหตุที่ออก" บนใบ รบ. อ่านจากประวัตินี้ (0062) — ก่อนหน้านี้
+   * ไม่มีที่ให้กรอกเลย คอลัมน์ `reason` จึงเป็น null ทุกแถวตั้งแต่ 0002
+   */
+  @Roles('registrar', 'academic', 'director', 'admin')
+  @Audit('student', 'id')
+  @Post(':id/status')
+  changeStatus(@Param('id', ParseUuidPipe) id: string, @Body() dto: StatusChangeDto) {
+    return this.svc.changeStatus(id, dto);
+  }
+
+  /**
+   * ประวัติการเปลี่ยนสถานะ — ลบไม่ได้ จึงใช้ยันย้อนหลังได้
+   *
+   * มีเส้นทางอ่านเพราะช่อง "เหตุที่ออก" บนใบ รบ. มาจากที่นี่ ถ้าเจ้าหน้าที่
+   * เห็นค่าบนใบแล้วสงสัย ต้องตามกลับมาดูได้ว่าใครกรอกไว้เมื่อไร มิฉะนั้น
+   * ค่าที่พิมพ์ลงกระดาษจะไม่มีที่มาให้ตรวจ
+   */
+  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+  @Get(':id/status-history')
+  statusHistory(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.statusHistory(id);
   }
 }
 
