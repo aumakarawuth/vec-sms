@@ -260,3 +260,56 @@ begin
 end $$;
 
 reset role;
+
+-- ── TEST 263 ───────────────────────────────────────────────────────
+-- โครงหมวด/กลุ่มวิชาของใบ รบ. รุ่น 67 (0058)
+--
+-- ใบจริงรุ่น 67 จัดกลุ่มตามหมวด → กลุ่มวิชา แล้วสรุปสามบรรทัดใต้ทุกกลุ่ม
+-- ถ้าโครงนี้ว่าง ใบจะพิมพ์ออกมาเป็นตารางเปล่าโดยที่ยอดหน่วยกิตรวมยังถูก
+-- ซึ่งมองไม่ออกจนกว่าจะมีคนนับรายวิชาบนกระดาษ
+do $$
+declare
+  v_stu uuid; v_tree jsonb; v_heads integer; v_courses integer;
+  v_tree_credits numeric; v_flat_credits numeric;
+begin
+  select e.student_id into v_stu
+    from enrollment e
+    join enrollment_result er on er.enrollment_id = e.id and er.superseded_by is null
+   group by e.student_id order by count(*) desc limit 1;
+
+  if v_stu is null then
+    raise exception 'TEST 263 ล้มเหลว: ไม่มีนักศึกษาที่มีผลการเรียนให้ทดสอบ';
+  end if;
+
+  v_tree := transcript_category_tree(v_stu);
+  v_heads := jsonb_array_length(v_tree);
+
+  select count(*) into v_courses from transcript_courses_grouped(v_stu);
+
+  if v_heads = 0 then
+    raise exception 'TEST 263 ล้มเหลว: โครงหมวดวิชาว่างเปล่าทั้งที่มีผลการเรียน % รายวิชา', v_courses;
+  end if;
+
+  -- รายวิชาต้องไม่หายระหว่างทาง — เทียบกับ transcript_data() ที่ใบตระกูล 62 ใช้
+  select count(*) into v_flat_credits from transcript_data(v_stu);
+  if v_courses <> v_flat_credits then
+    raise exception 'TEST 263 ล้มเหลว: จัดกลุ่มแล้วได้ % รายวิชา แต่แบบแบนได้ % '
+                    '— มีวิชาหายไประหว่างจัดกลุ่ม', v_courses, v_flat_credits;
+  end if;
+
+  -- หน่วยกิตที่รวมในโครงต้องเท่ากับที่รวมจากรายวิชาตรง ๆ
+  select sum((h ->> 'credits_earned')::numeric) into v_tree_credits
+    from jsonb_array_elements(v_tree) h;
+  select coalesce(sum(credits_earned), 0) into v_flat_credits
+    from transcript_courses_grouped(v_stu);
+
+  if v_tree_credits is distinct from v_flat_credits then
+    raise exception 'TEST 263 ล้มเหลว: หน่วยกิตในโครง % ไม่ตรงกับที่รวมจากรายวิชา %',
+                    v_tree_credits, v_flat_credits;
+  end if;
+
+  raise notice 'TEST 263 ผ่าน — % หมวด · % รายวิชา · หน่วยกิตรวม % ตรงกันทั้งสองทาง',
+               v_heads, v_courses, v_tree_credits;
+end $$;
+
+reset role;

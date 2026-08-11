@@ -2801,6 +2801,80 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ แม่แบบใบ รบ. ตระกูล 67 (0058) ══');
+
+  await check('API-156 ใบ รบ. รุ่น 67 จัดกลุ่มตามหมวดและกลุ่มวิชา', async () => {
+    /*
+     * วัดจากใบจริงแล้วรุ่น 67 จัดกลุ่มตามหมวด → กลุ่มวิชา พร้อมสรุปสามบรรทัด
+     * ใต้ทุกกลุ่ม ต่างจากรุ่น 62 ที่จัดตามภาคเรียน — เอาแม่แบบผิดรุ่นไปพิมพ์
+     * จะได้ใบที่หน้าตาถูกแต่จัดกลุ่มผิดหลักสูตร ซึ่งมองไม่ออกถ้าไม่รู้ว่า
+     * ควรเป็นแบบไหน
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    expect(issued.status < 400, `ออกใบไม่ได้ ${issued.status}`);
+    expect(Number(issued.body.payload.program?.edition_be) === 2567,
+      'ข้อนี้ต้องใช้นักศึกษาหลักสูตรรุ่น 67');
+    expect(Array.isArray(issued.body.payload.category_tree),
+      'payload ต้องมีโครงหมวด/กลุ่มวิชา');
+
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    expect(html.includes('รบ.1 ปวช.67'),
+      'หัวใบต้องเป็นเลขปีสองหลักตามใบจริง ไม่ใช่ ปวช.2567');
+    expect(html.includes('ระเบียนแสดงผลการเรียนตามหลักสูตรประกาศนียบัตรวิชาชีพ'),
+      'ต้องเลือกแม่แบบรุ่น 67 ไม่ใช่แม่แบบเดิม');
+    expect(html.includes('ผ่านเกณฑ์การประเมินมาตรฐานวิชาชีพเมื่อ'),
+      'หัวใบรุ่น 67 มีช่องมาตรฐานวิชาชีพซึ่งแม่แบบเดิมไม่มี');
+    expect(!/(src|href)\s*=\s*["']https?:/i.test(html), 'ต้องไม่อ้างไฟล์ภายนอก');
+    /*
+     * ข้อมูลตัวอย่างของชุดนี้ยังไม่มีผลการเรียน จึงพิสูจน์ได้แค่ว่าเลือก
+     * แม่แบบถูกและหัวใบถูก — ส่วนการจัดกลุ่มตามหมวด/กลุ่มวิชาและยอดสรุป
+     * พิสูจน์ที่ TEST 263 ซึ่งรันบนฐานที่มีผลการเรียนจริง
+     * (การยืนยันสิ่งที่ fixture ผลิตไม่ได้ คือเทสต์ที่เขียวโดยไม่ได้ตรวจอะไร)
+     */
+    return `เลือกแม่แบบรุ่น 67 · ${issued.body.payload.category_tree.length} หมวด`;
+  });
+
+  await check('API-157 หน้า 2 มีของประจำครบทุกบล็อก', async () => {
+    /*
+     * หน้า 2 ของใบจริงมีของตายตัวหกอย่าง ถ้าทำเป็นการไหลต่อเนื่องแล้วรายวิชา
+     * เยอะ ของเหล่านี้จะไปโผล่หน้า 3 แล้วใบจะไม่ใช่ใบเดียวกับที่ สอศ. รับ
+     */
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    for (const block of [
+      'ระดับผลการเรียน', 'ตัวอักษรแสดงระดับผลการเรียน',
+      'เกณฑ์การสำเร็จหลักสูตร', 'หมายเหตุ', 'บันทึก', 'หน้าที่ 2',
+    ]) {
+      expect(html.includes(block), `หน้า 2 ต้องมีบล็อก "${block}"`);
+    }
+    // สองหน้าเสมอ ไม่ใช่ไหลตามจำนวนรายวิชา
+    expect((html.match(/class="page"/g) ?? []).length === 2,
+      'ใบต้องมีสองหน้าตายตัว');
+    return 'ครบหกบล็อก · สองหน้า';
+  });
+
+  await check('API-158 ใบรุ่น 67 ที่ยกเลิกแล้วต้องมีตราและวันที่ออก', async () => {
+    // ใบที่ยกเลิกยังพิมพ์ได้เพราะต้องตรวจย้อนหลัง แต่ต้องมองปราดเดียวรู้
+    const issued = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    await registrar(`/documents/${issued.body.id}/void`, {
+      method: 'POST', body: JSON.stringify({ reason: 'ทดสอบ' }),
+    });
+    const html = String((await registrar(`/documents/${issued.body.id}/print`)).body);
+    expect(html.includes('ยกเลิก'), 'ต้องมีตราว่ายกเลิก');
+    expect(/ออกให้เมื่อ \d{1,2} [ก-๙]+ 25\d\d/.test(html),
+      'ต้องมีวันที่ออกเป็นวันที่ไทยแบบเต็ม');
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

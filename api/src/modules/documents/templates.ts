@@ -24,6 +24,11 @@
 
 /** เอกสารหนึ่งใบตามที่อ่านมาจาก issued_document */
 import { renderLetter, type LetterDocument } from './letters';
+import {
+  is67Edition,
+  renderTranscript67,
+  type Transcript67Document,
+} from './transcript-67';
 
 export interface IssuedDocument {
   id: string;
@@ -821,6 +826,16 @@ ${screenings}
 export function renderDocument(doc: IssuedDocument): string {
   switch (doc.kind) {
     case 'transcript':
+      /*
+       * ─── เลือกแม่แบบจากรุ่นหลักสูตร ไม่ใช่จากค่าที่ผู้ใช้เลือก ───
+       * รุ่น 67 จัดกลุ่มรายวิชาตามหมวด/กลุ่มวิชา ส่วนรุ่นก่อนหน้าจัดตาม
+       * ภาคเรียน — เอาแม่แบบผิดรุ่นไปพิมพ์จะได้ใบที่หน้าตาถูกแต่จัดกลุ่ม
+       * ผิดหลักสูตร ซึ่งคนที่ไม่รู้ว่าควรเป็นแบบไหนมองไม่ออก
+       * และ payload ตรึงรุ่นไว้แล้ว จึงตัดสินจากตัวเอกสารเองได้
+       */
+      if (is67Edition(doc.payload) && Array.isArray((doc.payload as { category_tree?: unknown[] }).category_tree)) {
+        return renderTranscript67(doc as unknown as Transcript67Document);
+      }
       return renderTranscript(doc);
     case 'certificate':
       return renderCertificate(doc);
