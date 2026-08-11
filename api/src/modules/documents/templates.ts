@@ -33,6 +33,7 @@ import {
   has62TermTree,
   renderTranscript62,
   type Transcript62Document,
+  type Transcript62Form,
 } from './transcript-62';
 
 export interface IssuedDocument {
@@ -212,6 +213,11 @@ export interface PrintOptions {
   /** เลื่อนตำแหน่งพิมพ์ทั้งหน้า (pt) ชดเชยถาดป้อนกระดาษที่เหลื่อม */
   offsetX?: number;
   offsetY?: number;
+  /**
+   * รูปแบบย่อยของใบ รบ. ตระกูล 62 — `sorsor` ย้ายสรุปรายภาคไปเป็นตาราง
+   * แนวนอนหน้า 2 ตามที่ใบของ สอศ. วางไว้ (ไม่มีผลกับตระกูล 67)
+   */
+  form?: '62' | 'sorsor';
 }
 
 /** เลื่อนได้ไม่เกินครึ่งนิ้ว — เกินกว่านั้นคือดันเนื้อหาตกขอบโดยไม่มีตัวอย่างให้ดู */
@@ -938,7 +944,7 @@ ${screenings}
  * ประเภทที่ยังไม่มีแม่แบบต้องโยนข้อผิดพลาดที่อ่านรู้เรื่อง ไม่ใช่คืนหน้าเปล่า
  * เพราะหน้าเปล่าที่พิมพ์ออกมาแล้วดูเหมือนกระดาษเสีย ไม่ใช่ระบบยังทำไม่เสร็จ
  */
-export function renderDocument(doc: IssuedDocument): string {
+export function renderDocument(doc: IssuedDocument, opts?: PrintOptions): string {
   switch (doc.kind) {
     case 'transcript':
       /*
@@ -957,7 +963,16 @@ export function renderDocument(doc: IssuedDocument): string {
        * การพิมพ์ซ้ำใบเก่าจึงตกไปใช้แม่แบบเดิม ไม่ใช่ได้ตารางเปล่า
        */
       if (has62TermTree(doc.payload as { term_tree?: unknown })) {
-        return renderTranscript62(doc as unknown as Transcript62Document);
+        /*
+         * ─── รูปแบบย่อยมาจากผู้ใช้ ต่างจากการเลือกตระกูล ───
+         * `62` กับ `sorsor` จัดกลุ่มรายวิชาเหมือนกันทุกประการ ต่างแค่
+         * ที่วางสรุปรายภาคกับถ้อยคำหนึ่งคำ — เป็นเรื่องของหน่วยงานที่จะ
+         * ยื่นให้ ไม่ใช่ข้อเท็จจริงของนักศึกษา จึงเลือกตอนพิมพ์ได้
+         */
+        return renderTranscript62(
+          doc as unknown as Transcript62Document,
+          opts?.form as Transcript62Form | undefined,
+        );
       }
       return renderTranscript(doc);
     case 'certificate':

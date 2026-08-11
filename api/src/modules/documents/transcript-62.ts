@@ -33,6 +33,21 @@
 import type { IssuedDocument } from './templates';
 import { engDate, engYear, thaiDate } from './templates';
 
+/**
+ * รูปแบบย่อยของตระกูลนี้
+ *
+ * ═══ ทำไมรูปแบบนี้ผู้ใช้เลือกได้ ทั้งที่รุ่นหลักสูตรเลือกไม่ได้ ═══
+ * การเลือกระหว่างตระกูล 67 กับ 62 **ต้องมาจาก payload** เพราะสองตระกูล
+ * จัดกลุ่มรายวิชาคนละแบบ (หมวดวิชา ↔ ภาคเรียน) เอาผิดรุ่นไปพิมพ์จะได้ใบที่
+ * จัดกลุ่มผิดหลักสูตร ซึ่งคนที่ไม่รู้ว่าควรเป็นแบบไหนมองไม่ออก
+ *
+ * ส่วน `62` กับ `sorsor` **จัดกลุ่มเหมือนกันทุกประการ** ต่างกันแค่ที่วาง
+ * สรุปรายภาค (ไหลในตาราง ↔ ตารางสรุปแนวนอนหน้า 2) กับถ้อยคำระดับผลการเรียน
+ * หนึ่งคำ — ตัวเลขบนใบเหมือนกันหมด การเลือกจึงเป็นเรื่องของหน่วยงาน
+ * ที่จะยื่นให้ ไม่ใช่ข้อเท็จจริงของนักศึกษา
+ */
+export type Transcript62Form = '62' | 'sorsor';
+
 /* ─── ชนิดข้อมูลของ payload ที่ 0060 สร้าง ──────────────────────── */
 
 interface Course62 {
@@ -183,6 +198,7 @@ const L = {
     gradeScale: 'ระดับผลการเรียน',
     criteria: 'เกณฑ์การสำเร็จหลักสูตร', notes: 'หมายเหตุ', memo: 'บันทึก',
     meaning: 'หมายถึง',
+    summaryTitle: 'สรุปผลการเรียน', semester: 'ภาคเรียน',
   },
   en: {
     title: (edition: number, q: string) => `${edition - 543} CURRICULUM OF THE ${q}`,
@@ -211,6 +227,7 @@ const L = {
     gradeScale: 'System of Grading',
     criteria: 'Criteria for Completion', notes: 'Notes', memo: 'Notes',
     meaning: 'Refers to',
+    summaryTitle: 'Summary of Results', semester: 'Semester',
   },
 } as const;
 
@@ -230,6 +247,18 @@ const GRADE_SCALE_62: [string, string, string][] = [
   ['1', 'อ่อนมาก', 'Poor'],
   ['0', 'ตก', 'Fail'],
 ];
+
+/**
+ * แบบ สอศ. ใช้ถ้อยคำไทยของ 2.5 ต่างออกไปหนึ่งคำ
+ *
+ * `ดีพอใช้` ไม่ใช่ `ค่อนข้างดี` — วัดจากไฟล์จริงทั้งสองแบบ ส่วนฉบับอังกฤษ
+ * ใช้ถ้อยคำชุดเดียวกันทั้งคู่ ความต่างจึงอยู่ฝั่งไทยที่เดียว
+ *
+ * รวมเป็นชุดเดียวไม่ได้ เพราะจะทำให้ใบใดใบหนึ่งผิดเสมอ
+ */
+const GRADE_SCALE_SORSOR: [string, string, string][] = GRADE_SCALE_62.map(
+  (row) => (row[0] === '2.5' ? ['2.5', 'ดีพอใช้', row[2]] : row),
+) as [string, string, string][];
 
 /**
  * ตัวอักษรแสดงระดับผลการเรียน พร้อม**รหัสฉบับอังกฤษ**
@@ -259,8 +288,10 @@ export const GRADE_LETTERS_62: [string, string, string, string][] = [
  * ฉบับไทยไม่มีบรรทัดชื่อเรื่อง จึงเว้น 76 pt ให้หัวกระดาษที่พิมพ์มาแล้ว
  * ฉบับอังกฤษมีชื่อเรื่องอยู่ในเนื้อ จึงเริ่มที่ 12 pt แล้วชื่อเรื่องกินที่แทน
  */
-function style(lang: 'th' | 'en'): string {
+function style(lang: 'th' | 'en', form: Transcript62Form): string {
   const topMargin = lang === 'en' ? 12 : 76;
+  // แบบ สอศ. วัดได้ 10.6 pt ในตาราง เพราะต้องเว้นที่ให้ตารางสรุปหน้า 2
+  const tableFont = form === 'sorsor' ? '10.6pt' : '12.5pt';
   return `
   @page { size: A4 portrait; margin: ${topMargin}pt 24pt 13pt 23pt; }
   * { box-sizing: border-box; }
@@ -293,7 +324,7 @@ function style(lang: 'th' | 'en'): string {
   }
 
   /* ตารางรายวิชาสองคอลัมน์ที่ไหลซ้าย → ขวา */
-  table.courses { border-collapse: collapse; table-layout: fixed; }
+  table.courses { border-collapse: collapse; table-layout: fixed; font-size: ${tableFont}; }
   table.courses th, table.courses td {
     border: 0.6pt solid #000; padding: 0 2pt; vertical-align: top;
   }
@@ -317,6 +348,16 @@ function style(lang: 'th' | 'en'): string {
   .legend h2 { font-size: 11.6pt; font-weight: 700; margin: 0 0 3pt; }
   .legend table { border-collapse: collapse; width: 100%; }
   .legend td { padding: 0; vertical-align: top; }
+  /* ตารางสรุปผลการเรียนของแบบ สอศ. — หนึ่งคอลัมน์ต่อหนึ่งภาคเรียน */
+  .matrix { margin-top: 8pt; font-size: 11.6pt; }
+  .matrix h2 { font-size: 11.6pt; font-weight: 700; margin: 0 0 3pt; }
+  .matrix table { border-collapse: collapse; }
+  .matrix th, .matrix td {
+    border: 0.6pt solid #000; padding: 0 5pt; text-align: center; font-weight: 400;
+    min-width: 34pt;
+  }
+  .matrix th.lab { text-align: left; font-weight: 400; white-space: nowrap; }
+
   .memo { margin-top: 8pt; font-size: 13.5pt; }
   .memo .lines { font-size: 12.5pt; letter-spacing: 0.4pt; }
 
@@ -345,18 +386,60 @@ type Row62 =
   | { kind: 'course'; course: Course62 }
   | { kind: 'sum'; line1: string; line2: string };
 
-function buildRows(terms: Term62[], lang: 'th' | 'en', t: typeof L['th'] | typeof L['en']): Row62[] {
+function buildRows(
+  terms: Term62[],
+  lang: 'th' | 'en',
+  t: typeof L['th'] | typeof L['en'],
+  form: Transcript62Form,
+): Row62[] {
   const out: Row62[] = [];
   for (const term of terms) {
     out.push({ kind: 'term', text: termHeading(term, lang) });
     for (const c of term.courses ?? []) out.push({ kind: 'course', course: c });
-    out.push({
-      kind: 'sum',
-      line1: `${t.termCredits} ${credits(term.credits_earned)} ${t.cumCredits} ${credits(term.credits_cum)}`,
-      line2: `${t.termGpa} ${gpa(term.gpa)} ${t.cumGpa} ${gpa(term.gpax)}`,
-    });
+    /*
+     * แบบ สอศ. ย้ายสรุปรายภาคทั้งหมดไปเป็นตารางแนวนอนที่หน้า 2
+     * (หนึ่งคอลัมน์ต่อหนึ่งภาค) — ถ้าพิมพ์ทั้งสองที่จะได้ตัวเลขชุดเดียวกัน
+     * สองครั้งบนใบเดียว ซึ่งคนอ่านจะสงสัยว่าทำไมไม่เท่ากัน (ทั้งที่เท่ากัน)
+     */
+    if (form === '62') {
+      out.push({
+        kind: 'sum',
+        line1: `${t.termCredits} ${credits(term.credits_earned)} ${t.cumCredits} ${credits(term.credits_cum)}`,
+        line2: `${t.termGpa} ${gpa(term.gpa)} ${t.cumGpa} ${gpa(term.gpax)}`,
+      });
+    }
   }
   return out;
+}
+
+/**
+ * ตารางสรุปผลการเรียนแนวนอน — หนึ่งคอลัมน์ต่อหนึ่งภาคเรียน
+ *
+ * เป็นตัวเลขชุดเดียวกับที่แบบ 62 พิมพ์ไหลอยู่ในตารางรายวิชา แค่จัดวางใหม่
+ * — ไม่ได้คำนวณอะไรเพิ่ม ทุกค่ามาจาก `term_tree` ที่ตรึงลง payload แล้ว
+ */
+function summaryMatrix(
+  terms: Term62[],
+  lang: 'th' | 'en',
+  t: typeof L['th'] | typeof L['en'],
+): string {
+  if (terms.length === 0) return '';
+  const head = terms
+    .map((x) => `<th>${lang === 'en' ? `${x.ordinal}/${x.year_be - 543}` : `${x.ordinal}/${x.year_be}`}</th>`)
+    .join('');
+  const row = (label: string, cells: string[]) =>
+    `<tr><th class="lab">${label}</th>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+
+  return `<div class="matrix">
+    <h2>${t.summaryTitle}</h2>
+    <table><tbody>
+      <tr><th class="lab">${t.semester}</th>${head}</tr>
+      ${row(t.termCredits, terms.map((x) => credits(x.credits_earned)))}
+      ${row(t.cumCredits, terms.map((x) => credits(x.credits_cum)))}
+      ${row(t.termGpa, terms.map((x) => gpa(x.gpa)))}
+      ${row(t.cumGpa, terms.map((x) => gpa(x.gpax)))}
+    </tbody></table>
+  </div>`;
 }
 
 function renderRow(r: Row62, lang: 'th' | 'en'): string {
@@ -448,7 +531,10 @@ function stamps(doc: Transcript62Document): string {
 
 /* ─── ตัวหลัก ────────────────────────────────────────────────────── */
 
-export function renderTranscript62(doc: Transcript62Document): string {
+export function renderTranscript62(
+  doc: Transcript62Document,
+  form: Transcript62Form = '62',
+): string {
   const d = doc.payload;
   const lang: 'th' | 'en' = d.lang === 'en' ? 'en' : 'th';
   const t = L[lang];
@@ -477,7 +563,7 @@ export function renderTranscript62(doc: Transcript62Document): string {
       : (prog?.qualification_en ?? ''))
     : `${prog?.qualification_th ?? ''}${cont}`;
 
-  const rows = buildRows(d.term_tree ?? [], lang, t);
+  const rows = buildRows(d.term_tree ?? [], lang, t, form);
   // สองหน้าตายตัวเหมือนตระกูล 67 — หน้า 2 มีของประจำที่ต้องอยู่หน้า 2
   const perPage = 96;
   const p1 = rows.slice(0, perPage);
@@ -584,6 +670,8 @@ export function renderTranscript62(doc: Transcript62Document): string {
 
   ${courseTable(p2, t, lang)}
 
+  ${form === 'sorsor' ? summaryMatrix(d.term_tree ?? [], lang, t) : ''}
+
   <div class="legend">
     <div class="col1">
       <h2>${t.criteria}</h2>
@@ -601,10 +689,11 @@ export function renderTranscript62(doc: Transcript62Document): string {
       <h2>${t.gradeScale}</h2>
       <table><tbody>
         ${(() => {
+          const scale = form === 'sorsor' ? GRADE_SCALE_SORSOR : GRADE_SCALE_62;
           const out: string[] = [];
-          for (let i = 0; i < GRADE_SCALE_62.length; i += 2) {
-            const [a, ath, aen] = GRADE_SCALE_62[i];
-            const b = GRADE_SCALE_62[i + 1];
+          for (let i = 0; i < scale.length; i += 2) {
+            const [a, ath, aen] = scale[i];
+            const b = scale[i + 1];
             out.push(`<tr><td style="width:12%">${a}</td><td style="width:5%">=</td>
               <td style="width:28%">${lang === 'en' ? aen : ath}</td>
               <td style="width:12%">${b ? b[0] : ''}</td><td style="width:5%">${b ? '=' : ''}</td>
@@ -634,7 +723,7 @@ export function renderTranscript62(doc: Transcript62Document): string {
 <head>
 <meta charset="utf-8">
 <title>${esc(heading)}</title>
-<style>${style(lang)}</style>
+<style>${style(lang, form)}</style>
 </head>
 <body>
 ${page1}

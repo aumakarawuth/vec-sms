@@ -95,6 +95,18 @@ class PrintOptionsDto {
     message: 'ระยะเลื่อนแนวตั้งต้องเป็นตัวเลขหน่วย pt',
   })
   offsetY?: string;
+
+  /**
+   * รูปแบบย่อยของใบ รบ. ตระกูล 62
+   *
+   * เลือกได้เพราะสองแบบนี้จัดกลุ่มรายวิชาเหมือนกันทุกประการ ต่างแค่ที่วาง
+   * สรุปรายภาคกับถ้อยคำหนึ่งคำ — ต่างจากการเลือกตระกูล 67/62 ซึ่งต้องมาจาก
+   * รุ่นหลักสูตรใน payload เพราะจัดกลุ่มคนละแบบ
+   */
+  @IsOptional() @IsIn(['62', 'sorsor'], {
+    message: 'รูปแบบใบ รบ. ต้องเป็น 62 หรือ sorsor',
+  })
+  form?: '62' | 'sorsor';
 }
 
 class VoidDocumentDto {
@@ -307,7 +319,7 @@ export class DocumentsService {
     const doc = (await this.get(id)) as unknown as IssuedDocument;
     withNationalId(doc);
     try {
-      return applyPrintOptions(renderDocument(doc), opts);
+      return applyPrintOptions(renderDocument(doc, opts), opts);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
@@ -472,6 +484,7 @@ class DocumentsController {
       paper: q.paper,
       offsetX: q.offsetX === undefined ? undefined : Number(q.offsetX),
       offsetY: q.offsetY === undefined ? undefined : Number(q.offsetY),
+      form: q.form,
     });
   }
 

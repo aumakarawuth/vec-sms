@@ -288,6 +288,13 @@ export interface PrintPaper {
   paper: 'plain' | 'letterhead';
   dx: number;
   dy: number;
+  /**
+   * รูปแบบใบ รบ. ของหลักสูตรรุ่นก่อน 67
+   *
+   * เก็บรวมกับค่ากระดาษเพราะเป็นค่าที่ตั้งครั้งเดียวแล้วใช้ทั้งวันเหมือนกัน
+   * — วิทยาลัยหนึ่งแห่งยื่นให้หน่วยงานเดิมเป็นประจำ ไม่ได้สลับรายใบ
+   */
+  form: '62' | 'sorsor';
 }
 
 const PRINT_KEY = 'vecsms.print';
@@ -301,12 +308,13 @@ export function readPrintPaper(): PrintPaper {
         paper: v.paper === 'letterhead' ? 'letterhead' : 'plain',
         dx: Number(v.dx) || 0,
         dy: Number(v.dy) || 0,
+        form: v.form === 'sorsor' ? 'sorsor' : '62',
       };
     }
   } catch {
     /* ค่าที่อ่านไม่ได้ให้ใช้ค่าเริ่มต้น ดีกว่าทำให้ทั้งหน้าพัง */
   }
-  return { paper: 'plain', dx: 0, dy: 0 };
+  return { paper: 'plain', dx: 0, dy: 0, form: '62' };
 }
 
 /** ต่อท้าย path ของการพิมพ์ — ไม่ส่งค่าที่เป็นค่าเริ่มต้นเพื่อให้ URL อ่านง่าย */
@@ -315,6 +323,7 @@ export function printQuery(p: PrintPaper): string {
   if (p.paper === 'letterhead') q.set('paper', 'letterhead');
   if (p.dx) q.set('offsetX', String(p.dx));
   if (p.dy) q.set('offsetY', String(p.dy));
+  if (p.form === 'sorsor') q.set('form', 'sorsor');
   const s = q.toString();
   return s ? `?${s}` : '';
 }
@@ -343,6 +352,15 @@ export function PrintPaperControl({
           <option value="letterhead">กระดาษตรา (มีหัวพิมพ์มาแล้ว)</option>
         </select>
       </Field>
+      <Field label="รูปแบบใบ รบ.">
+        <select
+          value={value.form}
+          onChange={(e) => set({ form: e.target.value as PrintPaper['form'] })}
+        >
+          <option value="62">แบบ 62 (สรุปรายภาคในตาราง)</option>
+          <option value="sorsor">แบบ สอศ. (ตารางสรุปหน้า 2)</option>
+        </select>
+      </Field>
       <Field label="เลื่อนขวา (pt)">
         <input
           type="number" step="0.5" min={-36} max={36} style={{ width: 90 }}
@@ -359,8 +377,9 @@ export function PrintPaperControl({
       </Field>
       <div style={{ color: 'var(--ink-soft)', fontSize: 11.5, maxWidth: 380 }}>
         กระดาษตราจะไม่พิมพ์หัวเรื่องซ้ำและย่อตารางลงเพื่อไม่ให้ทับตรา ·
-        ค่าเลื่อนเก็บไว้ที่เครื่องนี้เครื่องเดียว เพราะแต่ละเครื่องพิมพ์
-        ป้อนกระดาษเหลื่อมกันคนละระยะ
+        รูปแบบใบ รบ. มีผลกับหลักสูตรรุ่นก่อน 67 เท่านั้น ตัวเลขบนใบเท่ากันทั้งสองแบบ
+        ต่างแค่ที่วางสรุปรายภาค · ค่าทั้งหมดเก็บไว้ที่เครื่องนี้เครื่องเดียว
+        เพราะแต่ละเครื่องพิมพ์ป้อนกระดาษเหลื่อมกันคนละระยะ
       </div>
     </div>
   );

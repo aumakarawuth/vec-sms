@@ -3172,6 +3172,53 @@ async function main() {
     return 'ปฏิเสธตัวเลือกที่ไม่เกี่ยว';
   });
 
+  await check('API-170 แบบ สอศ. ย้ายสรุปรายภาคไปเป็นตารางแนวนอนหน้า 2', async () => {
+    /*
+     * วัดจากไฟล์จริง — แบบ สอศ. ใช้ตัวเลขชุดเดียวกับแบบ 62 แต่วางเป็น
+     * **ตารางแนวนอนหนึ่งคอลัมน์ต่อหนึ่งภาค** แทนที่จะไหลอยู่ในตารางรายวิชา
+     * และใช้ถ้อยคำไทยของ 2.5 ต่างออกไปหนึ่งคำ (ดีพอใช้ ไม่ใช่ ค่อนข้างดี)
+     *
+     * ─── ทำไมเลือกได้ตอนพิมพ์ ต่างจากการเลือกตระกูล ───
+     * สองแบบนี้จัดกลุ่มรายวิชาเหมือนกันทุกประการ ตัวเลขบนใบเท่ากันหมด
+     * ต่างแค่การวางหน้า — เป็นเรื่องของหน่วยงานที่จะยื่นให้ ไม่ใช่ข้อเท็จจริง
+     * ของนักศึกษา ส่วนการเลือกตระกูล 67/62 ต้องมาจากรุ่นหลักสูตรใน payload
+     * เพราะจัดกลุ่มคนละแบบจริง ๆ
+     */
+    const [plain, sorsor] = await withEdition(2556, async () => {
+      const issued = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.studentRegrade, kind: 'transcript' }),
+      });
+      expect(issued.status < 400, `ออกใบไม่ได้ ${issued.status}`);
+      return [
+        String((await registrar(`/documents/${issued.body.id}/print`)).body),
+        String((await registrar(`/documents/${issued.body.id}/print?form=sorsor`)).body),
+      ];
+    });
+
+    /*
+     * ตรวจที่โครงสร้าง ไม่ใช่ที่คำ — คำว่า "สรุปผลการเรียน" อยู่ในคอมเมนต์
+     * ของ CSS ซึ่งติดไปกับทุกใบอยู่แล้ว เทสต์ที่ค้นคำจึงเขียวทั้งที่ผิด
+     */
+    expect(sorsor.includes('<div class="matrix">'), 'แบบ สอศ. ต้องมีตารางสรุปผลการเรียน');
+    expect(!plain.includes('<div class="matrix">'), 'แบบ 62 ต้องไม่มีตารางนั้น');
+    expect(sorsor.includes('ดีพอใช้') && !sorsor.includes('ค่อนข้างดี'),
+      'แบบ สอศ. ใช้ "ดีพอใช้" สำหรับ 2.5');
+    expect(plain.includes('ค่อนข้างดี') && !plain.includes('ดีพอใช้'),
+      'แบบ 62 ใช้ "ค่อนข้างดี" สำหรับ 2.5');
+
+    /*
+     * ตัวเลขชุดเดียวกันต้องไม่ถูกพิมพ์สองที่บนใบเดียว — คนอ่านจะสงสัยว่า
+     * ทำไมไม่เท่ากัน ทั้งที่เท่ากัน
+     */
+    const inlineCount = (sorsor.match(/หน่วยกิตที่ได้ในภาค/g) ?? []).length;
+    expect(inlineCount === 1, `แบบ สอศ. ต้องมีสรุปที่เดียว พบ ${inlineCount} ที่`);
+
+    const bad = await registrar(`/documents/${'0'.repeat(8)}-0000-0000-0000-000000000000/print?form=xx`);
+    expect(bad.status === 400, `รูปแบบที่ไม่รู้จักควรได้ 400 ได้ ${bad.status}`);
+    return 'ตารางแนวนอน · ถ้อยคำต่างกันหนึ่งคำ · ไม่พิมพ์ซ้ำสองที่';
+  });
+
   console.log('');
   console.log('══ เลขประจำตัวประชาชนบนใบ รบ. (0061) ══');
 
