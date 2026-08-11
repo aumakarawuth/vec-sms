@@ -2033,6 +2033,177 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ การลาของนักศึกษา (0054) ══');
+
+  let stuLeaveId = '';
+
+  /*
+   * วันที่ที่มีคาบเรียนจริงของนักศึกษาคนนี้ — ต้องมีคาบ มิฉะนั้น API-114
+   * จะผ่านโดยไม่ได้พิสูจน์อะไร (อนุมัติได้แต่ไม่มีอะไรให้ปรับ)
+   * ผลที่ตาราง attendance_record พิสูจน์ละเอียดที่ TEST 237–239 ฝั่ง DB
+   */
+  const meetingDays = await registrar(`/academic/sections/${F.section}/meetings`);
+  const LEAVE_DAY: string =
+    (meetingDays.body?.[0]?.meets_on ?? '2026-06-01').slice(0, 10);
+
+  await check('API-112 นักศึกษายื่นใบลาของตัวเองได้ แต่อนุมัติเองไม่ได้', async () => {
+    const r = await student('/leaves', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, kind: 'sick',
+        fromDate: LEAVE_DAY, toDate: LEAVE_DAY,
+        reason: 'เป็นไข้ มีใบรับรองแพทย์',
+      }),
+    });
+    expect(r.status < 400, `ยื่นใบลาไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    stuLeaveId = r.body.id;
+    expect(r.body.status === 'submitted', `สถานะเริ่มต้นควรเป็น submitted ได้ ${r.body.status}`);
+
+    // เส้นทางอนุมัติปิดไว้ที่ @Roles แล้ว และฐานข้อมูลปิดซ้ำอีกชั้น
+    const d = await student(`/leaves/${stuLeaveId}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision: 'approve' }),
+    });
+    expect(d.status === 403, `ควรได้ 403 ได้ ${d.status}`);
+    return 'ยื่นได้ · อนุมัติเองไม่ได้';
+  });
+
+  await check('API-113 ครูผู้สอนอนุมัติใบลาไม่ได้', async () => {
+    /*
+     * ครูเขียน attendance_record ของกลุ่มตัวเองได้อยู่แล้ว ข้อนี้จึงพิสูจน์ว่า
+     * "เขียนเวลาเรียนได้" ไม่เท่ากับ "อนุมัติใบลาได้" — ใบลาหนึ่งใบมีผลกับ
+     * ทุกวิชาที่นักศึกษาลงทะเบียน ไม่ใช่แค่วิชาของครูคนที่กด
+     */
+    const r = await teacher(`/leaves/${stuLeaveId}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision: 'approve' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-114 อนุมัติแล้วเวลาเรียนเปลี่ยนจริง', async () => {
+    /*
+     * ใบลาที่ไม่แตะเวลาเรียนคือใบลาที่ไม่มีประโยชน์ — กฎ 80% จะยังตัดสิทธิ์
+     * คนที่ลาป่วยโดยมีใบรับรองแพทย์อยู่ดี ข้อนี้จึงยืนยันผลที่ตารางจริง
+     * ไม่ใช่ยืนยันแค่ว่าสถานะใบเปลี่ยนเป็น approved
+     */
+    const r = await registrar(`/leaves/${stuLeaveId}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision: 'approve', note: 'มีใบรับรองแพทย์' }),
+    });
+    expect(r.status < 400, `อนุมัติไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.status === 'approved', `ควรเป็น approved ได้ ${r.body.status}`);
+    expect(r.body.applied_periods !== undefined && r.body.skipped_present !== undefined,
+      'ต้องรายงานทั้งจำนวนคาบที่ปรับได้และจำนวนที่ข้าม');
+
+    const list = await registrar('/leaves?status=approved');
+    const mine = list.body.find((x: any) => x.id === stuLeaveId);
+    expect(mine, 'ใบที่อนุมัติแล้วต้องอยู่ในรายการ');
+    expect(mine.decided_by_name, 'ต้องบอกได้ว่าใครอนุมัติ');
+    return `ปรับ ${r.body.applied_periods} คาบ · ข้าม ${r.body.skipped_present} คาบ`;
+  });
+
+  await check('API-115 อนุมัติซ้ำใบเดิมไม่ได้', async () => {
+    // ถ้าอนุมัติซ้ำได้ จะเขียน student_leave_applied รอบสองด้วยค่า "เดิม"
+    // ที่เป็นผลของรอบแรก แล้วการยกเลิกจะคืนค่ากลับเป็นสถานะลา ไม่ใช่ค่าจริง
+    const r = await registrar(`/leaves/${stuLeaveId}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision: 'reject' }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+  });
+
+  await check('API-116 ยกเลิกใบลาที่อนุมัติแล้วคืนค่าเวลาเรียน', async () => {
+    const r = await registrar(`/leaves/${stuLeaveId}/cancel`, {
+      method: 'POST', body: JSON.stringify({ reason: 'ยื่นผิดวัน' }),
+    });
+    expect(r.status < 400, `ยกเลิกไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.reverted !== undefined, 'ต้องรายงานจำนวนแถวที่คืนค่า');
+
+    const list = await registrar('/leaves');
+    const mine = list.body.find((x: any) => x.id === stuLeaveId);
+    expect(mine.status === 'cancelled', `ควรเป็น cancelled ได้ ${mine.status}`);
+    expect(Number(mine.applied_periods) === 0, 'ยกเลิกแล้วจำนวนคาบที่ปรับต้องเป็น 0');
+    return `คืนค่า ${r.body.reverted} แถว`;
+  });
+
+  await check('API-117 งานทะเบียนบันทึกใบลากระดาษแล้วอนุมัติเองได้', async () => {
+    /*
+     * เส้นทางที่ใช้บ่อยที่สุดจริง ๆ — นักศึกษาส่งใบลาเป็นกระดาษ เจ้าหน้าที่
+     * พิมพ์เข้าระบบแล้วอนุมัติ กฎเดิมเขียนว่า "ผู้ยื่นอนุมัติเองไม่ได้"
+     * ซึ่งไปกันเจ้าหน้าที่คนที่พิมพ์ ผลคือวิทยาลัยที่มีเจ้าหน้าที่ทะเบียน
+     * คนเดียวใช้ฟีเจอร์นี้ไม่ได้เลย — เจอตอนกดปุ่มจริงบนหน้าจอ ไม่ใช่ตอน
+     * เขียนเทสต์ เพราะเทสต์ข้ออื่นยื่นด้วยบัญชีนักศึกษาทุกข้อ
+     */
+    const mk = await registrar('/leaves', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, kind: 'personal',
+        fromDate: LEAVE_DAY, toDate: LEAVE_DAY, reason: 'ใบลากระดาษที่รับมาหน้าเคาน์เตอร์',
+      }),
+    });
+    expect(mk.status < 400, `บันทึกแทนไม่สำเร็จ ${mk.status} ${JSON.stringify(mk.body)}`);
+
+    const ok = await registrar(`/leaves/${mk.body.id}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision: 'approve' }),
+    });
+    expect(ok.status < 400,
+      `เจ้าหน้าที่ที่บันทึกใบต้องอนุมัติเองได้ ได้ ${ok.status} ${JSON.stringify(ok.body)}`);
+
+    const r = await registrar(`/leaves/${mk.body.id}/cancel`, {
+      method: 'POST', body: JSON.stringify({ reason: '   ' }),
+    });
+    expect(r.status >= 400, `ยกเลิกโดยไม่ระบุเหตุผลควรถูกปฏิเสธ ได้ ${r.status}`);
+    return 'บันทึก · อนุมัติเอง · และยกเลิกโดยไม่ระบุเหตุผลไม่ได้';
+  });
+
+  await check('API-118 นักศึกษายื่นใบลาให้คนอื่นไม่ได้', async () => {
+    /*
+     * นโยบาย leave_insert เทียบ student_id กับ actor_student_ids() ซึ่ง
+     * เป็นของตัวเองและบุตรหลานเท่านั้น — ถ้าช่องนี้เปิด นักศึกษาจะยื่นใบลา
+     * ให้เพื่อนแล้วรอเจ้าหน้าที่กดอนุมัติ ซึ่งเป็นการลบเวลาขาดเรียนของคนอื่น
+     */
+    const r = await student('/leaves', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.studentBulkOk, kind: 'sick',
+        fromDate: '2026-03-03', toDate: '2026-03-03', reason: 'ยื่นแทนเพื่อน',
+      }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+  });
+
+  await check('API-119 สรุปวันลารายคนตอบได้', async () => {
+    // คำถามที่ไม่มีใครตอบได้เลยก่อนมี 0054 เพราะการลาอยู่ในสถานะเช็คชื่อ
+    // รายคาบเท่านั้น ไม่มีที่ไหนบอกว่า "คนนี้ลาไปกี่วัน"
+    const r = await registrar(`/leaves/summary/${F.student}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(Array.isArray(r.body), 'ควรคืนอาร์เรย์');
+    return `${r.body.length} ประเภท`;
+  });
+
+  await check('API-120 ครูที่ปรึกษาเห็นเฉพาะใบลาของเด็กในที่ปรึกษาตัวเอง', async () => {
+    /*
+     * ต้องมีใบลาของคนที่**ไม่ใช่**เด็กในที่ปรึกษาอยู่จริงในระบบตอนตรวจ
+     * มิฉะนั้นข้อนี้จะผ่านเพราะไม่มีอะไรให้เห็น ไม่ใช่เพราะนโยบายกันไว้
+     * (F.studentRegrade ไม่ได้ถูกมอบหมายที่ปรึกษาใน API-108/110)
+     */
+    const other = await registrar('/leaves', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.studentRegrade, kind: 'sick',
+        fromDate: LEAVE_DAY, toDate: LEAVE_DAY, reason: 'ใบลาของนักศึกษาคนอื่น',
+      }),
+    });
+    expect(other.status < 400, `เตรียมข้อมูลไม่สำเร็จ ${other.status}`);
+
+    const r = await teacher('/leaves');
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.some((x: any) => x.student_id === F.student),
+      'ครูที่ปรึกษาต้องเห็นใบลาของเด็กในที่ปรึกษา');
+    expect(!r.body.some((x: any) => x.id === other.body.id),
+      'ต้องไม่เห็นใบลาของนักศึกษาที่ไม่ได้อยู่ในที่ปรึกษา');
+    return `${r.body.length} ใบ`;
+  });
+
+  console.log('');
   console.log('══ การตรวจสอบข้อมูลเข้า ══');
 
   await check('API-22 ข้อมูลผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {

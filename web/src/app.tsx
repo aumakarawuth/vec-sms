@@ -24,6 +24,7 @@ import { JobsScreen } from './screens/jobs';
 import { LoginScreen } from './screens/login';
 import { RegistrationScreen } from './screens/registration';
 import { RiskScreen } from './screens/risk';
+import { StudentLeaveScreen } from './screens/student-leave';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { TimetableScreen } from './screens/timetable';
 
@@ -81,6 +82,13 @@ const NAV: NavGroup[] = [
         path: '/risk',
         label: 'เฝ้าระวังและติดตาม',
         roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
+      },
+      {
+        path: '/leaves',
+        label: 'การลาของนักศึกษา',
+        // ครูที่ปรึกษาเห็นของเด็กในที่ปรึกษาตัวเอง แต่อนุมัติไม่ได้ —
+        // หน้าจอซ่อนปุ่มให้ ส่วนสิทธิ์จริงอยู่ที่ @Roles และ RLS
+        roles: ['teacher', 'student_affairs', 'registrar', 'director', 'admin'],
       },
     ],
   },
@@ -168,6 +176,7 @@ function Routes() {
   if (head === 'admissions') return <AdmissionsScreen />;
   if (head === 'academic-year') return <AcademicYearScreen />;
   if (head === 'finance') return <FinanceScreen />;
+  if (head === 'leaves') return <StudentLeaveScreen />;
 
   return (
     <div className="empty">

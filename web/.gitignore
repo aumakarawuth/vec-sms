@@ -1,2 +1,5 @@
 node_modules/
 dist/
+
+# ผลพลอยได้ของ `tsc -b` — เปลี่ยนทุกครั้งที่ build แล้วไปกวน diff
+tsconfig.tsbuildinfo

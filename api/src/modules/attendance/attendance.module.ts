@@ -16,6 +16,7 @@ import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { StudentLeaveController, StudentLeaveService } from './leave';
 
 const STATUSES = [
   'present', 'late', 'leave_sick', 'leave_personal', 'activity', 'absent',
@@ -285,8 +286,8 @@ class AttendanceController {
 }
 
 @Module({
-  controllers: [AttendanceController],
-  providers: [AttendanceService],
-  exports: [AttendanceService],
+  controllers: [AttendanceController, StudentLeaveController],
+  providers: [AttendanceService, StudentLeaveService],
+  exports: [AttendanceService, StudentLeaveService],
 })
 export class AttendanceModule {}
