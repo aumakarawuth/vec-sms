@@ -188,3 +188,39 @@ jobs:
       - name: ตรวจว่า build หน้าจอผู้ให้บริการได้
         working-directory: app
         run: flutter build web --release -t lib/main_platform.dart --output build/platform
+
+  # หน้าจอเจ้าหน้าที่ — คนละบันเดิลกับแอป Flutter และคนละเทคโนโลยี
+  # ถ้าไม่ตรวจแยก การแก้ชนิดข้อมูลฝั่ง API จะทำให้เว็บ build ไม่ผ่าน
+  # โดยไม่มีใครรู้จนถึงวัน deploy (เหตุผลเดียวกับ entrypoint ที่สองของ Flutter)
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: ติดตั้ง dependencies
+        working-directory: web
+        run: npm ci
+
+      # `npm run build` เรียก `tsc -b` ให้อยู่แล้ว จึงเป็นทั้งการตรวจชนิดข้อมูล
+      # และการยืนยันว่า bundle ออกมาได้จริง
+      - name: ตรวจชนิดข้อมูลและ build
+        working-directory: web
+        run: npm run build
+
+      - name: ตรวจว่า dependency ตอนรันยังมีแค่ react กับ react-dom
+        working-directory: web
+        run: |
+          # ชั้นนี้ตั้งใจให้พึ่งไลบรารีน้อยที่สุด (ดู CLAUDE.md) การเพิ่ม
+          # router/state library/UI kit เข้ามาต้องเป็นการตัดสินใจที่ตั้งใจ
+          # ไม่ใช่สิ่งที่ไหลเข้ามาเงียบ ๆ ผ่าน PR ที่ไม่มีใครดู package.json
+          deps=$(node -p "Object.keys(require('./package.json').dependencies).sort().join(',')")
+          if [ "$deps" != "react,react-dom" ]; then
+            echo "dependency ตอนรันเปลี่ยนไปเป็น: $deps"
+            echo "ถ้าตั้งใจเพิ่มจริง ให้แก้เงื่อนไขนี้พร้อมเขียนเหตุผลใน CLAUDE.md"
+            exit 1
+          fi

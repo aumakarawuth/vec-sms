@@ -250,9 +250,28 @@ class AvailabilityDto {
   @IsOptional() @IsUuid() termId?: string;
 }
 
+class CreateRoomDto {
+  @IsString() @MaxLength(40) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional()
+  @IsIn(['classroom', 'workshop', 'lab', 'computer', 'auditorium', 'outdoor'])
+  kind?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(500) capacity?: number;
+  @IsOptional() @IsString() @MaxLength(100) building?: string;
+}
+
 @Injectable()
 export class TimetableService {
   constructor(private readonly db: DbService) {}
+
+  async createRoom(dto: CreateRoomDto) {
+    return this.db.queryOne(
+      `insert into room (institution_id, code, name_th, kind, capacity, building)
+       values (current_institution_id(), $1, $2, coalesce($3, 'classroom')::room_kind, $4, $5)
+       returning id, code, name_th, kind, capacity, building`,
+      [dto.code, dto.nameTh, dto.kind ?? null, dto.capacity ?? null, dto.building ?? null],
+    );
+  }
 
   async rooms() {
     return this.db.query(
@@ -710,11 +729,291 @@ class TimetableController {
   conflicts(@Param('termId', ParseUuidPipe) termId: string) {
     return this.svc.conflicts(termId);
   }
+
+  /**
+   * บันทึกห้องเรียน
+   *
+   * ห้องเป็นตารางจริงตั้งแต่ 0034 ไม่ใช่ข้อความอิสระ — แต่ไม่เคยมีเส้นทางไหน
+   * สร้างห้องเลย วิทยาลัยที่เพิ่งเปิดจึงจัดตารางไม่ได้ เพราะไม่มีห้องให้เลือก
+   * และการเทียบห้องด้วยสตริงคือสิ่งที่ 0034 ตั้งใจเลิกไปแล้ว
+   */
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('room')
+  @Post('rooms')
+  createRoom(@Body() dto: CreateRoomDto) {
+    return this.svc.createRoom(dto);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * ปฏิทินการศึกษาและกลุ่มเรียน
+ *
+ * ─── ทำไมเพิ่งมามีตรงนี้ ───
+ * ทั้งระบบเคยไม่มีเส้นทางไหนคืน "รายการภาคเรียน" หรือ "รายการกลุ่มเรียน"
+ * เลยสักเส้น มีแต่เส้นทางที่**รับ** `termId`/`sectionId` เข้าไป และเส้นทางที่
+ * คืนกลุ่มเรียนของครูตัวเองใน `GET /staff/:id` เท่านั้น
+ *
+ * ตราบใดที่ยังเป็นแบบนั้น หน้าจอของงานทะเบียนสร้างไม่ได้เลย เพราะไม่มีทาง
+ * ให้เจ้าหน้าที่เลือกภาคเรียนหรือกลุ่มเรียนได้นอกจากพิมพ์ uuid เอง —
+ * เรื่องนี้มองไม่เห็นตลอดมาเพราะเทสต์ทุกชุดรู้ uuid ที่ต้องใช้อยู่แล้ว
+ * จาก seed และแอปนักศึกษารับค่ามาตอน build
+ *
+ * `POST /academic/sections` ปิดอีกช่องหนึ่ง — `insert into class_section`
+ * เคยมีอยู่ที่เดียวคือในไฟล์เทสต์ของฐานข้อมูล แปลว่าวิทยาลัยที่เปิดใหม่
+ * เปิดสอนวิชาแรกไม่ได้เลยถ้าไม่ยิง SQL ตรง
+ * ═══════════════════════════════════════════════════════════════════ */
+
+class CreateSectionDto {
+  @IsUuid() termId: string;
+  @IsUuid() courseId: string;
+  @IsString() @MaxLength(20) sectionNo: string;
+
+  @IsOptional() @IsUuid() teacherId?: string;
+  @IsOptional() @IsUuid() roomId?: string;
+  @IsOptional() @IsUuid() curriculumVersionId?: string;
+
+  @IsOptional() @IsInt() @Min(1) @Max(500) capacity?: number;
+  /**
+   * คาบที่วางแผนไว้ทั้งภาค — ตัวหารของกฎเวลาเรียน 80%
+   * ไม่ส่งมาจะคิดจากหน่วยกิต × 18 สัปดาห์ ซึ่งเป็นรูปแบบปกติของภาคเรียนปกติ
+   */
+  @IsOptional() @IsInt() @Min(1) @Max(1000) plannedPeriods?: number;
+
+  @IsOptional() @IsIn(['onsite', 'online', 'hybrid']) deliveryMode?: string;
+}
+
+@Injectable()
+export class CatalogService {
+  constructor(private readonly db: DbService) {}
+
+  /** ภาคเรียนทั้งหมดของวิทยาลัย — RLS กรองให้เองตามบริบทผู้ใช้ */
+  async terms() {
+    return this.db.query(
+      `select t.id, t.ordinal, t.kind, t.status,
+              t.starts_on, t.ends_on,
+              t.add_drop_ends_on, t.withdraw_ends_on, t.grade_due_on,
+              ay.year_be, ay.id as academic_year_id
+         from term t
+         join academic_year ay on ay.id = t.academic_year_id
+        order by ay.year_be desc, t.ordinal`,
+    );
+  }
+
+  /**
+   * กลุ่มเรียนของภาคเรียนหนึ่ง
+   *
+   * นับผู้ลงทะเบียนด้วย เพราะหน้าจอลงทะเบียนต้องรู้ว่าเต็มหรือยังก่อนกด
+   * ไม่ใช่รู้ตอนที่ฐานข้อมูลปฏิเสธ
+   */
+  async sections(termId: string, q?: string) {
+    return this.db.query(
+      `select cs.id, cs.section_no, cs.capacity, cs.planned_periods,
+              cs.delivery_mode, cs.is_locked,
+              co.id as course_id, co.code, co.name_th, co.credits,
+              cs.teacher_id,
+              coalesce(tp.first_name_th || ' ' || tp.last_name_th, '') as teacher_name,
+              r.name_th as room_name,
+              count(e.id) filter (where e.status = 'enrolled') as enrolled
+         from class_section cs
+         join course co on co.id = cs.course_id
+         left join staff  ts on ts.id = cs.teacher_id
+         left join person tp on tp.id = ts.person_id
+         left join room r on r.id = cs.room_id
+         left join enrollment e on e.class_section_id = cs.id
+        where cs.term_id = $1
+          and ($2::text is null
+               or co.code ilike '%' || $2 || '%'
+               or co.name_th ilike '%' || $2 || '%')
+        group by cs.id, co.id, tp.first_name_th, tp.last_name_th, r.name_th
+        order by co.code, cs.section_no`,
+      [termId, q ?? null],
+    );
+  }
+
+  /**
+   * คาบเรียนของกลุ่มเรียนหนึ่ง — หน้าเช็คชื่อต้องเลือกคาบก่อนเสมอ
+   *
+   * นับยอดที่บันทึกไปแล้วมาด้วย เพื่อให้ครูเห็นทันทีว่าคาบไหนยังไม่ได้เช็ค
+   * โดยไม่ต้องเปิดเข้าไปดูทีละคาบ
+   */
+  async meetings(sectionId: string) {
+    return this.db.query(
+      `select cm.id, cm.meets_on, cm.period_from, cm.period_to,
+              cm.period_count, cm.status, cm.note,
+              count(ar.id) as marked
+         from class_meeting cm
+         left join attendance_record ar on ar.class_meeting_id = cm.id
+        where cm.class_section_id = $1
+        group by cm.id
+        order by cm.meets_on, cm.period_from`,
+      [sectionId],
+    );
+  }
+
+  /** เรียก generate_class_meetings() ซึ่งเดิมไม่มีเส้นทางไหนเรียกเลย */
+  async generateMeetings(sectionId: string) {
+    const row = await this.db.queryOne<{ n: number }>(
+      `select generate_class_meetings($1) as n`,
+      [sectionId],
+    );
+    return { created: Number(row?.n ?? 0) };
+  }
+
+  /**
+   * เปิดกลุ่มเรียนใหม่
+   *
+   * ชั้นนี้ทำแค่เติมค่าที่คิดได้เองสองตัว แล้วปล่อยให้ฐานข้อมูลตรวจที่เหลือ
+   * ทั้งหมด — วิชาต้องอยู่ในวิทยาลัยเดียวกัน ครูต้องเป็นครูจริง ห้องต้องว่าง
+   * และเลขกลุ่มต้องไม่ซ้ำ ล้วนเป็น constraint ที่บังคับกับทุกทางที่เขียนเข้ามา
+   */
+  async createSection(dto: CreateSectionDto) {
+    return this.db.tx(async (c) => {
+      const policy = (
+        await c.query<{ id: string }>(
+          `select id from attendance_policy
+            order by effective_from_year_be desc limit 1`,
+        )
+      ).rows[0];
+
+      if (!policy) {
+        // เกิดกับวิทยาลัยที่เพิ่งเปิดและยังไม่ได้รัน db/deploy/reference-data.sql
+        throw new BadRequestException(
+          'ยังไม่ได้ตั้งนโยบายเวลาเรียนของสถานศึกษานี้ จึงเปิดกลุ่มเรียนไม่ได้ ' +
+            '(ดูขั้นตอนที่ 8 ใน DEPLOY-ONLINE.md)',
+        );
+      }
+
+      const course = (
+        await c.query<{ credits: string }>(`select credits from course where id = $1`, [
+          dto.courseId,
+        ])
+      ).rows[0];
+
+      if (!course) throw new BadRequestException('ไม่พบรายวิชานี้ หรือไม่มีสิทธิ์เข้าถึง');
+
+      /*
+       * ─── ทำไมต้องหาฉบับหลักสูตรให้ ───
+       * `compute_section_grades()` ปฏิเสธกลุ่มเรียนที่ไม่ได้ผูกฉบับหลักสูตร
+       * เพราะไม่รู้ว่าใช้ระเบียบวัดผลชุดไหน — แต่ข้อผิดพลาดนั้นโผล่ตอน
+       * **ตัดเกรดปลายภาค** ซึ่งห่างจากตอนเปิดกลุ่มเรียนหลายเดือน
+       * ปล่อยให้สร้างกลุ่มที่ตัดเกรดไม่ได้จึงเท่ากับซ่อนปัญหาไว้ทั้งภาคเรียน
+       *
+       * ถ้าไม่ได้ระบุมา และรายวิชานี้อยู่ในฉบับที่ใช้งานอยู่เพียงฉบับเดียว
+       * ให้ผูกฉบับนั้น — ไม่ใช่การเดา แต่เป็นกรณีที่มีคำตอบเดียว
+       * ถ้ามีหลายฉบับต้องเลือกเอง เพราะนั่นคือการตัดสินใจทางวิชาการจริง ๆ
+       */
+      let versionId = dto.curriculumVersionId ?? null;
+      if (!versionId) {
+        const versions = (
+          await c.query<{ curriculum_version_id: string }>(
+            `select distinct cc.curriculum_version_id
+               from curriculum_course cc
+               join curriculum_version cv on cv.id = cc.curriculum_version_id
+              where cc.course_id = $1 and cv.status = 'active'`,
+            [dto.courseId],
+          )
+        ).rows;
+
+        if (versions.length === 1) versionId = versions[0]!.curriculum_version_id;
+        else if (versions.length === 0) {
+          throw new BadRequestException(
+            'รายวิชานี้ยังไม่อยู่ในฉบับหลักสูตรที่ใช้งานอยู่ จึงเปิดกลุ่มเรียนไม่ได้ ' +
+              'เพราะจะตัดเกรดไม่ได้เมื่อถึงปลายภาค',
+          );
+        } else {
+          throw new BadRequestException(
+            `รายวิชานี้อยู่ในฉบับหลักสูตรที่ใช้งานอยู่ ${versions.length} ฉบับ ` +
+              'ต้องระบุ curriculumVersionId ว่าจะใช้ฉบับไหน',
+          );
+        }
+      }
+
+      // 18 สัปดาห์ต่อภาคเรียนปกติ — ตัวหารของกฎเวลาเรียน 80%
+      const planned = dto.plannedPeriods ?? Math.round(Number(course.credits) * 18);
+
+      const row = await c.query(
+        `insert into class_section
+           (institution_id, term_id, course_id, curriculum_version_id, section_no,
+            teacher_id, room_id, capacity, delivery_mode, attendance_policy_id, planned_periods)
+         values (current_institution_id(), $1, $2, $3, $4,
+                 $5, $6, coalesce($7, 40), coalesce($8, 'onsite')::delivery_mode, $9, $10)
+         -- คืนสามค่าที่ชั้นนี้เติมให้เอง เพื่อให้ผู้เรียกยืนยันได้ว่าได้ฉบับ
+         -- หลักสูตรและนโยบายเวลาเรียนตัวไหนไป โดยไม่ต้องอ่านซ้ำ
+         returning id, section_no, capacity, planned_periods, delivery_mode,
+                   curriculum_version_id, attendance_policy_id`,
+        [
+          dto.termId,
+          dto.courseId,
+          versionId,
+          dto.sectionNo,
+          dto.teacherId ?? null,
+          dto.roomId ?? null,
+          dto.capacity ?? null,
+          dto.deliveryMode ?? null,
+          policy.id,
+          planned,
+        ],
+      );
+
+      return row.rows[0];
+    });
+  }
+}
+
+/**
+ * อ่านได้ทุกบทบาทของเจ้าหน้าที่ เพราะทุกหน้าจอต้องเลือกภาคเรียนก่อนเสมอ
+ * ครูจะเห็นเฉพาะกลุ่มเรียนที่ตัวเองสอนตามนโยบาย RLS ซึ่งเป็นผลที่ต้องการ
+ */
+@Roles('registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin', 'teacher')
+@Controller('academic')
+class CatalogController {
+  constructor(private readonly svc: CatalogService) {}
+
+  @Get('terms')
+  terms() {
+    return this.svc.terms();
+  }
+
+  @Get('sections/:sectionId/meetings')
+  meetings(@Param('sectionId', ParseUuidPipe) sectionId: string) {
+    return this.svc.meetings(sectionId);
+  }
+
+  /**
+   * สร้างคาบเรียนจริงจากตารางสอนที่วางไว้
+   *
+   * `generate_class_meetings()` มีในฐานข้อมูลตั้งแต่ 0009 แต่ไม่มีเส้นทางไหน
+   * เรียกเลยสักเส้น — คาบเรียนจึงไม่เคยเกิดขึ้น และเมื่อไม่มีคาบก็เช็คชื่อ
+   * ไม่ได้ทั้งระบบ ทั้งที่ทั้งชั้นเช็คชื่อและกฎเวลาเรียน 80% พร้อมมานานแล้ว
+   * (รูปแบบเดียวกับ take_usage_snapshot ในข้อ 8 ของรายการที่เคยพังเงียบ ๆ)
+   *
+   * ฟังก์ชันจะปฏิเสธถ้ากลุ่มเรียนนี้มีคาบที่สอนไปแล้ว เพราะการสร้างใหม่
+   * แปลว่าลบของเดิมทิ้ง ซึ่งจะลบเวลาเรียนที่บันทึกไว้ไปด้วย
+   */
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('class_meeting')
+  @Post('sections/:sectionId/meetings')
+  generateMeetings(@Param('sectionId', ParseUuidPipe) sectionId: string) {
+    return this.svc.generateMeetings(sectionId);
+  }
+
+  @Get('sections')
+  sections(@Query('termId', ParseUuidPipe) termId: string, @Query('q') q?: string) {
+    return this.svc.sections(termId, q);
+  }
+
+  // เปิดกลุ่มเรียนเป็นงานวิชาการ ไม่ใช่งานของครูผู้สอน
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('class_section')
+  @Post('sections')
+  create(@Body() dto: CreateSectionDto) {
+    return this.svc.createSection(dto);
+  }
 }
 
 @Module({
-  controllers: [RegradeController, RolloverController, TimetableController],
-  providers: [RegradeService, RolloverService, TimetableService],
-  exports: [RegradeService, RolloverService, TimetableService],
+  controllers: [RegradeController, RolloverController, TimetableController, CatalogController],
+  providers: [RegradeService, RolloverService, TimetableService, CatalogService],
+  exports: [RegradeService, RolloverService, TimetableService, CatalogService],
 })
 export class AcademicModule {}

@@ -943,6 +943,16 @@ export class AuthService {
       tokenType: 'Bearer',
       expiresInSeconds: p.policy.access_token_minutes * 60,
       refreshExpiresAt: expiresAt.toISOString(),
+      /*
+       * คืนบทบาทมาด้วยทุกทางที่ออก token จริง
+       *
+       * เดิม `/auth/login` เติม role เองหลังเรียกตัวนี้ แต่ทางที่ออก token
+       * จาก `/auth/mfa/confirm` (ผูก authenticator ครั้งแรก) ไม่ได้เติม
+       * ผู้ดูแลที่เข้าระบบครั้งแรกจึงได้ token ที่ใช้งานได้ปกติ แต่หน้าจอ
+       * ไม่รู้บทบาทของตัวเอง — เมนูที่กรองตามบทบาทจึงว่างหรือแสดงผิด
+       * ทั้งที่ token ในมือถูกต้องทุกอย่าง
+       */
+      role: p.role,
     };
   }
 

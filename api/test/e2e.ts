@@ -1453,6 +1453,170 @@ async function main() {
   });
 
   console.log('');
+  console.log('══ ปฏิทินการศึกษาและกลุ่มเรียน ══');
+
+  /*
+   * ─── ทำไมชุดนี้เพิ่งมามี ───
+   * ทั้งระบบเคยไม่มีเส้นทางไหนคืน "รายการภาคเรียน" หรือ "รายการกลุ่มเรียน"
+   * เลยสักเส้น มีแต่เส้นทางที่**รับ** termId/sectionId เข้าไป — ซึ่งเทสต์
+   * ทุกชุดไม่เคยสะดุด เพราะรู้ uuid จาก seed อยู่แล้ว และแอปนักศึกษารับค่า
+   * มาตอน build ช่องนี้จึงมองไม่เห็นจนกว่าจะมีคนสร้างหน้าจอของเจ้าหน้าที่จริง
+   */
+
+  await check('API-85 รายการภาคเรียนต้องมีวันสำคัญครบ', async () => {
+    const r = await registrar('/academic/terms');
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(Array.isArray(r.body) && r.body.length >= 2, 'ควรเห็นอย่างน้อยสองภาคเรียน');
+
+    const t1 = r.body.find((t: any) => t.id === TERM1);
+    expect(t1, 'ไม่พบภาคเรียนที่ 1 ในรายการ');
+    expect(t1.year_be === 2569, `ปีการศึกษาควรเป็น 2569 ได้ ${t1.year_be}`);
+    // วันสำคัญสามค่านี้บังคับใช้จริง หน้าจอต้องใช้ตัดสินใจว่ายังเพิ่ม/ถอนทันไหม
+    expect(t1.add_drop_ends_on && t1.grade_due_on, 'ต้องคืนวันสิ้นสุดเพิ่ม/ถอนและกำหนดส่งเกรด');
+    return `${r.body.length} ภาคเรียน`;
+  });
+
+  await check('API-86 รายการกลุ่มเรียนต้องบอกจำนวนที่ลงแล้ว', async () => {
+    const r = await registrar(`/academic/sections?termId=${TERM1}`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.length > 0, 'ควรเห็นกลุ่มเรียนอย่างน้อยหนึ่งกลุ่ม');
+
+    const s = r.body[0];
+    // ต้องรู้ว่าเต็มหรือยัง**ก่อน**กดลงทะเบียน ไม่ใช่รู้ตอนที่ฐานข้อมูลปฏิเสธ
+    expect(s.code && s.name_th, 'ต้องคืนรหัสและชื่อวิชา');
+    expect(s.enrolled !== undefined && s.capacity !== undefined,
+      'ต้องคืนจำนวนที่ลงแล้วและความจุ');
+    return `${r.body.length} กลุ่มเรียน`;
+  });
+
+  let newSection = '';
+
+  await check('API-87 เปิดกลุ่มเรียนใหม่แล้วผูกฉบับหลักสูตรให้เอง', async () => {
+    /*
+     * `compute_section_grades()` ปฏิเสธกลุ่มเรียนที่ไม่ได้ผูกฉบับหลักสูตร
+     * แต่ข้อผิดพลาดนั้นโผล่ตอน**ตัดเกรดปลายภาค** ซึ่งห่างจากตอนเปิดกลุ่ม
+     * หลายเดือน การเปิดกลุ่มที่ตัดเกรดไม่ได้จึงเท่ากับซ่อนปัญหาไว้ทั้งภาค
+     */
+    const r = await registrar('/academic/sections', {
+      method: 'POST',
+      body: JSON.stringify({
+        termId: TERM2, courseId: COURSE, sectionNo: 'ทดสอบ-1', teacherId: F.staff,
+      }),
+    });
+    expect(r.status === 201 || r.status === 200, `ควรสร้างได้ ได้ ${r.status} ${JSON.stringify(r.body)}`);
+
+    expect(r.body.curriculum_version_id === CV,
+      'ต้องผูกฉบับหลักสูตรให้เองเมื่อรายวิชาอยู่ในฉบับที่ใช้งานอยู่ฉบับเดียว');
+    expect(r.body.attendance_policy_id === POLICY, 'ต้องผูกนโยบายเวลาเรียนให้เอง');
+    // 2 หน่วยกิต × 18 สัปดาห์ — ตัวหารของกฎเวลาเรียน 80%
+    expect(Number(r.body.planned_periods) === 36,
+      `คาบที่วางแผนควรเป็น 36 ได้ ${r.body.planned_periods}`);
+
+    // กลุ่มที่เพิ่งเปิดต้องโผล่ในรายการของภาคนั้นทันที
+    const list = await registrar(`/academic/sections?termId=${TERM2}`);
+    expect(list.body.some((s: any) => s.id === r.body.id), 'กลุ่มที่เพิ่งเปิดควรอยู่ในรายการ');
+
+    newSection = r.body.id;
+    return 'ผูกหลักสูตร นโยบายเวลาเรียน และคาบที่วางแผนให้ครบ';
+  });
+
+  await check('API-88 ครูเปิดกลุ่มเรียนเองไม่ได้', async () => {
+    const r = await teacher('/academic/sections', {
+      method: 'POST',
+      body: JSON.stringify({ termId: TERM2, courseId: COURSE, sectionNo: 'ครูเปิดเอง' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-89 สร้างคาบเรียนจากตารางสอนแล้วเช็คชื่อได้จริง', async () => {
+    /*
+     * `generate_class_meetings()` มีในฐานข้อมูลตั้งแต่ 0009 แต่ไม่เคยมี
+     * เส้นทางไหนเรียกเลย — คาบเรียนจึงไม่เคยเกิดขึ้น และเมื่อไม่มีคาบ
+     * ก็เช็คชื่อไม่ได้ทั้งระบบ ทั้งที่ชั้นเช็คชื่อและกฎเวลาเรียน 80%
+     * เขียนเสร็จมานานแล้ว (รูปเดียวกับ take_usage_snapshot ในข้อ 8)
+     */
+    expect(newSection, 'ต้องมีกลุ่มเรียนจาก API-87 ก่อน');
+
+    // ยังไม่วางตารางสอน = ไม่มีคาบให้สร้าง ซึ่งต้องไม่ล้ม แต่ต้องได้ศูนย์
+    const none = await registrar(`/academic/sections/${newSection}/meetings`, { method: 'POST' });
+    expect(none.status < 400, `ควรไม่ล้ม ได้ ${none.status}`);
+    expect(none.body.created === 0, `ยังไม่มีตารางสอนควรได้ 0 คาบ ได้ ${none.body.created}`);
+
+    const slot = await registrar('/timetable/slots', {
+      method: 'POST',
+      body: JSON.stringify({
+        // ศุกร์บ่าย คาบ 7–8 — เลี่ยงคาบพักกลางวัน (คาบ 5) เลี่ยงเสาร์อาทิตย์
+        // (timetable_policy จำกัด 5 วันเรียนต่อสัปดาห์) และเลี่ยงคาบที่เทสต์
+        // ก่อนหน้าวางให้ครูคนเดียวกันไปแล้ว
+        classSectionId: newSection, dayOfWeek: 5, periodFrom: 7, periodTo: 8,
+      }),
+    });
+    expect(slot.status < 400, `วางคาบไม่สำเร็จ: ${JSON.stringify(slot.body)}`);
+
+    const gen = await registrar(`/academic/sections/${newSection}/meetings`, { method: 'POST' });
+    expect(gen.status < 400, `ควรสร้างได้ ได้ ${gen.status} ${JSON.stringify(gen.body)}`);
+    expect(gen.body.created > 0, 'วางตารางสอนแล้วต้องสร้างคาบได้');
+
+    const after = await registrar(`/academic/sections/${newSection}/meetings`);
+    expect(after.body.length === gen.body.created,
+      `จำนวนคาบที่อ่านได้ควรเท่ากับที่สร้าง (${after.body.length} เทียบ ${gen.body.created})`);
+    expect(after.body[0].marked !== undefined, 'ต้องบอกว่าคาบนั้นเช็คชื่อไปกี่คนแล้ว');
+
+    return `สร้าง ${gen.body.created} คาบ`;
+  });
+
+  await check('API-91 สร้างห้องเรียนแล้วเอาไปวางคาบได้จริง', async () => {
+    /*
+     * ห้องเป็นตารางจริงตั้งแต่ 0034 (เลิกเทียบด้วยสตริง เพราะ "ห้อง 301"
+     * กับ "301" กลายเป็นคนละห้องแล้วมองไม่เห็นการชนที่เกิดจริง) แต่ไม่เคยมี
+     * เส้นทางสร้างห้องเลย — วิทยาลัยที่เพิ่งเปิดจึงจัดตารางไม่ได้
+     */
+    const code = `T${Date.now() % 100000}`;
+    const r = await registrar('/timetable/rooms', {
+      method: 'POST',
+      body: JSON.stringify({ code, nameTh: 'ห้องทดสอบ', kind: 'lab', capacity: 25, building: 'อาคารทดสอบ' }),
+    });
+    expect(r.status === 201 || r.status === 200, `ควรสร้างได้ ได้ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.kind === 'lab', `ประเภทห้องควรเป็น lab ได้ ${r.body.kind}`);
+
+    const list = await registrar('/timetable/rooms');
+    expect(list.body.some((x: any) => x.id === r.body.id), 'ห้องที่เพิ่งสร้างควรอยู่ในรายการ');
+
+    // ต้องใช้วางคาบได้จริง ไม่ใช่แค่มีแถวในตาราง
+    const place = await registrar('/timetable/check', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: newSection, dayOfWeek: 4, periodFrom: 7, periodTo: 8, roomId: r.body.id,
+      }),
+    });
+    expect(place.status === 200 || place.status === 201, `ตรวจคาบไม่สำเร็จ ได้ ${place.status}`);
+    expect(place.body.canPlace === true,
+      `ห้องใหม่ที่ยังไม่มีใครใช้ควรวางได้ ติด: ${JSON.stringify(place.body.conflicts)}`);
+
+    return `ห้อง ${code} · วางคาบได้จริง`;
+  });
+
+  await check('API-92 ครูสร้างห้องเรียนเองไม่ได้', async () => {
+    const r = await teacher('/timetable/rooms', {
+      method: 'POST',
+      body: JSON.stringify({ code: 'X-999', nameTh: 'ห้องที่ครูสร้างเอง' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-90 สร้างคาบใหม่ทับกลุ่มที่สอนไปแล้วไม่ได้', async () => {
+    /*
+     * การสร้างใหม่คือการลบคาบเดิมทิ้งทั้งหมด ซึ่งจะลบเวลาเรียนที่บันทึกไว้
+     * ไปด้วย — เท่ากับลบหลักฐานว่าใครมาเรียนกี่คาบ แล้วกฎ 80% จะคิดจาก
+     * ตัวหารชุดใหม่ที่ไม่ตรงกับที่นักศึกษาเคยเห็น
+     */
+    const r = await registrar(`/academic/sections/${F.section}/meetings`, { method: 'POST' });
+    expect(r.status === 422, `ควรได้ 422 ได้ ${r.status}`);
+    expect(String(r.body.message).includes('สอนไปแล้ว'), `ข้อความควรบอกเหตุผล ได้ ${r.body.message}`);
+    return String(r.body.message);
+  });
+
+  console.log('');
   console.log('══ งานรับสมัคร ══');
 
   let roundId = '';
@@ -1650,6 +1814,222 @@ async function main() {
   await check('API-84 ครูเปิดข้อมูลแพ็กเกจไม่ได้', async () => {
     const r = await teacher('/subscription');
     expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  console.log('');
+  console.log('══ ระเบียนนักศึกษาฉบับเต็ม (0053) ══');
+
+  await check('API-101 ระเบียนฉบับเต็มคืนครบทุกกลุ่มในคำขอเดียว', async () => {
+    /*
+     * หกกลุ่มข้อมูลอยู่คนละตาราง ถ้าให้หน้าจอยิงหกคำขอ ต้นทุนไม่ได้อยู่ที่
+     * การอ่านข้อมูลแต่อยู่ที่**การวางแผนคำสั่ง** ซึ่งกางนโยบาย RLS ใหม่ทุกครั้ง
+     */
+    const up = await registrar(`/students/${F.student}/profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        nicknameTh: 'ต้น', nationality: 'ไทย', siblingsCount: 3, birthOrder: 2,
+        parentsMarital: 'together', classNumber: 7, travelMode: 'motorcycle',
+      }),
+    });
+    expect(up.status < 400, `แก้ข้อมูลทั่วไปไม่สำเร็จ ${up.status} ${JSON.stringify(up.body)}`);
+
+    for (const body of [
+      { kind: 'registered', addressLine: '99/1 หมู่ 4', provinceTh: 'เชียงใหม่', postalCode: '50200' },
+      { kind: 'current', addressLine: '12 ซอย 3', provinceTh: 'เชียงใหม่' },
+    ]) {
+      const r = await registrar(`/students/${F.student}/addresses`, {
+        method: 'POST', body: JSON.stringify(body),
+      });
+      expect(r.status < 400, `บันทึกที่อยู่ไม่สำเร็จ ${r.status} ${JSON.stringify(r.body)}`);
+    }
+
+    const dad = await registrar(`/students/${F.student}/parents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        role: 'father', firstNameTh: 'สมชาย', lastNameTh: 'ใจดี',
+        nationalId: '1234567890123', occupationTh: 'รับจ้าง', incomeMonthly: 15000,
+      }),
+    });
+    expect(dad.status < 400, `บันทึกบิดาไม่สำเร็จ ${dad.status} ${JSON.stringify(dad.body)}`);
+
+    const sen = await registrar(`/students/${F.student}/sensitive`, {
+      method: 'POST',
+      body: JSON.stringify({ bloodType: 'O', drugAllergy: 'แพ้เพนิซิลลิน', religion: 'พุทธ' }),
+    });
+    expect(sen.status < 400, `บันทึกข้อมูลอ่อนไหวไม่สำเร็จ ${sen.status} ${JSON.stringify(sen.body)}`);
+
+    const pe = await registrar(`/students/${F.student}/prior-education`, {
+      method: 'POST',
+      body: JSON.stringify({ levelTh: 'ม.3', schoolTh: 'โรงเรียนทดสอบวิทยา', completedYearBe: 2568, gpax: 3.15 }),
+    });
+    expect(pe.status < 400, `บันทึกการศึกษาเดิมไม่สำเร็จ ${pe.status} ${JSON.stringify(pe.body)}`);
+
+    // ตรวจวุฒิเป็นการ**รับรอง** ไม่ใช่การกรอก จึงเป็นคนละเส้นทาง
+    const ver = await registrar(`/students/${F.student}/prior-education/${pe.body.id}/verify`, {
+      method: 'POST', body: '{}',
+    });
+    expect(ver.status < 400, `ตรวจวุฒิไม่สำเร็จ ${ver.status}`);
+    expect(ver.body.verified_at, 'ต้องคืนเวลาที่ตรวจวุฒิ');
+
+    const adv = await registrar(`/students/${F.student}/advisors`, {
+      method: 'POST', body: JSON.stringify({ staffId: F.staff, isPrimary: true }),
+    });
+    expect(adv.status < 400, `มอบหมายที่ปรึกษาไม่สำเร็จ ${adv.status} ${JSON.stringify(adv.body)}`);
+
+    const p = await registrar(`/students/${F.student}/profile`);
+    expect(p.status === 200, `ควรได้ 200 ได้ ${p.status}`);
+    expect(p.body.nickname_th === 'ต้น', 'ชื่อเล่นไม่ถูกบันทึก');
+    expect(p.body.class_number === 7, 'เลขที่ในห้องไม่ถูกบันทึก');
+    expect(p.body.addresses.length === 2, `ที่อยู่ควรมี 2 ได้ ${p.body.addresses.length}`);
+    expect(p.body.parents.length >= 1, 'ต้องเห็นข้อมูลบิดามารดา');
+    expect(p.body.priorEducation.length >= 1, 'ต้องเห็นประวัติการศึกษาเดิม');
+    expect(p.body.advisors.some((a: any) => !a.ended_on), 'ต้องมีที่ปรึกษาที่ยังไม่สิ้นสุด');
+    expect(p.body.sensitive?.blood_type === 'O', 'ต้องเห็นข้อมูลอ่อนไหว');
+    return 'ที่อยู่ บิดามารดา สุขภาพ การศึกษาเดิม ที่ปรึกษา ครบในคำขอเดียว';
+  });
+
+  await check('API-102 เลขบัตรประชาชนของบิดามารดาไม่โผล่กลับมา', async () => {
+    /*
+     * ฐานข้อมูลเก็บเฉพาะค่าแฮช หน้าจอจึงกรอกได้แต่อ่านกลับไม่ได้ — ถ้ามีวันไหน
+     * ที่คอลัมน์นี้หลุดออกมาทาง API แปลว่ามีคนเปลี่ยนเป็นเก็บเลขจริง
+     */
+    const p = await registrar(`/students/${F.student}/profile`);
+    const dad = p.body.parents.find((x: any) => x.role === 'father');
+    expect(dad, 'ไม่พบข้อมูลบิดาจาก API-101');
+    expect(dad.has_national_id === true, 'ควรบอกได้ว่ามีเลขบัตรเก็บไว้แล้ว');
+    expect(!('national_id_hash' in dad) && !('national_id' in dad),
+      'ต้องไม่คืนเลขบัตรหรือค่าแฮชออกมาเลย');
+
+    // แก้ช่องอื่นโดยไม่ส่งเลขบัตร ต้องไม่ล้างค่าเดิมทิ้ง
+    await registrar(`/students/${F.student}/parents`, {
+      method: 'POST',
+      body: JSON.stringify({ role: 'father', firstNameTh: 'สมชาย', occupationTh: 'ค้าขาย' }),
+    });
+    const after = await registrar(`/students/${F.student}/profile`);
+    const dad2 = after.body.parents.find((x: any) => x.role === 'father');
+    expect(dad2.has_national_id === true, 'การแก้ช่องอื่นไม่ควรล้างเลขบัตรที่เคยกรอกไว้');
+    return 'คืนแค่ว่ามีหรือไม่มี และไม่ถูกล้างตอนแก้ช่องอื่น';
+  });
+
+  await check('API-103 ครูที่ปรึกษาเห็นข้อมูลอ่อนไหวของเด็กในที่ปรึกษาตัวเอง', async () => {
+    const r = await teacher(`/students/${F.student}/profile`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.canSeeSensitive === true, 'ครูที่ปรึกษาควรมีสิทธิ์ดู');
+    expect(r.body.sensitive?.drug_allergy, 'ต้องเห็นประวัติแพ้ยาของเด็กในที่ปรึกษา');
+    return 'เห็นประวัติแพ้ยาได้ตามที่ออกแบบ';
+  });
+
+  await check('API-104 ครูที่ไม่ใช่ที่ปรึกษาเปิดระเบียนได้ แต่ข้อมูลอ่อนไหวเป็นว่าง', async () => {
+    /*
+     * จุดสำคัญคือ **ไม่ใช่ 403** — ครูผู้สอนต้องเปิดระเบียนดูเรื่องอื่นได้ตามปกติ
+     * ถ้าโยน 403 เมื่ออ่านข้อมูลอ่อนไหวไม่ได้ ทั้งหน้าจอจะพังทั้งที่มีสิทธิ์เกือบทุกส่วน
+     */
+    await registrar(`/students/${F.studentBulkOk}/sensitive`, {
+      method: 'POST', body: JSON.stringify({ bloodType: 'A', drugAllergy: 'ไม่มี' }),
+    });
+
+    const r = await teacher(`/students/${F.studentBulkOk}/profile`);
+    expect(r.status === 200, `ต้องเปิดระเบียนได้ ไม่ใช่ 403 — ได้ ${r.status}`);
+    expect(r.body.canSeeSensitive === false, 'ครูผู้สอนไม่ควรมีสิทธิ์ดูข้อมูลอ่อนไหว');
+    expect(r.body.sensitive === null, 'ข้อมูลอ่อนไหวต้องเป็น null');
+    expect(r.body.student_code, 'ยังต้องเห็นข้อมูลทั่วไปตามปกติ');
+    return 'เปิดได้ 200 · sensitive = null · การสอนอยู่ไม่ให้สิทธิ์เห็นประวัติแพ้ยา';
+  });
+
+  await check('API-105 ครูแก้ข้อมูลอ่อนไหวไม่ได้แม้เป็นที่ปรึกษา', async () => {
+    // ข้อมูลสุขภาพต้องมาจากเอกสารที่ผู้ปกครองกรอก ไม่ใช่จากความจำของครู
+    const r = await teacher(`/students/${F.student}/sensitive`, {
+      method: 'POST', body: JSON.stringify({ bloodType: 'AB' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-106 การเงินเห็นรายได้ผู้ปกครองแต่ไม่เห็นข้อมูลสุขภาพ', async () => {
+    /*
+     * ต้องใช้นักศึกษาที่ผู้เรียก**ไม่ได้เป็นที่ปรึกษา** เพราะ may_see_sensitive()
+     * ให้สิทธิ์ตามความสัมพันธ์ที่ปรึกษาโดยไม่สนบทบาทที่ล็อกอินเข้ามา —
+     * คนเดียวกันที่เป็นที่ปรึกษาอยู่ ต่อให้เข้าด้วยบทบาทการเงินก็ยังเห็นของเด็กตัวเอง
+     */
+    await registrar(`/students/${F.studentBulkOk}/parents`, {
+      method: 'POST', body: JSON.stringify({ role: 'mother', firstNameTh: 'ทดสอบ', incomeMonthly: 9000 }),
+    });
+
+    const r = await finance(`/students/${F.studentBulkOk}/profile`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.parents.length >= 1, 'การเงินต้องเห็นรายได้ผู้ปกครองเพื่อพิจารณาทุนและ กยศ.');
+    expect(r.body.sensitive === null && r.body.canSeeSensitive === false,
+      'การเงินไม่ควรเห็นข้อมูลสุขภาพ');
+    return 'เห็นรายได้ ไม่เห็นสุขภาพ';
+  });
+
+  await check('API-107 นักศึกษาอ่านระเบียนตัวเองได้ แต่แก้ไม่ได้', async () => {
+    const r = await student(`/students/${F.student}/profile`);
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}`);
+    expect(r.body.sensitive, 'เจ้าตัวควรเห็นข้อมูลของตัวเอง');
+
+    const w = await student(`/students/${F.student}/profile`, {
+      method: 'PATCH', body: JSON.stringify({ nicknameTh: 'แก้เอง' }),
+    });
+    expect(w.status === 403, `ควรได้ 403 ได้ ${w.status}`);
+
+    const w2 = await student(`/students/${F.student}/sensitive`, {
+      method: 'POST', body: JSON.stringify({ bloodType: 'AB' }),
+    });
+    expect(w2.status === 403, `แก้ข้อมูลสุขภาพของตัวเองควรได้ 403 ได้ ${w2.status}`);
+    return 'อ่านได้ · แก้ไม่ได้ทั้งข้อมูลทั่วไปและข้อมูลสุขภาพ';
+  });
+
+  await check('API-108 มอบหมายที่ปรึกษาคนใหม่ต้องปิดคนเดิม ไม่ใช่ชนดัชนี', async () => {
+    /*
+     * `student_advisor_primary` เป็น unique บางส่วนของที่ปรึกษาหลักที่ยัง
+     * ไม่สิ้นสุด ถ้าชั้น API ไม่ปิดของเดิมให้ การเปลี่ยนที่ปรึกษาจะล้มด้วย
+     * ข้อความจากดัชนีที่ผู้ใช้อ่านไม่รู้เรื่อง
+     */
+    const again = await registrar(`/students/${F.student}/advisors`, {
+      method: 'POST', body: JSON.stringify({ staffId: F.staff, isPrimary: true }),
+    });
+    expect(again.status < 400, `มอบหมายซ้ำควรสำเร็จ ได้ ${again.status} ${JSON.stringify(again.body)}`);
+
+    const p = await registrar(`/students/${F.student}/profile`);
+    const live = p.body.advisors.filter((a: any) => !a.ended_on);
+    expect(live.length === 1, `ที่ปรึกษาที่ยังไม่สิ้นสุดควรเหลือคนเดียว ได้ ${live.length}`);
+    expect(p.body.advisors.some((a: any) => a.ended_on),
+      'คนเดิมต้องถูกปิดด้วย ended_on ไม่ใช่ลบทิ้ง — ต้องรู้ย้อนหลังว่าใครดูแลอยู่ตอนเกิดเรื่อง');
+    return `ประวัติ ${p.body.advisors.length} รายการ · ยังดูแลอยู่ 1 คน`;
+  });
+
+  await check('API-109 รายชื่อเด็กในที่ปรึกษาคืนเฉพาะของผู้เรียก', async () => {
+    const r = await teacher('/students/advisees');
+    // 400 ที่นี่แปลว่าเส้นทางถูก @Get(':id') จับกินไปแล้ว — ParseUuidPipe
+    // จะปฏิเสธคำว่า 'advisees' ด้วยข้อความที่อธิบายอะไรไม่ได้เลย
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status} — 400 แปลว่าถูก :id จับกิน`);
+    expect(Array.isArray(r.body), 'ควรคืนอาร์เรย์');
+    expect(r.body.some((s: any) => s.id === F.student), 'ต้องเห็นเด็กในที่ปรึกษาตัวเอง');
+    expect(!r.body.some((s: any) => s.id === F.studentBulkOk),
+      'ต้องไม่เห็นนักศึกษาที่ไม่ได้อยู่ในที่ปรึกษา');
+    return `${r.body.length} คน`;
+  });
+
+  await check('API-110 มอบหมายที่ปรึกษาเป็นกลุ่มคืนผลรายคน', async () => {
+    // หลักเดียวกับ register_courses_bulk — คนหนึ่งล้มต้องไม่ทำให้ทั้งห้องล้ม
+    const r = await registrar('/advisors/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        staffId: F.staff,
+        studentIds: [F.studentBulkOk, F.studentBulkHeld, '00000000-0000-0000-0000-000000000000'],
+      }),
+    });
+    expect(r.status < 400, `ควรสำเร็จ ได้ ${r.status} ${JSON.stringify(r.body)}`);
+    expect(r.body.total === 3, `ควรรายงานครบ 3 คน ได้ ${r.body.total}`);
+    expect(r.body.ok === 2, `สองคนที่มีจริงควรผ่าน ได้ ${r.body.ok}`);
+    expect(r.body.results.some((x: any) => !x.ok),
+      'คนที่ไม่มีตัวตนต้องรายงานว่าล้ม ไม่ใช่ทำให้ทั้งชุดล้ม');
+    return `${r.body.ok}/${r.body.total} สำเร็จ`;
+  });
+
+  await check('API-111 วิทยาลัยอื่นเปิดระเบียนของเราไม่ได้', async () => {
+    const r = await other(`/students/${F.student}/profile`);
+    expect(r.status === 404, `ควรได้ 404 ได้ ${r.status}`);
   });
 
   console.log('');

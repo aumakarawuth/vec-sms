@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { DbService } from '../../common/db/db.service';
 import { ParseUuidPipe } from '../../common/validation/uuid';
+import { PROFILE_CONTROLLERS, StudentProfileService } from './profile';
 
 @Injectable()
 export class StudentsService {
@@ -248,9 +249,16 @@ class StudentsController {
   }
 }
 
+/**
+ * StudentProfileController ต้องมาก่อน StudentsController ในรายการนี้
+ *
+ * Nest จับคู่เส้นทางตามลำดับที่ลงทะเบียน และ StudentsController มี
+ * `@Get(':id')` ซึ่งจะกิน `/students/advisees` ไปก่อนถ้ามันมาก่อน
+ * ผลคือ 400 จาก ParseUuidPipe ที่อธิบายอะไรไม่ได้เลย
+ */
 @Module({
-  controllers: [StudentsController],
-  providers: [StudentsService],
-  exports: [StudentsService],
+  controllers: [...PROFILE_CONTROLLERS, StudentsController],
+  providers: [StudentsService, StudentProfileService],
+  exports: [StudentsService, StudentProfileService],
 })
 export class StudentsModule {}

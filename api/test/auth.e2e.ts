@@ -769,7 +769,18 @@ async function main() {
     expect(usable.status === 200 && (usable.body as any).confirmed === true,
       `token ที่ได้ต้องใช้งานได้จริง ได้ ${usable.status}`);
 
-    return `ตั้งค่าครบด้วย challenge token · รหัสกู้คืน ${recoveryCodes.length} ใบ · ได้ token จริงทันที`;
+    /*
+     * ต้องคืน `role` มาด้วย เหมือนกับที่ /auth/login คืน
+     *
+     * เดิม `issueTokens()` ไม่ได้คืนบทบาท มีแต่ /auth/login ที่เติมเองทีหลัง
+     * ทางนี้จึงคืน token ที่ใช้งานได้ทุกเส้นทางแต่ไม่บอกว่าเป็นบทบาทอะไร
+     * ผลคือหน้าจอที่กรองเมนูตามบทบาทแสดงเมนูว่างให้ผู้ดูแลที่เพิ่งตั้ง MFA
+     * เสร็จ — บั๊กที่ยิง API อย่างเดียวไม่มีวันเห็น เพราะทุกคำขอยังผ่านหมด
+     */
+    expect((c.body as any).role === 'admin',
+      `ต้องคืนบทบาทมาด้วยเหมือน /auth/login ได้ ${JSON.stringify((c.body as any).role)}`);
+
+    return `ตั้งค่าครบด้วย challenge token · รหัสกู้คืน ${recoveryCodes.length} ใบ · ได้ token จริงพร้อมบทบาททันที`;
   });
 
   await check('AUTH-27 ล็อกอินแล้วยืนยันด้วยรหัสจากแอป ได้ token จริง', async () => {
