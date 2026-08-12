@@ -30,6 +30,7 @@ import { HrModule } from './modules/hr/hr.module';
 import { ProvisioningModule } from './modules/provisioning/provisioning.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
+import { GovernmentExportsModule } from './modules/government-exports/government-exports.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { SubscriptionModule } from './modules/subscription/subscription.module';
     ProvisioningModule,
     PlatformModule,
     SubscriptionModule,
+    GovernmentExportsModule,
     JobsModule,
   ],
   providers: [

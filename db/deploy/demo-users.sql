@@ -132,15 +132,25 @@ select s.staff_id, s.role, current_date, 'บัญชีตัวอย่า�
   from _staff s;
 
 /*
- * ─── ครูและนักศึกษาใช้คนที่ seed สร้างไว้แล้ว ไม่สร้างคนใหม่ ───
- * สองคนนี้มีข้อมูลจริงห้อยอยู่ (กลุ่มเรียน · เกรด · ค่าเทอม) การสร้างคนใหม่
- * จะได้บัญชีที่เข้าไปแล้วหน้าจอว่างเปล่า ซึ่งใช้ทดสอบอะไรไม่ได้
+ * ─── ครู · นักศึกษา · ผู้ปกครอง ผูกกับคนที่ demo-data.sql สร้าง ───
+ * สามคนนี้ต้องมีข้อมูลจริงห้อยอยู่ (กลุ่มเรียน · เกรด · ค่าเทอม) มิฉะนั้น
+ * จะได้บัญชีที่เข้าไปแล้วหน้าจอว่างเปล่า ซึ่งใช้ดูอะไรไม่ได้
+ *
+ * ─── ข้ามไปเงียบ ๆ ถ้ายังไม่ได้รัน demo-data.sql ───
+ * `db/seed/` มีแต่ข้อมูลอ้างอิง (ภาคเรียน · รายวิชา · นโยบาย · ค่าธรรมเนียม)
+ * **ไม่มีคนเลยสักคน** — ตอนแรกไฟล์นี้ชี้ไปที่ person ของ fixture เทสต์
+ * ซึ่งบังเอิญมีอยู่ในฐานที่กำลังใช้ แต่ไม่มีในฐานที่สร้างใหม่ พอ
+ * `prepare-db.sh` ล้างฐานจึงล้มด้วย foreign key ทันที
+ *
+ * ตอนนี้ได้หกบัญชีที่เป็นบุคลากรไปก่อน แล้วอีกสามบัญชีจะมาเมื่อรัน
+ * demo-data.sql — ดีกว่าล้มทั้งไฟล์
  */
 create temporary table _existing on commit drop as
-select * from (values
-  ('10000000-0000-0000-0000-000000000002'::uuid, 'teacher.demo'),
-  ('10000000-0000-0000-0000-000000000001'::uuid, 'student.demo')
-) as v(person_id, username);
+select v.person_id, v.username from (values
+  ('e0000000-0000-0000-0000-000000000001'::uuid, 'teacher.demo'),
+  ('f0000000-0000-0000-0000-000000000001'::uuid, 'student.demo')
+) as v(person_id, username)
+ where exists (select 1 from person p where p.id = v.person_id);
 
 /*
  * ─── ผู้ปกครอง ───
@@ -158,8 +168,10 @@ on conflict (id) do update
 
 insert into student_guardian
   (student_id, person_id, relation, is_primary, can_approve_leave, verified_at)
-values ('10000000-0000-0000-0000-000000000011',
-        '20000000-0000-0000-0000-000000000009', 'mother', true, true, now())
+select 'f1000000-0000-0000-0000-000000000001'::uuid,
+       '20000000-0000-0000-0000-000000000009'::uuid, 'mother', true, true, now()
+ where exists (select 1 from student s
+                where s.id = 'f1000000-0000-0000-0000-000000000001'::uuid)
 on conflict (student_id, person_id) do update
   set verified_at = now(), is_primary = true, can_approve_leave = true;
 
@@ -180,7 +192,9 @@ select d.institution_id, x.person_id, x.username, d.password_hash, false
         union all
         select person_id, username from _existing
         union all
-        select '20000000-0000-0000-0000-000000000009'::uuid, 'guardian.demo') as x
+        select '20000000-0000-0000-0000-000000000009'::uuid, 'guardian.demo'
+         where exists (select 1 from student_guardian sg
+                        where sg.person_id = '20000000-0000-0000-0000-000000000009'::uuid)) as x
 on conflict (institution_id, username) do update
   set person_id           = excluded.person_id,
       password_hash       = excluded.password_hash,

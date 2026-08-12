@@ -20,6 +20,7 @@ import { DualScreen } from './screens/dual';
 import { FinanceScreen } from './screens/finance';
 import { GradebookScreen } from './screens/gradebook';
 import { GraduationScreen } from './screens/graduation';
+import { GovernmentExportsScreen } from './screens/government-exports';
 import { HrScreen } from './screens/hr';
 import { ImportScreen } from './screens/import';
 import { JobsScreen } from './screens/jobs';
@@ -55,6 +56,7 @@ const NAV: NavGroup[] = [
       { path: '/graduation', label: 'สำเร็จการศึกษา', roles: OFFICE },
       { path: '/admissions', label: 'งานรับสมัคร', roles: OFFICE },
       { path: '/import', label: 'นำเข้าข้อมูล', roles: OFFICE },
+      { path: '/government-exports', label: 'ส่งออกข้อมูลหน่วยงานรัฐ', roles: OFFICE },
     ],
   },
   {
@@ -189,6 +191,7 @@ function Routes() {
   if (head === 'graduation') return <GraduationScreen />;
   if (head === 'curriculum') return <CurriculumScreen />;
   if (head === 'import') return <ImportScreen />;
+  if (head === 'government-exports') return <GovernmentExportsScreen />;
   if (head === 'jobs') return <JobsScreen />;
   if (head === 'hr') return <HrScreen />;
   if (head === 'timetable') return <TimetableScreen />;
