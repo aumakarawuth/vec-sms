@@ -273,6 +273,25 @@ insert into student_curriculum (student_id, curriculum_version_id)
 select s.student_id::uuid, r.cv67 from _stu s, _ref r
 on conflict do nothing;
 
+/*
+ * ── ชั้นปีและห้องประจำ ──
+ *
+ * ไฟล์นี้พูดถึง "ปวช.1 ช่างยนต์ หนึ่งห้อง" มาตั้งแต่หัวข้อ แต่ห้องนั้นเคยมี
+ * อยู่ในคอมเมนต์เท่านั้น — `student_class_placement` ไม่มีแถวเดียวเลยทั้งใน
+ * seed และไฟล์นี้ ผลคือหน้าลงทะเบียนที่เริ่มจากรายการห้องเปิดมาว่างเปล่า
+ * ทั้งที่ข้อมูลอื่นครบหมด ซึ่งดูเหมือน "ยังทำไม่เสร็จ" ทั้งที่เสร็จแล้ว
+ *
+ * รหัสห้องตรงกับ `class_section.section_no` ('1/1') โดยตั้งใจ เพื่อให้เห็น
+ * การจับคู่กลุ่มเรียนให้อัตโนมัติทำงานจริงตอนกดดู — สองค่านี้เป็นห้องประจำ
+ * กับห้องของรายวิชาซึ่งคนละเรื่องกัน การจับคู่จึงเทียบตรงตัวอักษรเท่านั้น
+ */
+insert into student_class_placement
+  (institution_id, student_id, academic_year_id, study_year, group_code)
+select r.inst, s.student_id::uuid, r.year_2569, 1, '1/1'
+  from _stu s, _ref r
+on conflict (student_id, academic_year_id) do update
+  set study_year = excluded.study_year, group_code = excluded.group_code;
+
 -- ── ที่อยู่ ────────────────────────────────────────────────────────
 insert into person_address
   (institution_id, person_id, kind, address_line, subdistrict_th, district_th, province_th, postal_code)

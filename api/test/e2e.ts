@@ -23,6 +23,8 @@ const TERM1 = '33333333-3333-3333-3333-333333333331';
 const TERM2 = '33333333-3333-3333-3333-333333333332';
 const AY    = '22222222-2222-2222-2222-222222222222';
 const CV = '77777777-7777-7777-7777-777777777767';
+/** ฉบับ 2562 — มีอยู่ใน seed แต่ไม่มีรายวิชาผูกไว้ ใช้ทดสอบห้องที่คละหลักสูตร */
+const CV_OLD = '77777777-7777-7777-7777-777777777762';
 const COURSE = '99999999-0000-0000-0000-000000000001';
 const POLICY = '55555555-5555-5555-5555-555555555555';
 
@@ -44,6 +46,18 @@ const F = {
   // คนนี้มีผลการเรียนที่ยังไม่ได้หน่วยกิต ใช้ทดสอบรอบสอบซ่อมโดยเฉพาะ
   personRegrade: '10000000-0000-0000-0000-0000000000c1',
   studentRegrade: '10000000-0000-0000-0000-0000000000c2',
+  // คนนี้อยู่ในห้องแต่ยังไม่ได้ผูกหลักสูตร — ทำให้ "วิชานี้ของทั้งห้องไหม" เป็นเท็จ
+  personNoPlan: '10000000-0000-0000-0000-0000000000d1',
+  studentNoPlan: '10000000-0000-0000-0000-0000000000d2',
+  // คนนี้อยู่ในห้องและยังไม่มีรายวิชาเลย — เป็นตัวพิสูจน์ว่าการกดลงทั้งห้อง
+  // ทำให้ตัวเลข "ยังไม่ลง" ลดลงจริง ไม่ใช่แค่คืน 200 กลับมา
+  personRoomFresh: '10000000-0000-0000-0000-0000000000d3',
+  studentRoomFresh: '10000000-0000-0000-0000-0000000000d4',
+  // คนนี้อยู่ห้องเดียวกันแต่สังกัดหลักสูตร**คนละฉบับ** — ห้องที่คละหลักสูตร
+  // มีจริง (ตกซ้ำชั้น · ย้ายหลักสูตร) และเป็นเหตุผลทั้งหมดที่ต้องรายงาน
+  // ความครอบคลุมของแต่ละวิชา แทนที่จะติ๊กให้ทั้งห้องแล้วจบ
+  personOtherPlan: '10000000-0000-0000-0000-0000000000d5',
+  studentOtherPlan: '10000000-0000-0000-0000-0000000000d6',
   // ห้องเป็นข้อมูลจริงตั้งแต่ 0034 ไม่ใช่ข้อความอิสระ
   room: '30000000-0000-0000-0000-0000000000e1',
   roomLecture: '30000000-0000-0000-0000-0000000000e2',
@@ -142,6 +156,44 @@ async function seedFixtures() {
     [F.studentBulkHeld, F.personTeacher],
   );
 
+  // ── ห้องประจำ ตัวตั้งของการลงทะเบียนเป็นห้อง ─────────────────────
+  //
+  // `student_class_placement` ไม่มีแถวเดียวเลยทั้งใน seed และ fixture มาก่อน
+  // ทั้งที่มีตารางมาตั้งแต่ 0031 — เส้นทางที่เริ่มจากห้องจึงไม่มีทางถูกเดิน
+  // ถ้าไม่จัดห้องให้ก่อน (รูปเดียวกับ take_usage_snapshot ที่ไม่มีใครเรียก)
+  //
+  // คนที่ยังไม่ได้ผูกหลักสูตรมีจริงในวิทยาลัย (เพิ่งมอบตัว งานทะเบียนยังไม่ผูก)
+  // และเป็นตัวที่ทำให้ "วิชานี้อยู่ในแผนของทั้งห้องไหม" ตอบว่าไม่ — ซึ่งเป็น
+  // สิ่งที่ต้องเห็นก่อนกดลงทั้งห้อง
+  await admin.query(
+    `insert into person (id, institution_id, first_name_th, last_name_th) values
+       ($1, $4, 'ปาริชาต', 'ยังไม่ผูกหลักสูตร'),
+       ($2, $4, 'ฐิติมา',  'เพิ่งเข้าห้อง'),
+       ($3, $4, 'อัมพร',   'หลักสูตรฉบับเก่า')
+     on conflict (id) do nothing`,
+    [F.personNoPlan, F.personRoomFresh, F.personOtherPlan, INST],
+  );
+  await admin.query(
+    `insert into student (id, institution_id, person_id, student_code, admitted_year_be) values
+       ($1, $4, $5, '69201010780', 2569),
+       ($2, $4, $6, '69201010781', 2569),
+       ($3, $4, $7, '69201010782', 2569)
+     on conflict (id) do nothing`,
+    [
+      F.studentNoPlan, F.studentRoomFresh, F.studentOtherPlan, INST,
+      F.personNoPlan, F.personRoomFresh, F.personOtherPlan,
+    ],
+  );
+  await admin.query(
+    `insert into student_curriculum (student_id, curriculum_version_id) values
+       ($1, $3),
+       -- ฉบับ 2562 ของ seed ไม่มีรายวิชาผูกไว้เลย คนนี้จึงไม่มีวิชาไหนในแผน
+       -- ของภาคนี้ — ผลคือทุกวิชาของห้องกลายเป็น "ไม่ใช่ของทั้งห้อง" ซึ่งตรงกับ
+       -- ห้องคละหลักสูตรจริง ๆ ที่ต้องเลือกเองก่อนกด
+       ($2, $4)
+     on conflict do nothing`,
+    [F.studentRoomFresh, F.studentOtherPlan, CV, CV_OLD],
+  );
   await admin.query(
     `insert into room (id, institution_id, code, name_th, kind, capacity) values
        ($1, $3, 'W-03', 'โรงฝึกงานช่างยนต์ 3', 'workshop', 30),
@@ -211,6 +263,28 @@ async function seedFixtures() {
      values ($1, $2) on conflict do nothing`,
     [F.studentRegrade, CV],
   );
+
+  // จัดห้องประจำ — ต้องมาหลังนักศึกษาทุกคนถูกสร้างแล้ว มิฉะนั้นล้มที่คีย์นอก
+  await admin.query(
+    `insert into student_class_placement
+       (institution_id, student_id, academic_year_id, study_year, group_code) values
+       ($2, $3, $1, 1, '9/1'),
+       ($2, $4, $1, 1, '9/1'),
+       ($2, $5, $1, 1, '9/1'),
+       ($2, $6, $1, 1, '9/1'),
+       ($2, $7, $1, 1, '9/1'),
+       ($2, $8, $1, 1, '9/1'),
+       -- คนนี้ถูกเลื่อนชั้นมาแต่ยังไม่ถูกจัดห้อง (rollover_students ตั้ง null)
+       -- ซึ่งเป็นกองที่ต้องมองเห็น ไม่ใช่ถูกกรองทิ้งจากรายการห้อง
+       ($2, $9, $1, 1, null)
+     on conflict (student_id, academic_year_id) do update
+       set study_year = excluded.study_year, group_code = excluded.group_code`,
+    [
+      AY, INST, F.student, F.studentBulkOk, F.studentBulkHeld,
+      F.studentNoPlan, F.studentRoomFresh, F.studentOtherPlan, F.studentRegrade,
+    ],
+  );
+
   // ห้องแยกต่างหาก — ถ้าใส่คนนี้ลงห้องเดียวกับ F.section เทสต์การเช็คชื่อ
   // และเวลาเรียนที่นับจำนวนคนในห้องจะเพี้ยนไปด้วย
   await admin.query(
@@ -726,6 +800,242 @@ async function main() {
   await check('API-34 termId ผิดรูปแบบถูกปฏิเสธก่อนถึงฐานข้อมูล', async () => {
     const r = await registrar('/registration/progress?termId=1%20or%201%3D1');
     expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  console.log('');
+  console.log('══ ลงทะเบียนเป็นห้อง — เส้นทางที่หน้าจอเดินจริง ══');
+
+  /*
+   * ชุดนี้เดินทั้งเส้นทางตั้งแต่ "เปิดหน้าจอมาเห็นอะไร" ถึง "กดแล้วตัวเลขขยับ"
+   *
+   * เทสต์เดิมของการลงทะเบียนเป็นกลุ่ม (API-24 ถึง 30) ส่ง `studentIds` ที่
+   * เขียนไว้ในไฟล์เทสต์เอง ซึ่งพิสูจน์ว่าฟังก์ชันทำงานถูก แต่ไม่เคยตอบว่า
+   * **เจ้าหน้าที่จะได้รายชื่อนั้นมาจากไหน** — คำตอบเดิมคือ "จากรายชื่อสองร้อย
+   * คนแรกของทั้งวิทยาลัย" ซึ่งใช้กับวิทยาลัยพันคนไม่ได้ และไม่มีเทสต์ไหน
+   * เดินทางนั้นเลยเพราะทางนั้นเดินไม่ได้ตั้งแต่แรก (รูปเดียวกับ AUTH-26)
+   */
+  let roomPendingBefore = -1;
+
+  await check('API-180 รายการห้องบอกจำนวนคนและความคืบหน้าได้', async () => {
+    const r = await registrar(`/registration/rooms?termId=${TERM1}`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    const room = r.body.find((x: any) => x.group_code === '9/1');
+    expect(room, `ต้องเห็นห้อง 9/1 เห็น ${JSON.stringify(r.body.map((x: any) => x.group_code))}`);
+    expect(Number(room.students_total) === 6,
+      `ห้อง 9/1 มีหกคนที่ยังกำลังศึกษา ได้ ${room.students_total}`);
+    expect(
+      Number(room.students_registered) + Number(room.students_pending)
+        === Number(room.students_total),
+      'ลงแล้วบวกยังไม่ลงต้องเท่ากับจำนวนคนในห้อง',
+    );
+    roomPendingBefore = Number(room.students_pending);
+    return `ห้อง 9/1 ${room.students_registered}/${room.students_total} = ${room.pct}%`;
+  });
+
+  await check('API-181 ห้องที่ยังไม่ได้จัดเป็นแถวหนึ่ง ไม่ใช่ถูกกรองทิ้ง', async () => {
+    // กองนี้คือคนที่ถูกเลื่อนชั้นมาแล้วยังไม่มีใครจัดห้องให้ — ถ้าไม่แสดง
+    // จะไม่มีใครรู้ว่ามีคนตกค้างอยู่ จนกระทั่งเลยกำหนดเพิ่ม-ถอนไปแล้ว
+    const r = await registrar(`/registration/rooms?termId=${TERM1}`);
+    const un = r.body.find((x: any) => x.group_code === null);
+    expect(un, 'ต้องมีแถวของคนที่ยังไม่ถูกจัดห้อง');
+    expect(Number(un.students_total) >= 1, `ต้องนับคนได้ ได้ ${un.students_total}`);
+
+    // และต้องเปิดดูได้จริงด้วย ไม่ใช่เห็นแต่กดไม่ได้ —
+    // `group_code is null` ต้องเทียบด้วย `is not distinct from` ที่ชั้น SQL
+    const plan = await registrar(`/registration/rooms/plan?termId=${TERM1}&studyYear=1`);
+    expect(plan.status === 200, `ได้ ${plan.status}: ${JSON.stringify(plan.body)}`);
+    expect(plan.body.students.length === Number(un.students_total),
+      `รายชื่อต้องได้ ${un.students_total} คน ได้ ${plan.body.students.length}`);
+    expect(plan.body.room.groupCode === null, 'ต้องรู้ว่านี่คือห้องที่ยังไม่ได้จัด');
+
+    // ห้องนี้มีคนเดียวและผูกหลักสูตรแล้ว ทุกวิชาในแผนจึงเป็นของ "ทั้งห้อง"
+    // — ด้านบวกของกฎเดียวกับ API-183 ซึ่งเป็นตัวตัดสินว่าหน้าจอจะติ๊กให้ล่วงหน้าไหม
+    expect(plan.body.courses.length >= 1, 'ต้องได้รายวิชาตามแผน');
+    expect(plan.body.courses.every((c: any) => c.wholeRoom === true),
+      'ทุกคนในห้องนี้มีแผนเดียวกัน จึงต้องรายงานว่าเป็นวิชาของทั้งห้อง');
+    return `${un.students_total} คนยังไม่ถูกจัดห้อง`;
+  });
+
+  await check('API-182 ชุดวิชามาจากแผนการเรียน และบอกที่มาของกลุ่มเรียนที่เดาให้', async () => {
+    const r = await registrar(
+      `/registration/rooms/plan?termId=${TERM1}&studyYear=1&groupCode=9%2F1`,
+    );
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.courses.length >= 1, 'ต้องได้รายวิชาจากแผนการเรียนของหลักสูตร');
+
+    const target = r.body.courses.find((c: any) => c.courseId === COURSE);
+    expect(target, 'วิชาที่แผนกำหนดไว้สำหรับชั้นปี 1 ภาค 1 ต้องอยู่ในชุด');
+    // วิชานี้เปิดสองกลุ่มในภาคนี้ (9/1 กับ 9/2) การเดาถูกจึงไม่ใช่เพราะ
+    // "มีกลุ่มเดียว" แต่เพราะรหัสกลุ่มตรงกับรหัสห้องจริง ๆ
+    expect(target.sections.length >= 2,
+      `ต้องเห็นทุกกลุ่มที่เปิด ได้ ${target.sections.length}`);
+    expect(target.suggestedSectionId === F.section,
+      `ต้องเดากลุ่ม 9/1 ได้ ${target.suggestedSectionId}`);
+    expect(target.suggestedReason === 'รหัสกลุ่มเรียนตรงกับรหัสห้อง',
+      `ต้องบอกที่มาของการเดา ได้ ${target.suggestedReason}`);
+
+    // วิชาในแผนที่ยังไม่เปิดกลุ่มต้องอยู่ในชุดด้วย พร้อมรายการกลุ่มที่ว่าง
+    // — ถ้ากรองทิ้ง เจ้าหน้าที่จะไม่รู้ว่ายังมีวิชาที่ต้องเปิดกลุ่มก่อน
+    const noSection = r.body.courses.find((c: any) => c.sections.length === 0);
+    expect(noSection, 'วิชาที่ยังไม่เปิดกลุ่มเรียนต้องยังแสดงอยู่');
+    return `${r.body.courses.length} วิชา · ยังไม่เปิดกลุ่ม ${noSection.code}`;
+  });
+
+  await check('API-183 วิชาที่ไม่ได้อยู่ในแผนของทั้งห้องต้องดูออกก่อนกด', async () => {
+    /*
+     * ห้องนี้มีคนที่ยังไม่ได้ผูกหลักสูตรอยู่หนึ่งคน ตัวเลขความครอบคลุมจึง
+     * ต้องต่ำกว่าจำนวนคนที่ลงทะเบียนได้ ถ้ารายงานว่า "ทั้งห้อง" ทั้งที่ไม่ใช่
+     * หน้าจอจะติ๊กให้ล่วงหน้าแล้วคนที่ไม่ได้เรียนวิชานั้นจะได้ติดไปด้วย
+     */
+    const r = await registrar(
+      `/registration/rooms/plan?termId=${TERM1}&studyYear=1&groupCode=9%2F1`,
+    );
+    expect(r.body.registerable === 6, `ต้องลงทะเบียนได้หกคน ได้ ${r.body.registerable}`);
+    expect(r.body.plannable === 5, `ห้าคนผูกหลักสูตรแล้ว ได้ ${r.body.plannable}`);
+    expect(r.body.withoutCurriculum === 1,
+      `หนึ่งคนยังไม่ผูกหลักสูตร ได้ ${r.body.withoutCurriculum}`);
+
+    // ต้องชี้ตัวได้เป็นรายคน ไม่ใช่รู้แค่จำนวนรวม เพราะสิ่งที่ต้องทำต่อคือ
+    // ไปผูกหลักสูตรให้**คนนั้น** ที่หน้าระเบียนนักศึกษา
+    const noPlan = r.body.students.filter((s: any) => s.hasCurriculum === false);
+    expect(noPlan.length === 1 && noPlan[0].studentCode === '69201010780',
+      `ต้องชี้ตัวคนที่ยังไม่ผูกหลักสูตรได้ ได้ ${JSON.stringify(noPlan.map((x: any) => x.studentCode))}`);
+
+    const c = r.body.courses.find((x: any) => x.courseId === COURSE);
+    expect(c.studentsInPlan === 4,
+      `สี่คนที่อยู่หลักสูตรฉบับปัจจุบันเท่านั้นที่มีวิชานี้ในแผน ได้ ${c.studentsInPlan}`);
+    expect(c.wholeRoom === false,
+      'ห้องนี้คละหลักสูตร จึงต้องไม่รายงานว่าเป็นวิชาของทั้งห้อง');
+    return `${c.studentsInPlan} จาก ${r.body.plannable} คนที่มีแผน · ยังไม่ผูกหลักสูตร ${r.body.withoutCurriculum}`;
+  });
+
+  await check('API-184 ลงทั้งห้องแล้วความคืบหน้าขยับจริง', async () => {
+    const plan = await registrar(
+      `/registration/rooms/plan?termId=${TERM1}&studyYear=1&groupCode=9%2F1`,
+    );
+    // เดินแบบเดียวกับหน้าจอ — เอากลุ่มเรียนที่ระบบเดาให้ ไม่ใช่รหัสที่พิมพ์ไว้ในเทสต์
+    const sectionIds = plan.body.courses
+      .map((c: any) => c.suggestedSectionId)
+      .filter((id: string | null) => id !== null);
+    expect(sectionIds.length >= 1, 'ต้องมีกลุ่มเรียนที่จับคู่ได้อย่างน้อยหนึ่งวิชา');
+
+    const studentIds = plan.body.students
+      .filter((s: any) => s.status === 'active')
+      .map((s: any) => s.id);
+    expect(studentIds.length === 6, `ต้องได้หกคน ได้ ${studentIds.length}`);
+
+    const r = await registrar('/registration/register-bulk', {
+      method: 'POST',
+      body: JSON.stringify({ studentIds, termId: TERM1, sectionIds }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.results.length === studentIds.length,
+      'ต้องคืนผลครบทุกคน แม้คนที่ลงไม่ได้');
+
+    // คนที่ค้างค่าเทอมต้องติดเงื่อนไข และต้องไม่ทำให้คนอื่นล้มไปด้วย
+    const held = r.body.results.find((x: any) => x.studentId === F.studentBulkHeld);
+    expect(held && held.blockers.length > 0, 'คนที่ถูกระงับต้องติดเงื่อนไข');
+    expect(r.body.succeeded >= 1, `ต้องมีคนลงสำเร็จ ได้ ${r.body.succeeded}`);
+
+    const after = await registrar(`/registration/rooms?termId=${TERM1}`);
+    const room = after.body.find((x: any) => x.group_code === '9/1');
+    /*
+     * ต้องลดลงจริง ไม่ใช่แค่ตอบ 201 กลับมา — ห้องนี้มีคนที่ยังไม่มีรายวิชาเลย
+     * อยู่หนึ่งคนโดยตั้งใจ ถ้าตัวเลขไม่ขยับแปลว่าเส้นทางนี้เขียน enrollment
+     * ไม่สำเร็จ ซึ่งเป็นสิ่งที่ผลรายคนอย่างเดียวมองไม่ออก (คนที่ลงไว้แล้ว
+     * ได้ 0 วิชาเหมือนกันเป๊ะกับคนที่เขียนไม่สำเร็จ)
+     */
+    expect(Number(room.students_pending) < roomPendingBefore,
+      `คนที่ยังไม่ลงต้องลดลงจาก ${roomPendingBefore} ได้ ${room.students_pending}`);
+    return `สำเร็จ ${r.body.succeeded} · ติดเงื่อนไข ${r.body.blocked} · เหลือ ${room.students_pending} คน`;
+  });
+
+  await check('API-185 กดลงห้องเดิมซ้ำได้ 0 วิชาโดยไม่ติดเงื่อนไข', async () => {
+    /*
+     * เป็นสิ่งที่เกิดทุกครั้งที่มีคนย้ายเข้าห้องกลางภาคแล้วเจ้าหน้าที่กดลง
+     * ทั้งห้องอีกรอบ — `on conflict do nothing` ทำให้คนเดิมได้ 0 กลับมา
+     * โดยไม่ติดอะไรสักข้อ ซึ่ง**ไม่ใช่ความล้มเหลว** หน้าจอที่ทาสีแดงให้ทุกแถว
+     * ที่ได้ 0 จะทำให้เจ้าหน้าที่เข้าใจว่าพังทั้งห้องทั้งที่ไม่มีอะไรผิด
+     */
+    const r = await registrar('/registration/register-bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentIds: [F.student, F.studentBulkOk], termId: TERM1, sectionIds: [F.section],
+      }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    for (const row of r.body.results) {
+      expect(row.blockers.length === 0,
+        `ไม่ควรติดอะไร แต่ ${row.studentId} ติด ${row.blockers.join(' / ')}`);
+      expect(row.registered === 0,
+        `ลงไว้แล้วจึงต้องลงเพิ่มไม่ได้ แต่ได้ ${row.registered} วิชา`);
+    }
+    expect(r.body.blocked === 0, `ไม่ควรมีใครติดเงื่อนไข ได้ ${r.body.blocked}`);
+  });
+
+  await check('API-186 ตัวกรองห้องของรายชื่อนักศึกษากรองได้จริง', async () => {
+    const r = await registrar(
+      `/students?academicYearId=${AY}&studyYear=1&groupCode=9%2F1&limit=200`,
+    );
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(Array.isArray(r.body), 'ยังต้องคืนอาร์เรย์ — แอปนักศึกษา cast เป็น List ตรง ๆ');
+    expect(r.body.length === 6, `ต้องได้เฉพาะหกคนในห้อง ได้ ${r.body.length}`);
+    expect(r.body.every((s: any) => s.group_code === '9/1'), 'ทุกแถวต้องเป็นห้อง 9/1');
+    expect(!r.body.some((s: any) => s.student_code === '69201010779'),
+      'คนที่ยังไม่ถูกจัดห้องต้องไม่ปนมาในห้อง 9/1');
+
+    // ค้นหาต้องยังทำงานร่วมกับตัวกรอง ไม่ใช่เลือกได้อย่างเดียว
+    const one = await registrar(
+      `/students?academicYearId=${AY}&studyYear=1&groupCode=9%2F1&q=69201010777`,
+    );
+    expect(one.body.length === 1, `ค้นในห้องต้องได้คนเดียว ได้ ${one.body.length}`);
+    return `${r.body.length} คนในห้อง 9/1`;
+  });
+
+  await check('API-187 กรองห้องโดยไม่บอกปีการศึกษาถูกปฏิเสธ', async () => {
+    /*
+     * รหัสห้อง `9/1` มีอยู่ทุกปีการศึกษาและหมายถึงคนละกลุ่มคนทุกครั้ง
+     * ถ้ายอมให้กรองโดยไม่ระบุปี จะได้รุ่นพี่ที่จบไปแล้วปนมาโดยไม่มีอะไรทัก
+     */
+    const a = await registrar('/students?groupCode=9%2F1');
+    expect(a.status === 400, `ควรได้ 400 ได้ ${a.status}`);
+    const b = await registrar('/students?studyYear=1');
+    expect(b.status === 400, `ควรได้ 400 ได้ ${b.status}`);
+    // ค่าที่พิมพ์ผิดต้องบอกว่าผิด ไม่ใช่คืนรายชื่อว่างซึ่งดูเหมือน "ไม่มีใคร"
+    const c = await registrar(`/students?academicYearId=${AY}&status=activee`);
+    expect(c.status === 400, `สถานะที่ไม่รู้จักควรได้ 400 ได้ ${c.status}`);
+    const d = await registrar(`/students?academicYearId=${AY}&studyYear=9`);
+    expect(d.status === 400, `ชั้นปีเกินช่วงควรได้ 400 ได้ ${d.status}`);
+  });
+
+  await check('API-188 ครูเปิดรายการห้องและแผนของทั้งวิทยาลัยไม่ได้', async () => {
+    const a = await teacher(`/registration/rooms?termId=${TERM1}`);
+    expect(a.status === 403, `ควรได้ 403 ได้ ${a.status}`);
+    const b = await teacher(
+      `/registration/rooms/plan?termId=${TERM1}&studyYear=1&groupCode=9%2F1`,
+    );
+    expect(b.status === 403, `ควรได้ 403 ได้ ${b.status}`);
+  });
+
+  await check('API-189 วิทยาลัยอื่นไม่เห็นห้องของเราเลยสักห้อง', async () => {
+    const a = await other(`/registration/rooms?termId=${TERM1}`);
+    expect(a.status === 200, `ได้ ${a.status}`);
+    expect(a.body.length === 0, `ควรไม่เห็นอะไรเลย เห็น ${a.body.length} ห้อง`);
+
+    // แผนของห้องต้องเป็น 404 ไม่ใช่ผลว่าง เพราะภาคเรียนนั้นไม่มีอยู่ในสายตาเขา
+    const b = await other(
+      `/registration/rooms/plan?termId=${TERM1}&studyYear=1&groupCode=9%2F1`,
+    );
+    expect(b.status === 404, `ควรได้ 404 ได้ ${b.status}`);
+  });
+
+  await check('API-190 พารามิเตอร์ของแผนห้องถูกตรวจก่อนถึงฐานข้อมูล', async () => {
+    const a = await registrar(`/registration/rooms/plan?termId=${TERM1}`);
+    expect(a.status === 400, `ไม่ส่งชั้นปีควรได้ 400 ได้ ${a.status}`);
+    const b = await registrar('/registration/rooms/plan?termId=1%20or%201%3D1&studyYear=1');
+    expect(b.status === 400, `termId ผิดรูปแบบควรได้ 400 ได้ ${b.status}`);
+    const c = await registrar('/registration/rooms?termId=not-a-uuid');
+    expect(c.status === 400, `ควรได้ 400 ได้ ${c.status}`);
   });
 
   console.log('');
@@ -3455,6 +3765,216 @@ async function main() {
     });
     expect(bogus.status === 400, `รายวิชานอกฉบับต้องถูกปฏิเสธ ได้ ${bogus.status}`);
     return `ย้ายภาคได้ · จัดลำดับ ${swapped.length} รายวิชา · ตัวนอกฉบับถูกปฏิเสธ`;
+  });
+
+  await check('API-179 วิชาเทียบโอนขึ้นใบ รบ. พร้อมเครื่องหมาย (*n)', async () => {
+    /*
+     * ─── ทำไมข้อนี้ต้องพิมพ์ใบออกมาอ่าน ไม่ใช่ตรวจแค่ payload ───
+     * ก่อน 0066 ทั้ง `prior_academic_record` และ `transfer_credits_total()`
+     * ทำงานถูกต้องครบทุกอย่าง — สิ่งที่ขาดคือใบ รบ. ไม่เคย join ตารางนั้น
+     * เข้ามาเลย เทสต์ที่ตรวจว่า "บันทึกได้" หรือ "นับหน่วยกิตถูก" จึงเขียว
+     * สนิทมาตลอดโดยที่กระดาษขาดรายวิชาไปทั้งชุด
+     *
+     * และคำอธิบาย (*1)–(*5) ก็พิมพ์อยู่ท้ายใบมาตั้งแต่ต้นโดยไม่มีเครื่องหมาย
+     * ไหนปรากฏจริงสักตัว — สองอย่างนี้เห็นได้ทางเดียวคืออ่านใบที่พิมพ์ออกมา
+     */
+    const added = await registrar('/prior-records', {
+      method: 'POST',
+      body: JSON.stringify({
+        records: [{
+          studentId: F.student,
+          sourceTh: 'วิทยาลัยเดิม',
+          courseCode: 'XFER-901',
+          courseNameTh: 'วิชาที่เทียบโอนมาเพื่อทดสอบ',
+          credits: 3,
+          gradeSymbol: 'B',
+          gradePoint: 3,
+          termLabel: '1/2566',
+          transferKind: 'transferred_grade',
+        }],
+      }),
+    });
+    expect(added.status < 400, `บันทึกวิชาเทียบโอนไม่ได้ ${added.status} ${JSON.stringify(added.body)}`);
+
+    // เส้นทางนี้คืน **ออบเจ็กต์** `{records, summary}` ไม่ใช่อาร์เรย์
+    // — รูปเดียวกับ `/staff` ที่เคยทำให้หน้าจอขาวทั้งหน้า
+    const list = await registrar(`/prior-records/students/${F.student}`);
+    const rec = ((list.body as any)?.records as any[])?.find((r) => r.course_code === 'XFER-901');
+    expect(Boolean(rec), 'อ่านวิชาเทียบโอนที่เพิ่งบันทึกกลับมาไม่ได้');
+
+    // ยังไม่อนุมัติต้องยังไม่ขึ้นใบ — แถวที่ยังไม่อนุมัติคือคำขอ ไม่ใช่หน่วยกิต
+    const before = await registrar('/documents/issue', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const htmlBefore = String((await registrar(`/documents/${before.body.id}/print`)).body);
+    expect(!htmlBefore.includes('XFER-901') && !htmlBefore.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'วิชาที่ยังไม่อนุมัติต้องไม่ขึ้นใบ');
+
+    /*
+     * ─── คนกรอกกับคนอนุมัติต้องไม่ใช่คนเดียวกัน ───
+     * งานทะเบียนบันทึกวิชาที่เทียบโอนมาได้ แต่อนุมัติไม่ได้ (403) —
+     * การรับรองว่าหน่วยกิตจากที่อื่นใช้แทนหลักสูตรของเราได้เป็นเรื่องของ
+     * ฝ่ายวิชาการ หลักเดียวกับที่งานทะเบียนสร้างสถานประกอบการได้แต่
+     * อนุมัติไม่ได้ (API-148) — ยืนยันไว้ตรงนี้ด้วย ไม่ใช่แค่เลี่ยงไปใช้
+     * บัญชีที่ผ่าน
+     */
+    const denied = await registrar('/prior-records/approve', {
+      method: 'POST', body: JSON.stringify({ recordIds: [rec.id] }),
+    });
+    expect(denied.status === 403, `งานทะเบียนต้องอนุมัติเองไม่ได้ ได้ ${denied.status}`);
+
+    const ok = await director('/prior-records/approve', {
+      method: 'POST', body: JSON.stringify({ recordIds: [rec.id] }),
+    });
+    expect(ok.status < 400, `อนุมัติเทียบโอนไม่ได้ ${ok.status} ${JSON.stringify(ok.body)}`);
+
+    const after = await registrar('/documents/issue', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${after.body.id}/print`)).body);
+
+    expect(html.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'อนุมัติแล้ววิชาเทียบโอนต้องขึ้นใบ');
+    expect(html.includes('(*1)'),
+      'วิชาที่โอนผลการเรียนมาต้องมีเครื่องหมาย (*1) ท้ายชื่อวิชา');
+
+    /*
+     * ใบเก่าที่ออกก่อนอนุมัติต้องพิมพ์ซ้ำได้เหมือนเดิมทุกประการ —
+     * payload ตรึงแล้วแก้ไม่ได้ (หลักข้อ 5) การเพิ่มเครื่องหมายให้ใบเก่า
+     * ย้อนหลังจะทำให้ใบที่คนถืออยู่ไม่ตรงกับที่ระบบพิมพ์ใหม่
+     */
+    const reprint = String((await registrar(`/documents/${before.body.id}/print`)).body);
+    expect(!reprint.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'ใบที่ออกก่อนอนุมัติต้องพิมพ์ซ้ำได้เหมือนเดิม ไม่ใช่เปลี่ยนตามข้อมูลใหม่');
+
+    return 'งานทะเบียนอนุมัติเองไม่ได้ · ยังไม่อนุมัติไม่ขึ้นใบ · อนุมัติแล้วขึ้นพร้อม (*1) · ใบเก่าพิมพ์ซ้ำได้เหมือนเดิม';
+  });
+
+  console.log('');
+  console.log('══ ลงข้อมูลรายวิชาเข้าคลังและหลักสูตร (0065) ══');
+
+  await check('API-176 สร้างรายวิชาในคลังได้ และคาบต่อสัปดาห์คำนวณให้เอง', async () => {
+    /*
+     * ─── ทำไมเส้นทางนี้เพิ่งมี ───
+     * ก่อนหน้านี้ **ไม่มีทางสร้างรายวิชาในระบบเลยสักทาง** — ค้นทั้ง repo
+     * แล้ว `insert into course` มีอยู่สองที่คือ `db/seed` กับ
+     * `db/deploy/demo-data.sql` วิทยาลัยที่เปิดใหม่จึงลงหลักสูตรของตัวเอง
+     * ไม่ได้เลย ทั้งที่หน้าจอโครงสร้างหลักสูตรเปิดดูได้ปกติ
+     *
+     * และ `weekly_periods` ต้องมาจาก ท+ป เสมอ ไม่ใช่ช่องให้กรอก — ถ้ากรอกเอง
+     * มันเพี้ยนจาก ท-ป-น ได้ทันทีที่มีคนแก้ค่าเดียว แล้วตารางสอนกับหนังสือ
+     * หลักสูตรจะบอกจำนวนคาบไม่ตรงกันโดยไม่มีอะไรฟ้อง (SISA เก็บสองค่านี้
+     * แยกกันจริง ๆ และประกอบกลับเป็น ท-ป-น ไม่ได้)
+     */
+    const code = `T${Date.now().toString().slice(-7)}`;
+    const made = await registrar('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code, nameTh: 'รายวิชาทดสอบการลงข้อมูล', nameEn: 'Data Entry Test',
+        editionBe: 2567, theoryHours: 1, practiceHours: 2, credits: 2,
+      }),
+    });
+    expect(made.status < 400, `สร้างรายวิชาไม่ได้ ${made.status} ${JSON.stringify(made.body)}`);
+    expect(Number(made.body.weekly_periods) === 3,
+      `คาบต่อสัปดาห์ต้องเป็น 1+2=3 ได้ ${made.body.weekly_periods}`);
+
+    // รหัสซ้ำในฉบับเดียวกันต้องถูกปฏิเสธพร้อมบอกว่าซ้ำกับฉบับไหน
+    const dup = await registrar('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code, nameTh: 'ซ้ำ', editionBe: 2567,
+        theoryHours: 1, practiceHours: 0, credits: 1,
+      }),
+    });
+    expect(dup.status === 400, `รหัสซ้ำต้องได้ 400 ได้ ${dup.status}`);
+
+    const edited = await registrar(`/curriculum/catalog/${made.body.id}`, {
+      method: 'PATCH', body: JSON.stringify({ theoryHours: 2, practiceHours: 0 }),
+    });
+    expect(Number(edited.body.weekly_periods) === 2,
+      `แก้ ท-ป แล้วคาบต้องคิดใหม่เป็น 2 ได้ ${edited.body.weekly_periods}`);
+    return `${code} · 1-2-2 → คาบ 3 · แก้เป็น 2-0 → คาบ 2 · รหัสซ้ำถูกปฏิเสธ`;
+  });
+
+  await check('API-177 ครูสร้างรายวิชาเองไม่ได้', async () => {
+    // หน่วยกิตของรายวิชาคือตัวตั้งของการตรวจจบทั้งรุ่น
+    const r = await teacher('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: 'TCH-001', nameTh: 'ครูสร้างเอง', editionBe: 2567,
+        theoryHours: 1, practiceHours: 0, credits: 1,
+      }),
+    });
+    expect(r.status === 403, `ครูต้องได้ 403 ได้ ${r.status}`);
+    return 'ครูถูกปฏิเสธที่ชั้น API';
+  });
+
+  await check('API-178 วางทั้งตารางแล้วได้ผลรายบรรทัด ไม่ล้มทั้งก้อน', async () => {
+    /*
+     * ─── ทำไมต้องคืนผลรายบรรทัด ───
+     * หลักสูตรฉบับหนึ่งมีร้อยกว่ารายวิชา ถ้ามีบรรทัดเดียวชนของเดิมแล้ว
+     * `rollback` ทั้งชุด คนกรอกจะต้องไล่หาบรรทัดที่ผิดเองโดยไม่มีอะไรบอก
+     * แล้ววางใหม่ทั้งก้อน (หลักเดียวกับ `register_courses_bulk`)
+     *
+     * ─── และรายวิชาที่มีอยู่แล้วแต่ ท-ป-น ไม่ตรง ต้องไม่ถูกเขียนทับ ───
+     * หน่วยกิตของรายวิชาที่มีคนเรียนไปแล้วคือเกณฑ์จบย้อนหลังของคนกลุ่มนั้น
+     * การวางตารางผิดฉบับแล้วเขียนทับเงียบ ๆ จะเปลี่ยนเกณฑ์จบของคนที่เรียน
+     * ไปครึ่งทาง — รายงานว่าไม่ตรงแล้วให้คนตัดสินใจ
+     */
+    const versions = await registrar('/curriculum/versions');
+    const version = (versions.body as any[])?.[0];
+    if (!version) return 'ข้ามเพราะยังไม่มีฉบับหลักสูตร';
+
+    const st = await registrar(`/curriculum/versions/${version.id}`);
+    const category = (st.body?.categories ?? [])[0];
+    if (!category) return 'ข้ามเพราะฉบับนี้ยังไม่มีหมวดวิชา';
+
+    const stamp = Date.now().toString().slice(-6);
+    const rows = [
+      { code: `B${stamp}1`, nameTh: 'วิชาวางใหม่หนึ่ง', theoryHours: 2, practiceHours: 0, credits: 2 },
+      { code: `B${stamp}2`, nameTh: 'วิชาวางใหม่สอง', theoryHours: 0, practiceHours: 2, credits: 1 },
+    ];
+
+    const first = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ curriculumCategoryId: category.id, rows }),
+    });
+    expect(first.status < 400, `วางตารางไม่ได้ ${first.status} ${JSON.stringify(first.body)}`);
+    expect(first.body.created === 2, `ต้องสร้างใหม่ 2 ได้ ${first.body.created}`);
+
+    // วางซ้ำก้อนเดิม — ต้องไม่สร้างซ้ำและไม่ผูกซ้ำ
+    const again = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ curriculumCategoryId: category.id, rows }),
+    });
+    expect(again.body.created === 0 && again.body.already === 2,
+      `วางซ้ำต้องได้ already 2 ได้ created=${again.body.created} already=${again.body.already}`);
+
+    // ก้อนเดียวกันแต่หน่วยกิตต่างจากของเดิม — ต้องรายงาน ไม่ใช่เขียนทับ
+    const changed = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({
+        curriculumCategoryId: category.id,
+        rows: [{ ...rows[0], credits: 9 }],
+      }),
+    });
+    expect(changed.body.mismatch === 1, `ต้องรายงานว่าไม่ตรง 1 ได้ ${changed.body.mismatch}`);
+
+    const after = await registrar('/curriculum/courses?q=' + encodeURIComponent(rows[0].code));
+    const still = (after.body as any[])?.find((c) => c.code === rows[0].code);
+    expect(still && Number(still.credits) === 2,
+      `หน่วยกิตเดิมต้องไม่ถูกเขียนทับ ได้ ${still?.credits}`);
+
+    // หมวดวิชาของฉบับอื่นต้องถูกปฏิเสธ ไม่ใช่เพิ่มไปผิดที่เงียบ ๆ
+    const wrong = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({
+        curriculumCategoryId: '00000000-0000-0000-0000-000000000001', rows,
+      }),
+    });
+    expect(wrong.status === 400, `หมวดนอกฉบับต้องได้ 400 ได้ ${wrong.status}`);
+
+    return `สร้าง 2 · วางซ้ำได้ already 2 · ท-ป-น ไม่ตรงรายงาน 1 โดยไม่เขียนทับ`;
   });
 
   console.log('');

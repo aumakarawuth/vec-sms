@@ -9,8 +9,74 @@ import {
   Query,
 } from '@nestjs/common';
 import { DbService } from '../../common/db/db.service';
-import { ParseUuidPipe } from '../../common/validation/uuid';
+import { parsePage } from '../../common/pagination/pagination';
+import { ParseUuidPipe, UUID_PATTERN } from '../../common/validation/uuid';
 import { PROFILE_CONTROLLERS, StudentProfileService } from './profile';
+
+export interface StudentFilter {
+  academicYearId?: string;
+  studyYear?: number;
+  groupCode?: string;
+  status?: string;
+}
+
+/** ค่าเดียวกับ enum `student_status` ใน 0002 */
+const STUDENT_STATUSES = [
+  'active', 'on_leave', 'suspended', 'withdrawn',
+  'transferred_out', 'dismissed', 'graduated',
+];
+
+/**
+ * ตรวจตัวกรองก่อนถึงฐานข้อมูล
+ *
+ * ─── ทำไมค่าที่ไม่รู้จักต้องเป็น 400 ไม่ใช่ผลลัพธ์ว่าง ───
+ * สถานะที่พิมพ์ผิด (`activee`) เทียบกับ enum ไม่ตรงสักแถว ผลคือรายชื่อว่าง
+ * ซึ่งหน้าตาเหมือน "ไม่มีนักศึกษาที่ตรงเงื่อนไข" ทุกประการ เจ้าหน้าที่จะสรุปว่า
+ * ห้องนั้นไม่มีคน แล้วไปตามหาสาเหตุผิดที่ — ค่าที่ผิดต้องบอกว่าผิด
+ */
+function parseStudentFilter(raw: {
+  academicYearId?: string;
+  studyYear?: string;
+  groupCode?: string;
+  status?: string;
+}): StudentFilter {
+  const f: StudentFilter = {};
+
+  if (raw.academicYearId) {
+    if (!UUID_PATTERN.test(raw.academicYearId)) {
+      throw new BadRequestException('academicYearId ต้องเป็นรหัสรูปแบบ UUID');
+    }
+    f.academicYearId = raw.academicYearId;
+  }
+
+  if (raw.studyYear !== undefined && raw.studyYear !== '') {
+    const n = Number(raw.studyYear);
+    if (!Number.isInteger(n) || n < 1 || n > 6) {
+      throw new BadRequestException('studyYear ต้องเป็นจำนวนเต็ม 1 ถึง 6');
+    }
+    f.studyYear = n;
+  }
+
+  if (raw.groupCode) f.groupCode = raw.groupCode;
+
+  if (raw.status) {
+    if (!STUDENT_STATUSES.includes(raw.status)) {
+      throw new BadRequestException(
+        `status ต้องเป็นค่าใดค่าหนึ่งใน ${STUDENT_STATUSES.join(' · ')}`,
+      );
+    }
+    f.status = raw.status;
+  }
+
+  // ห้องประจำผูกกับปีการศึกษาเสมอ — กรองห้องโดยไม่บอกปีคือคำถามที่ตอบไม่ได้
+  if ((f.studyYear !== undefined || f.groupCode) && !f.academicYearId) {
+    throw new BadRequestException(
+      'ตัวกรอง studyYear/groupCode ต้องส่ง academicYearId มาด้วย เพราะห้องประจำเก็บแยกรายปีการศึกษา',
+    );
+  }
+
+  return f;
+}
 
 @Injectable()
 export class StudentsService {
@@ -36,7 +102,14 @@ export class StudentsService {
    * แยกเป็นสองสาขาแล้วรวมด้วย union ทำให้แต่ละสาขาใช้ดัชนี trigram ของตัวเองได้
    * (ดู migration 0024 — ilike '%คำ%' ใช้ดัชนี btree ไม่ได้เพราะไม่ได้ขึ้นต้นด้วยคำค้น)
    */
-  async list(q: string | undefined, limit: number) {
+  /**
+   * ─── ทำไมห้องประจำต้องมาพร้อมปีการศึกษาเสมอ ───
+   * `student_class_placement` เก็บแยกรายปีเพราะห้องเปลี่ยนทุกปี (0031)
+   * รหัสห้อง `1/1` จึงมีอยู่ทุกปีการศึกษาและหมายถึงคนละกลุ่มคนกันทุกครั้ง
+   * ถ้ากรองด้วยรหัสห้องเฉย ๆ โดยไม่ระบุปี จะได้รุ่นพี่ที่จบไปแล้วปนมาด้วย
+   * โดยที่หน้าจอไม่มีทางรู้ — ตัวกรองสองตัวนี้จึงบังคับให้ส่งปีมาด้วย
+   */
+  async list(q: string | undefined, limit: number, f: StudentFilter = {}) {
     return this.db.query(
       `with matched as (
          select s2.id from student s2
@@ -50,7 +123,8 @@ export class StudentsService {
        )
        select s.id, s.student_code, s.status,
               p.first_name_th || ' ' || p.last_name_th as full_name,
-              pr.name_th as program_name, pr.level
+              pr.name_th as program_name, pr.level,
+              scp.study_year, scp.group_code
          from matched m
          join student s on s.id = m.id
          join person  p on p.id = s.person_id
@@ -59,9 +133,20 @@ export class StudentsService {
          left join curriculum cu on cu.id = cv.curriculum_id
          left join program_track pt on pt.id = cu.program_track_id
          left join program pr on pr.id = pt.program_id
+         -- ห้องของ**ปีที่ถาม** ไม่ใช่ห้องล่าสุด — เงื่อนไขปีอยู่ใน on ไม่ใช่ where
+         -- มิฉะนั้นคนที่ยังไม่ถูกจัดห้องจะหายไปจากรายชื่อทั้งที่มีตัวตนอยู่
+         left join student_class_placement scp
+                on scp.student_id = s.id and scp.academic_year_id = $3::uuid
+        where ($4::smallint is null or scp.study_year = $4)
+          and ($5::text     is null or scp.group_code = $5)
+          and ($6::text     is null or s.status::text = $6)
         order by s.student_code
         limit $2`,
-      [q ?? null, limit],
+      [
+        q ?? null, limit,
+        f.academicYearId ?? null, f.studyYear ?? null,
+        f.groupCode ?? null, f.status ?? null,
+      ],
     );
   }
 
@@ -203,9 +288,29 @@ export class StudentsService {
 class StudentsController {
   constructor(private readonly svc: StudentsService) {}
 
+  /**
+   * ─── ทำไมยังคืนอาร์เรย์ ไม่เปลี่ยนเป็นเส้นทางแบ่งหน้า ───
+   * แอปนักศึกษาอ่านเส้นทางนี้ตอนล็อกอินเพื่อหาว่าตัวเองเป็นใคร แล้ว cast
+   * เป็น List ตรง ๆ (`app/lib/core/session.dart`) การเปลี่ยนรูปเป็น
+   * `{items, hasMore}` จะทำให้แอปพังตอนรันจริง โดยที่ไม่มีตัวไหนคอมไพล์ไม่ผ่าน
+   *
+   * ทางที่ทำให้นักศึกษาพันคนใช้งานได้จริงคือ**ตัวกรอง** ไม่ใช่หน้าที่ยาวขึ้น —
+   * งานทะเบียนทำงานทีละห้อง ซึ่งอยู่ใต้เพดาน 200 เสมอ
+   */
   @Get()
-  list(@Query('q') q?: string, @Query('limit') limit?: string) {
-    return this.svc.list(q, Math.min(Number(limit ?? 50), 200));
+  list(
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+    @Query('academicYearId') academicYearId?: string,
+    @Query('studyYear') studyYear?: string,
+    @Query('groupCode') groupCode?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.svc.list(
+      q,
+      parsePage(limit).limit,
+      parseStudentFilter({ academicYearId, studyYear, groupCode, status }),
+    );
   }
 
   @Get(':id')
