@@ -53,7 +53,8 @@ class _PlatformLoginScreenState extends State<PlatformLoginScreen> {
     try {
       await action();
     } on OfflineException {
-      setState(() => _error = 'ต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบเครือข่ายหรือที่อยู่ API');
+      setState(() =>
+          _error = 'ต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบเครือข่ายหรือที่อยู่ API');
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
@@ -99,12 +100,14 @@ class _PlatformLoginScreenState extends State<PlatformLoginScreen> {
             // ทำให้สายตาต้องกวาดไกลโดยไม่ได้อะไรเพิ่ม
             constraints: const BoxConstraints(maxWidth: 460),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.xxl, Gap.lg, Gap.xxl),
+              padding:
+                  const EdgeInsets.fromLTRB(Gap.lg, Gap.xxl, Gap.lg, Gap.xxl),
               children: [
                 const ScreenHeader(
                   kicker: 'ผู้ให้บริการระบบ',
                   title: 'หน้าจอผู้ดูแลข้ามวิทยาลัย',
-                  subtitle: 'บัญชีนี้ไม่มีสิทธิ์อ่านข้อมูลนักศึกษาหรือบุคลากรของวิทยาลัยใด',
+                  subtitle:
+                      'บัญชีนี้ไม่มีสิทธิ์อ่านข้อมูลนักศึกษาหรือบุคลากรของวิทยาลัยใด',
                 ),
                 const SizedBox(height: Gap.xxl),
                 if (s.stage == PlatformStage.signedOut)
@@ -113,7 +116,10 @@ class _PlatformLoginScreenState extends State<PlatformLoginScreen> {
                   ..._codeStep(context, s),
                 if (_error != null) ...[
                   const SizedBox(height: Gap.xl),
-                  Notice(title: 'ทำรายการไม่สำเร็จ', body: _error, tone: Tone.crit),
+                  Notice(
+                      title: 'ทำรายการไม่สำเร็จ',
+                      body: _error,
+                      tone: Tone.crit),
                 ],
                 const SizedBox(height: Gap.xxl),
                 Text(
@@ -169,7 +175,8 @@ class _PlatformLoginScreenState extends State<PlatformLoginScreen> {
             ? null
             : () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => PlatformSetupScreen(session: widget.session),
+                    builder: (_) =>
+                        PlatformSetupScreen(session: widget.session),
                   ),
                 ),
       ),
@@ -190,7 +197,8 @@ class _PlatformLoginScreenState extends State<PlatformLoginScreen> {
         ),
         const SizedBox(height: Gap.xl),
         if (s.enrollmentSecret != null)
-          CopyableValue(label: 'ความลับสำหรับพิมพ์ลงแอป', value: s.enrollmentSecret!),
+          CopyableValue(
+              label: 'ความลับสำหรับพิมพ์ลงแอป', value: s.enrollmentSecret!),
         const SizedBox(height: Gap.lg),
         Text(
           'เปิดแอป authenticator แล้วเพิ่มบัญชีแบบกรอกรหัสด้วยตนเอง '
@@ -298,10 +306,12 @@ class _PlatformSetupScreenState extends State<PlatformSetupScreen> {
               ),
               const SizedBox(height: Gap.xl),
               const GroupHeader('ชื่อผู้ใช้'),
-              ConsoleField(controller: _username, enabled: !_busy, hint: 'vendor.owner'),
+              ConsoleField(
+                  controller: _username, enabled: !_busy, hint: 'vendor.owner'),
               const SizedBox(height: Gap.xl),
               const GroupHeader('รหัสตั้งค่า'),
-              ConsoleField(controller: _code, enabled: !_busy, hint: 'XXXX-XXXX'),
+              ConsoleField(
+                  controller: _code, enabled: !_busy, hint: 'XXXX-XXXX'),
               const SizedBox(height: Gap.xl),
               const GroupHeader('รหัสผ่านใหม่'),
               ConsoleField(
@@ -313,7 +323,10 @@ class _PlatformSetupScreenState extends State<PlatformSetupScreen> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: Gap.xl),
-                Notice(title: 'ตั้งรหัสผ่านไม่สำเร็จ', body: _error, tone: Tone.crit),
+                Notice(
+                    title: 'ตั้งรหัสผ่านไม่สำเร็จ',
+                    body: _error,
+                    tone: Tone.crit),
               ],
               if (_done != null) ...[
                 const SizedBox(height: Gap.xl),

@@ -35,7 +35,8 @@ class _PlatformShellState extends State<PlatformShell> {
     final tabs = <_Tab>[
       _Tab('วิทยาลัย', (c) => InstitutionsScreen(session: s)),
       _Tab('แพ็กเกจ', (c) => PlansScreen(session: s)),
-      if (s.role.canManageUsers) _Tab('บัญชีผู้ดูแล', (c) => PlatformUsersScreen(session: s)),
+      if (s.role.canManageUsers)
+        _Tab('บัญชีผู้ดูแล', (c) => PlatformUsersScreen(session: s)),
       _Tab('บันทึก', (c) => PlatformAuditScreen(session: s)),
       _Tab('ฉัน', (c) => _ProfilePane(session: s)),
     ];
@@ -111,6 +112,7 @@ class _SideTabs extends StatelessWidget {
     return Container(
       width: 220,
       decoration: BoxDecoration(
+        color: context.c.sunk,
         border: Border(right: BorderSide(color: context.c.rule)),
       ),
       padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.xl, Gap.md, Gap.lg),
@@ -119,19 +121,29 @@ class _SideTabs extends StatelessWidget {
         children: [
           Text('ผู้ให้บริการระบบ', style: t.labelSmall),
           const SizedBox(height: Gap.xs),
-          Text(session.displayName ?? session.username ?? '—', style: t.titleMedium),
+          Text(session.displayName ?? session.username ?? '—',
+              style: t.titleMedium),
           Text(session.role.label, style: t.bodySmall),
           const SizedBox(height: Gap.xl),
           for (var i = 0; i < labels.length; i++)
             InkWell(
               onTap: () => onTap(i),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: Gap.sm),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: Gap.xs),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: Gap.md, vertical: Gap.md),
+                decoration: BoxDecoration(
+                  color:
+                      i == index ? const Color(0xFFEDEAFF) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 child: Text(
                   labels[i],
                   style: t.bodyLarge?.copyWith(
                     fontWeight: i == index ? FontWeight.w600 : FontWeight.w400,
-                    color: i == index ? context.c.ink : context.c.ink3,
+                    color: i == index ? context.c.sel : context.c.ink3,
                   ),
                 ),
               ),
@@ -157,8 +169,12 @@ class _BottomTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: context.c.bg,
+        color: context.c.sunk,
         border: Border(top: BorderSide(color: context.c.rule)),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x140F0D2A), blurRadius: 18, offset: Offset(0, -4))
+        ],
       ),
       child: SizedBox(
         height: 56,
@@ -175,7 +191,8 @@ class _BottomTabs extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 11.5,
                         height: 1.3,
-                        fontWeight: i == index ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight:
+                            i == index ? FontWeight.w600 : FontWeight.w400,
                         color: i == index ? context.c.ink : context.c.ink4,
                       ),
                     ),
@@ -208,9 +225,12 @@ class _ProfilePane extends StatelessWidget {
         const SizedBox(height: Gap.xl),
         const GroupHeader('ขอบเขตของบัญชีนี้'),
         const SizedBox(height: Gap.md),
-        const InfoRow('อ่านข้อมูลนักศึกษาของวิทยาลัย', value: 'ไม่ได้', tone: Tone.ok),
-        const InfoRow('อ่านข้อมูลบุคลากรของวิทยาลัย', value: 'ไม่ได้', tone: Tone.ok),
-        const InfoRow('เข้าระบบแทนผู้ใช้ของวิทยาลัย', value: 'ไม่ได้', tone: Tone.ok),
+        const InfoRow('อ่านข้อมูลนักศึกษาของวิทยาลัย',
+            value: 'ไม่ได้', tone: Tone.ok),
+        const InfoRow('อ่านข้อมูลบุคลากรของวิทยาลัย',
+            value: 'ไม่ได้', tone: Tone.ok),
+        const InfoRow('เข้าระบบแทนผู้ใช้ของวิทยาลัย',
+            value: 'ไม่ได้', tone: Tone.ok),
         InfoRow('ระงับและคืนสิทธิ์การใช้งาน',
             value: session.role.canWrite ? 'ได้' : 'ไม่ได้'),
         InfoRow('ดูแลบัญชีผู้ดูแลด้วยกันเอง',

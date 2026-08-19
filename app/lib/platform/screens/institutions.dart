@@ -76,7 +76,9 @@ class _InstitutionsScreenState extends State<InstitutionsScreen> {
                     Fmt.count(data['overQuota']),
                     caption: 'เกินโควตา',
                     small: true,
-                    tone: Fmt.toNum(data['overQuota']) == 0 ? Tone.neutral : Tone.warn,
+                    tone: Fmt.toNum(data['overQuota']) == 0
+                        ? Tone.neutral
+                        : Tone.warn,
                   ),
                 ),
                 Expanded(
@@ -84,7 +86,9 @@ class _InstitutionsScreenState extends State<InstitutionsScreen> {
                     Fmt.count(data['suspended']),
                     caption: 'ถูกระงับ',
                     small: true,
-                    tone: Fmt.toNum(data['suspended']) == 0 ? Tone.neutral : Tone.crit,
+                    tone: Fmt.toNum(data['suspended']) == 0
+                        ? Tone.neutral
+                        : Tone.crit,
                   ),
                 ),
                 Expanded(
@@ -126,15 +130,17 @@ class _InstitutionsScreenState extends State<InstitutionsScreen> {
                 trailing: Fmt.count(r['students_active']),
                 badge: _badgeOf(r),
                 tone: _toneOf(r),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => InstitutionDetailScreen(
-                      session: widget.session,
-                      institutionId: r['id'].toString(),
-                      title: r['name_th'].toString(),
-                    ),
-                  ),
-                ).then((_) => _key.currentState?.reload()),
+                onTap: () => Navigator.of(context)
+                    .push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => InstitutionDetailScreen(
+                          session: widget.session,
+                          institutionId: r['id'].toString(),
+                          title: r['name_th'].toString(),
+                        ),
+                      ),
+                    )
+                    .then((_) => _key.currentState?.reload()),
               ),
             ],
             Divider(height: 1, color: context.c.rule),
@@ -166,7 +172,8 @@ class _InstitutionsScreenState extends State<InstitutionsScreen> {
   static String _planLine(Map<String, dynamic> r) {
     final plan = r['plan_name_th']?.toString() ?? 'ยังไม่ผูกแพ็กเกจ';
     final taken = Fmt.parseDate(r['usage_taken_on']);
-    final when = taken == null ? 'ยังไม่มีภาพนิ่ง' : 'ณ ${Fmt.dateShort(taken)}';
+    final when =
+        taken == null ? 'ยังไม่มีภาพนิ่ง' : 'ณ ${Fmt.dateShort(taken)}';
     return '$plan · $when';
   }
 
@@ -203,7 +210,8 @@ class InstitutionDetailScreen extends StatefulWidget {
   final String title;
 
   @override
-  State<InstitutionDetailScreen> createState() => _InstitutionDetailScreenState();
+  State<InstitutionDetailScreen> createState() =>
+      _InstitutionDetailScreenState();
 }
 
 class _InstitutionDetailScreenState extends State<InstitutionDetailScreen> {
@@ -239,7 +247,8 @@ class _InstitutionDetailScreenState extends State<InstitutionDetailScreen> {
       await _key.currentState?.reload();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     } on OfflineException {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -295,19 +304,23 @@ class _InstitutionDetailScreenState extends State<InstitutionDetailScreen> {
                   style: t.bodyMedium,
                 )
               else ...[
-                InfoRow('วันที่เก็บ', value: Fmt.dateShortOf(usage.first['taken_on'])),
+                InfoRow('วันที่เก็บ',
+                    value: Fmt.dateShortOf(usage.first['taken_on'])),
                 InfoRow('นักศึกษากำลังศึกษา',
                     value: Fmt.count(usage.first['students_active'])),
-                InfoRow('บุคลากร', value: Fmt.count(usage.first['staff_active'])),
+                InfoRow('บุคลากร',
+                    value: Fmt.count(usage.first['staff_active'])),
                 InfoRow('เอกสารที่ออกแล้ว',
                     value: Fmt.count(usage.first['documents_issued'])),
-                InfoRow('ใบสมัคร', value: Fmt.count(usage.first['applications'])),
+                InfoRow('ใบสมัคร',
+                    value: Fmt.count(usage.first['applications'])),
               ],
               const SizedBox(height: Gap.xl),
               const GroupHeader('สัญญา'),
               const SizedBox(height: Gap.md),
               if (subs.isEmpty)
-                Text('ยังไม่เคยผูกแพ็กเกจ — ยังใช้งานได้ตามปกติ ไม่ถูกบังคับโควตา',
+                Text(
+                    'ยังไม่เคยผูกแพ็กเกจ — ยังใช้งานได้ตามปกติ ไม่ถูกบังคับโควตา',
                     style: t.bodyMedium),
               for (final s in subs)
                 InfoRow(
@@ -318,12 +331,12 @@ class _InstitutionDetailScreenState extends State<InstitutionDetailScreen> {
               const SizedBox(height: Gap.xl),
               const GroupHeader('การกระทำของผู้ให้บริการกับวิทยาลัยนี้'),
               const SizedBox(height: Gap.md),
-              if (actions.isEmpty)
-                Text('ยังไม่มีบันทึก', style: t.bodyMedium),
+              if (actions.isEmpty) Text('ยังไม่มีบันทึก', style: t.bodyMedium),
               for (final a in actions.take(20))
                 InfoRow(
                   '${a['action']}',
-                  value: '${a['username']} · ${Fmt.dateShortOf(a['occurred_at'])}',
+                  value:
+                      '${a['username']} · ${Fmt.dateShortOf(a['occurred_at'])}',
                 ),
               if (widget.session.role.canWrite) ...[
                 const SizedBox(height: Gap.xxl),
@@ -391,12 +404,14 @@ class _ReasonDialogState extends State<_ReasonDialog> {
             const SizedBox(height: Gap.lg),
             ConsoleField(
               controller: _reason,
-              hint: 'ค้างชำระค่าบริการเกิน 60 วัน — ติดต่อฝ่ายบัญชี 02-xxx-xxxx',
+              hint:
+                  'ค้างชำระค่าบริการเกิน 60 วัน — ติดต่อฝ่ายบัญชี 02-xxx-xxxx',
               maxLines: 3,
             ),
             if (_error != null) ...[
               const SizedBox(height: Gap.md),
-              Text(_error!, style: t.bodySmall?.copyWith(color: context.c.crit)),
+              Text(_error!,
+                  style: t.bodySmall?.copyWith(color: context.c.crit)),
             ],
           ],
         ),

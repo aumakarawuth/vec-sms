@@ -67,9 +67,8 @@ class Period {
   final int periodFrom, periodTo;
   final String? room, teacherName;
 
-  String get periodLabel => periodFrom == periodTo
-      ? 'คาบ $periodFrom'
-      : 'คาบ $periodFrom–$periodTo';
+  String get periodLabel =>
+      periodFrom == periodTo ? 'คาบ $periodFrom' : 'คาบ $periodFrom–$periodTo';
 }
 
 class GraduationRule {

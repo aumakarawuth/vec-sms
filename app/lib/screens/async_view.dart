@@ -34,7 +34,9 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
   }
 
   Future<void> reload() async {
-    setState(() => _future = widget.load());
+    setState(() {
+      _future = widget.load();
+    });
     await _future;
   }
 
@@ -83,7 +85,8 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
                       tone: Tone.crit,
                     ),
                     const SizedBox(height: Gap.xl),
-                    PrimaryButton('ลองอีกครั้ง', ghost: true, onPressed: reload),
+                    PrimaryButton('ลองอีกครั้ง',
+                        ghost: true, onPressed: reload),
                   ],
                 ),
               ),

@@ -24,18 +24,18 @@ class AppColors {
   final Color bg, sunk, ink, ink2, ink3, ink4, rule, rule2, ok, warn, crit, sel;
 
   static const light = AppColors(
-    bg: Color(0xFFFFFFFF),
-    sunk: Color(0xFFF7F7F6),
-    ink: Color(0xFF111112),
-    ink2: Color(0xFF55565A),
-    ink3: Color(0xFF8A8C90),
-    ink4: Color(0xFFB4B6B9),
-    rule: Color(0xFFE4E4E2),
-    rule2: Color(0xFFD0D0CE),
-    ok: Color(0xFF2F6B4A),
-    warn: Color(0xFFA96A05),
-    crit: Color(0xFFA32B22),
-    sel: Color(0xFF2E4A6B),
+    bg: Color(0xFFF8F9FD),
+    sunk: Color(0xFFFFFFFF),
+    ink: Color(0xFF27243A),
+    ink2: Color(0xFF69657B),
+    ink3: Color(0xFF9290A2),
+    ink4: Color(0xFFC4C1D0),
+    rule: Color(0xFFEAE8F3),
+    rule2: Color(0xFFD9D5E8),
+    ok: Color(0xFF36A875),
+    warn: Color(0xFFE49A28),
+    crit: Color(0xFFE05D66),
+    sel: Color(0xFF6657E8),
   );
 
   static const dark = AppColors(
@@ -94,9 +94,9 @@ ThemeData buildTheme(Brightness brightness) {
     fontFamilyFallback: const ['Noto Sans Thai', 'Sarabun', 'sans-serif'],
     textTheme: TextTheme(
       // ตัวเลขหลัก — น้ำหนักบางขนาดใหญ่ คือจุดนำสายตาเดียวของแต่ละหน้าจอ
-      displayLarge: t(44, FontWeight.w300, c.ink, h: 1.05),
-      displayMedium: t(32, FontWeight.w300, c.ink, h: 1.1),
-      titleLarge: t(20, FontWeight.w600, c.ink, h: 1.3),
+      displayLarge: t(44, FontWeight.w700, c.ink, h: 1.05),
+      displayMedium: t(32, FontWeight.w700, c.ink, h: 1.1),
+      titleLarge: t(21, FontWeight.w700, c.ink, h: 1.3),
       titleMedium: t(15, FontWeight.w600, c.ink, h: 1.5),
       bodyLarge: t(15, FontWeight.w400, c.ink),
       bodyMedium: t(13.5, FontWeight.w400, c.ink2),
@@ -114,5 +114,38 @@ ThemeData buildTheme(Brightness brightness) {
     ),
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
+    cardTheme: CardThemeData(
+      color: c.sunk,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: c.sunk,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+      hintStyle: TextStyle(color: c.ink4, fontSize: 14),
+      border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+      enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: c.rule)),
+      focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: c.sel, width: 1.5)),
+      errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: c.crit)),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: c.ink,
+      contentTextStyle: TextStyle(color: c.bg),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: c.bg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    ),
   );
 }

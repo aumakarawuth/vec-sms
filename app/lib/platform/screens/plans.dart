@@ -27,8 +27,10 @@ class _PlansScreenState extends State<PlansScreen> {
   final _key = GlobalKey<AsyncViewState<List<Map<String, dynamic>>>>();
 
   Future<Fetched<List<Map<String, dynamic>>>> _load() async {
-    final data = await widget.session.api.get('/platform/plans') as List<dynamic>;
-    return Fetched(data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
+    final data =
+        await widget.session.api.get('/platform/plans') as List<dynamic>;
+    return Fetched(
+        data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
   }
 
   @override
@@ -53,22 +55,22 @@ class _PlansScreenState extends State<PlansScreen> {
               Divider(height: 1, color: context.c.rule),
               ConsoleRow(
                 title: '${p['name_th']} (${p['code']})',
-                subtitle: '${_limitOf(p)} · ${Fmt.money(p['price_per_year'])}/ปี'
+                subtitle:
+                    '${_limitOf(p)} · ${Fmt.money(p['price_per_year'])}/ปี'
                     '${Fmt.toNum(p['price_per_student']) == 0 ? '' : ' + ${Fmt.money(p['price_per_student'])}/คน'}',
                 trailing: '${Fmt.count(p['institutions'])} แห่ง',
                 badge: p['active'] == true
                     ? (p['enforcement'] == 'hard' ? 'บังคับโควตา' : null)
                     : 'ปิดการขาย',
                 tone: p['active'] == true ? Tone.warn : Tone.neutral,
-                onTap: canWrite
-                    ? () => _openEditor(context, p)
-                    : null,
+                onTap: canWrite ? () => _openEditor(context, p) : null,
               ),
             ],
             Divider(height: 1, color: context.c.rule),
             const SizedBox(height: Gap.xl),
             if (canWrite)
-              PrimaryButton('เพิ่มแพ็กเกจใหม่', ghost: true, onPressed: () => _openEditor(context, null)),
+              PrimaryButton('เพิ่มแพ็กเกจใหม่',
+                  ghost: true, onPressed: () => _openEditor(context, null)),
             const SizedBox(height: Gap.lg),
             Text(
               'โควตาแบบ soft คือเกินได้แต่ขึ้นในรายงาน ส่วนแบบ hard จะรับนักศึกษา '
@@ -87,7 +89,8 @@ class _PlansScreenState extends State<PlansScreen> {
     return max == null ? 'ไม่จำกัดจำนวนนักศึกษา' : 'ครอบ ${Fmt.count(max)} คน';
   }
 
-  Future<void> _openEditor(BuildContext context, Map<String, dynamic>? plan) async {
+  Future<void> _openEditor(
+      BuildContext context, Map<String, dynamic>? plan) async {
     final saved = await showDialog<bool>(
       context: context,
       builder: (_) => _PlanDialog(session: widget.session, plan: plan),
@@ -175,7 +178,10 @@ class _PlanDialogState extends State<_PlanDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const GroupHeader('รหัสแพ็กเกจ'),
-              ConsoleField(controller: _code, enabled: !editing && !_busy, hint: 'standard'),
+              ConsoleField(
+                  controller: _code,
+                  enabled: !editing && !_busy,
+                  hint: 'standard'),
               const SizedBox(height: Gap.lg),
               const GroupHeader('ชื่อที่แสดง'),
               ConsoleField(controller: _name, enabled: !_busy),

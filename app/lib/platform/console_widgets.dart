@@ -46,12 +46,11 @@ class ConsoleField extends StatelessWidget {
       cursorColor: c.ink,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(color: c.ink4),
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(vertical: Gap.md),
-        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: c.rule2)),
-        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: c.ink)),
-        disabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: c.rule)),
+        hintStyle:
+            Theme.of(context).textTheme.bodyLarge?.copyWith(color: c.ink4),
+        prefixIcon: Icon(
+            obscure ? Icons.lock_outline_rounded : Icons.edit_outlined,
+            color: c.ink3),
       ),
     );
   }
@@ -86,7 +85,8 @@ class CopyableValue extends StatelessWidget {
                 );
               }
             },
-            child: Text('คัดลอก', style: t.bodySmall?.copyWith(color: context.c.sel)),
+            child: Text('คัดลอก',
+                style: t.bodySmall?.copyWith(color: context.c.sel)),
           ),
         ),
         const SizedBox(height: Gap.sm),

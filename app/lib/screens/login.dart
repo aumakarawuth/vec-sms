@@ -52,7 +52,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = _password.text;
 
     if (code.isEmpty || password.isEmpty) {
-      setState(() => _error = 'กรุณากรอกรหัสประจำตัวและรหัสผ่าน');
+      setState(() => _error = 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
       return;
     }
 
@@ -73,7 +73,8 @@ class _LoginScreenState extends State<LoginScreen> {
         platform: DeviceIdentity.platform(),
       );
     } on OfflineException {
-      setState(() => _error = 'ต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบสัญญาณอินเทอร์เน็ต');
+      setState(() => _error =
+          'ติดต่อ API ไม่ได้ (${widget.session.api.baseUrl})\nตรวจสอบว่าเปิด API แล้วและใช้ URL ให้ตรงกับอุปกรณ์');
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -86,84 +87,161 @@ class _LoginScreenState extends State<LoginScreen> {
     final t = Theme.of(context).textTheme;
 
     return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.xxl * 2, Gap.lg, Gap.xxl),
-          children: [
-            const ScreenHeader(
-              kicker: 'วิทยาลัยอาชีวศึกษา',
-              title: 'เข้าสู่ระบบ',
-              subtitle: 'สำหรับนักศึกษาและผู้ปกครอง',
+      body: Container(
+        color: context.c.bg,
+        child: Stack(children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 260,
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF7668E8), Color(0xFF5548C8)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius:
+                    BorderRadius.vertical(bottom: Radius.circular(34)),
+              ),
             ),
-
-            const SizedBox(height: Gap.xxl),
-            const GroupHeader('รหัสประจำตัว'),
-            _Field(
-              controller: _code,
-              hint: '69201010001',
-              enabled: !_busy,
-              keyboardType: TextInputType.number,
-              onSubmitted: (_) => _passwordFocus.requestFocus(),
-            ),
-
-            const SizedBox(height: Gap.xl),
-            GroupHeader(
-              'รหัสผ่าน',
-              trailing: GestureDetector(
-                onTap: () => setState(() => _obscure = !_obscure),
-                child: Text(
-                  _obscure ? 'แสดง' : 'ซ่อน',
-                  style: t.bodySmall?.copyWith(color: context.c.sel),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(Gap.lg),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+                    decoration: BoxDecoration(
+                      color: context.c.sunk,
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x330F0D2A),
+                          blurRadius: 32,
+                          offset: Offset(0, 14),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const _LoginBrand(),
+                        const SizedBox(height: Gap.xxl),
+                        /*
+             * ─── ทำไมไม่ใช่แป้นตัวเลขและไม่ใช่คำว่า "รหัสประจำตัว" เฉย ๆ ───
+             * ช่องนี้ถูกส่งไปเป็น `username` ซึ่งงานทะเบียนตั้งเป็นอะไรก็ได้
+             * ผ่าน `POST /auth/credentials` — ไม่มีอะไรบังคับให้เป็นตัวเลข
+             * และ**ผู้ปกครองไม่มีรหัสประจำตัวอยู่แล้ว** แป้นตัวเลขจึงแปลว่า
+             * ผู้ปกครองบนโทรศัพท์พิมพ์ชื่อผู้ใช้ตัวเองไม่ได้เลยสักตัวอักษร
+             */
+                        const GroupHeader('รหัสประจำตัวหรือชื่อผู้ใช้'),
+                        _Field(
+                          controller: _code,
+                          hint: '69201010001',
+                          enabled: !_busy,
+                          onSubmitted: (_) => _passwordFocus.requestFocus(),
+                        ),
+                        const SizedBox(height: Gap.xl),
+                        GroupHeader(
+                          'รหัสผ่าน',
+                          trailing: GestureDetector(
+                            onTap: () => setState(() => _obscure = !_obscure),
+                            child: Text(
+                              _obscure ? 'แสดง' : 'ซ่อน',
+                              style:
+                                  t.bodySmall?.copyWith(color: context.c.sel),
+                            ),
+                          ),
+                        ),
+                        _Field(
+                          controller: _password,
+                          focusNode: _passwordFocus,
+                          hint: '••••••••',
+                          enabled: !_busy,
+                          obscure: _obscure,
+                          onSubmitted: (_) => _submit(),
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: Gap.xl),
+                          Notice(
+                              title: 'เข้าสู่ระบบไม่สำเร็จ',
+                              body: _error,
+                              tone: Tone.crit),
+                        ],
+                        const SizedBox(height: Gap.xxl),
+                        PrimaryButton(
+                          _busy ? 'กำลังตรวจสอบ' : 'เข้าสู่ระบบ',
+                          onPressed: _busy ? null : _submit,
+                        ),
+                        const SizedBox(height: Gap.md),
+                        PrimaryButton(
+                          'ลืมรหัสผ่าน',
+                          ghost: true,
+                          onPressed: _busy
+                              ? null
+                              : () => Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => ForgotPasswordScreen(
+                                        session: widget.session,
+                                        institutionId: widget.institutionId,
+                                        username: _code.text.trim(),
+                                      ),
+                                    ),
+                                  ),
+                        ),
+                        const SizedBox(height: Gap.xl),
+                        Text(
+                          'รหัสผ่านชุดแรกออกโดยงานทะเบียน ระบบจะให้ตั้งรหัสใหม่ตอนเข้าครั้งแรก\n'
+                          'บัญชีนี้ใช้ได้กับเครื่องเดียว การเปลี่ยนเครื่องต้องแจ้งงานทะเบียน',
+                          style: t.bodySmall,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-            _Field(
-              controller: _password,
-              focusNode: _passwordFocus,
-              hint: '••••••••',
-              enabled: !_busy,
-              obscure: _obscure,
-              onSubmitted: (_) => _submit(),
-            ),
-
-            if (_error != null) ...[
-              const SizedBox(height: Gap.xl),
-              Notice(title: 'เข้าสู่ระบบไม่สำเร็จ', body: _error, tone: Tone.crit),
-            ],
-
-            const SizedBox(height: Gap.xxl),
-            PrimaryButton(
-              _busy ? 'กำลังตรวจสอบ' : 'เข้าสู่ระบบ',
-              onPressed: _busy ? null : _submit,
-            ),
-
-            const SizedBox(height: Gap.md),
-            PrimaryButton(
-              'ลืมรหัสผ่าน',
-              ghost: true,
-              onPressed: _busy
-                  ? null
-                  : () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ForgotPasswordScreen(
-                            session: widget.session,
-                            institutionId: widget.institutionId,
-                            username: _code.text.trim(),
-                          ),
-                        ),
-                      ),
-            ),
-
-            const SizedBox(height: Gap.xl),
-            Text(
-              'รหัสผ่านชุดแรกออกโดยงานทะเบียน ระบบจะให้ตั้งรหัสใหม่ตอนเข้าครั้งแรก\n'
-              'บัญชีนี้ใช้ได้กับเครื่องเดียว การเปลี่ยนเครื่องต้องแจ้งงานทะเบียน',
-              style: t.bodySmall,
-            ),
-          ],
-        ),
+          ),
+        ]),
       ),
     );
+  }
+}
+
+class _LoginBrand extends StatelessWidget {
+  const _LoginBrand();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    return Column(children: [
+      Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF7668E8), Color(0xFF5548C8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Icon(Icons.school_rounded, color: Colors.white, size: 32),
+      ),
+      const SizedBox(height: Gap.lg),
+      Text('เข้าสู่ระบบ', style: t.titleLarge, textAlign: TextAlign.center),
+      const SizedBox(height: Gap.xs),
+      Text(
+        'วิทยาลัยอาชีวศึกษา · สำหรับนักศึกษาและผู้ปกครอง',
+        style: t.bodySmall,
+        textAlign: TextAlign.center,
+      ),
+    ]);
   }
 }
 
@@ -197,20 +275,15 @@ class _Field extends StatelessWidget {
       enableSuggestions: false,
       keyboardType: keyboardType,
       style: t.bodyLarge?.copyWith(
-        fontSize: 20,
+        fontSize: 16,
         fontFeatures: const [FontFeature.tabularFigures()],
       ),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: t.bodyLarge?.copyWith(fontSize: 20, color: context.c.ink4),
-        border: InputBorder.none,
-        enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: context.c.rule2),
+        prefixIcon: Icon(
+          obscure ? Icons.lock_outline_rounded : Icons.person_outline_rounded,
+          color: context.c.ink3,
         ),
-        focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: context.c.ink),
-        ),
-        contentPadding: const EdgeInsets.symmetric(vertical: Gap.md),
       ),
       onSubmitted: onSubmitted,
     );
@@ -362,12 +435,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           subtitle: 'ระบบจะส่งรหัสไปที่อีเมลหรือเบอร์โทรที่แจ้งไว้กับวิทยาลัย',
         ),
         const SizedBox(height: Gap.xxl),
-        const GroupHeader('รหัสประจำตัว'),
+        // ส่งเป็น `username` เหมือนหน้าเข้าสู่ระบบ จึงต้องพิมพ์ตัวอักษรได้ด้วย
+        const GroupHeader('รหัสประจำตัวหรือชื่อผู้ใช้'),
         _Field(
           controller: _code,
           hint: '69201010001',
           enabled: !_busy,
-          keyboardType: TextInputType.number,
           onSubmitted: (_) => _request(),
         ),
         if (_error != null) ...[
@@ -383,7 +456,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         PrimaryButton(
           'มีรหัสจากงานทะเบียนแล้ว',
           ghost: true,
-          onPressed: _busy ? null : () => setState(() => _step = _Step.enterCode),
+          onPressed:
+              _busy ? null : () => setState(() => _step = _Step.enterCode),
         ),
         const SizedBox(height: Gap.xl),
         Text(
@@ -404,12 +478,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           Notice(title: 'รหัสรีเซ็ต', body: _info, tone: Tone.info),
         ],
         const SizedBox(height: Gap.xxl),
-        const GroupHeader('รหัสประจำตัว'),
+        const GroupHeader('รหัสประจำตัวหรือชื่อผู้ใช้'),
         _Field(
           controller: _code,
           hint: '69201010001',
           enabled: !_busy,
-          keyboardType: TextInputType.number,
         ),
         const SizedBox(height: Gap.xl),
         const GroupHeader('รหัสรีเซ็ต'),
@@ -440,7 +513,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         ),
         if (_error != null) ...[
           const SizedBox(height: Gap.xl),
-          Notice(title: 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ', body: _error, tone: Tone.crit),
+          Notice(
+              title: 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ',
+              body: _error,
+              tone: Tone.crit),
         ],
         const SizedBox(height: Gap.xxl),
         PrimaryButton(
@@ -476,7 +552,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         const SizedBox(height: Gap.xl),
         const Notice(
           title: 'ออกจากระบบทุกอุปกรณ์แล้ว',
-          body: 'เพื่อความปลอดภัย ระบบเพิกถอนการเข้าใช้งานของทุกเครื่องที่ค้างอยู่ '
+          body:
+              'เพื่อความปลอดภัย ระบบเพิกถอนการเข้าใช้งานของทุกเครื่องที่ค้างอยู่ '
               'ถ้าท่านสงสัยว่ามีคนอื่นใช้บัญชีนี้ ให้แจ้งงานทะเบียนด้วย',
           tone: Tone.ok,
         ),
@@ -551,16 +628,31 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             ),
             const SizedBox(height: Gap.xxl),
             const GroupHeader('รหัสผ่านเดิม'),
-            _Field(controller: _current, hint: '••••••••', enabled: !_busy, obscure: true),
+            _Field(
+                controller: _current,
+                hint: '••••••••',
+                enabled: !_busy,
+                obscure: true),
             const SizedBox(height: Gap.xl),
             const GroupHeader('รหัสผ่านใหม่'),
-            _Field(controller: _next, hint: 'อย่างน้อย 8 ตัวอักษร', enabled: !_busy, obscure: true),
+            _Field(
+                controller: _next,
+                hint: 'อย่างน้อย 8 ตัวอักษร',
+                enabled: !_busy,
+                obscure: true),
             const SizedBox(height: Gap.xl),
             const GroupHeader('ยืนยันรหัสผ่านใหม่'),
-            _Field(controller: _confirm, hint: '••••••••', enabled: !_busy, obscure: true),
+            _Field(
+                controller: _confirm,
+                hint: '••••••••',
+                enabled: !_busy,
+                obscure: true),
             if (_error != null) ...[
               const SizedBox(height: Gap.xl),
-              Notice(title: 'เปลี่ยนรหัสผ่านไม่สำเร็จ', body: _error, tone: Tone.crit),
+              Notice(
+                  title: 'เปลี่ยนรหัสผ่านไม่สำเร็จ',
+                  body: _error,
+                  tone: Tone.crit),
             ],
             const SizedBox(height: Gap.xxl),
             PrimaryButton(

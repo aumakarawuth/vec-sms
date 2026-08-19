@@ -76,8 +76,16 @@ class ApiClient {
   String? _refresh;
   String? _institutionId;
   Future<void>? _refreshing;
+  void Function()? onUnauthorized;
 
   String? get token => _token;
+
+  Future<void> clearLocalAuth() async {
+    _token = null;
+    _refresh = null;
+    await _store.remove(_tokenKey);
+    await _store.remove(_refreshKey);
+  }
 
   static const _tokenKey = 'auth.token';
   static const _refreshKey = 'auth.refresh';
@@ -143,7 +151,8 @@ class ApiClient {
 
   Future<void> _rememberCacheKey(String key) async {
     final raw = await _store.read(_cacheIndexKey);
-    final keys = raw == null ? <String>[] : (jsonDecode(raw) as List).cast<String>();
+    final keys =
+        raw == null ? <String>[] : (jsonDecode(raw) as List).cast<String>();
     if (!keys.contains(key)) {
       keys.add(key);
       await _store.write(_cacheIndexKey, jsonEncode(keys));
@@ -158,10 +167,14 @@ class ApiClient {
   Future<void> _refreshAccessToken() {
     return _refreshing ??= () async {
       try {
-        final res = await _send('POST', '/auth/refresh', {
-          'institutionId': _institutionId,
-          'refreshToken': _refresh,
-        }, false) as Map<String, dynamic>;
+        final res = await _send(
+            'POST',
+            '/auth/refresh',
+            {
+              'institutionId': _institutionId,
+              'refreshToken': _refresh,
+            },
+            false) as Map<String, dynamic>;
         await setTokens(
           access: res['accessToken'].toString(),
           refresh: res['refreshToken'].toString(),
@@ -205,7 +218,8 @@ class ApiClient {
 
   Future<dynamic> get(String path) => _send('GET', path);
 
-  Future<dynamic> post(String path, [Object? body]) => _send('POST', path, body);
+  Future<dynamic> post(String path, [Object? body]) =>
+      _send('POST', path, body);
 
   Future<dynamic> _send(
     String method,
@@ -240,11 +254,17 @@ class ApiClient {
       try {
         await _refreshAccessToken();
       } catch (_) {
+        await clearLocalAuth();
+        onUnauthorized?.call();
         throw ApiException(401, 'กรุณาเข้าสู่ระบบใหม่');
       }
       return _send(method, path, body, false);
     }
 
+    if (res.statusCode == 401 && !path.startsWith('/auth/')) {
+      await clearLocalAuth();
+      onUnauthorized?.call();
+    }
     throw ApiException(res.statusCode, _messageOf(decoded, res.statusCode));
   }
 

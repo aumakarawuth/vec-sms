@@ -127,7 +127,6 @@ class _CheckinScreenState extends State<CheckinScreen> {
       },
     );
   }
-
 }
 
 class _MeetingRow extends StatelessWidget {

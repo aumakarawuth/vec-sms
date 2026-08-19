@@ -33,6 +33,12 @@ class Session extends ChangeNotifier {
 
   bool get isSignedIn => api.token != null && studentId != null;
 
+  void handleUnauthorized() {
+    studentId = null;
+    termId = null;
+    notifyListeners();
+  }
+
   static const _kStudent = 'session.studentId';
   static const _kTerm = 'session.termId';
   static const _kName = 'session.name';
@@ -85,11 +91,30 @@ class Session extends ChangeNotifier {
     role = res['role']?.toString();
     if (role != null) await _store.write(_kRole, role!);
 
-    final students = await api.get('/students') as List<dynamic>;
-    final me = students.cast<Map<String, dynamic>>().firstWhere(
-          (s) => s['student_code'].toString() == username,
-          orElse: () => throw ApiException(404, 'ไม่พบข้อมูลนักศึกษาของรหัสนี้'),
-        );
+    /*
+     * ─── ห้ามหาตัวเองด้วยการเทียบชื่อผู้ใช้กับรหัสประจำตัว ───
+     * `GET /students` ถูก RLS กรองมาแล้วว่าบัญชีนี้เห็นใครได้บ้าง — นักศึกษา
+     * เห็นแถวเดียวคือตัวเอง ผู้ปกครองเห็นเฉพาะบุตรที่ผูกและยืนยันแล้ว
+     * คำถาม "คนนี้คือใคร" เซิร์ฟเวอร์ตอบไปแล้ว แอปต้องไม่ตอบใหม่เอง
+     *
+     * เดิมเทียบ `student_code == username` ซึ่งเดาว่าชื่อผู้ใช้**คือ**รหัส
+     * ประจำตัวเสมอ แต่ `POST /auth/credentials` ให้งานทะเบียนตั้งชื่อผู้ใช้
+     * เป็นอะไรก็ได้ และไม่มีอะไรในระบบบังคับข้อตกลงนั้นสักชั้นเดียว ผลคือ
+     *   · นักศึกษาที่ชื่อผู้ใช้ไม่ตรงรหัส เข้าไม่ได้เลยทั้งที่รหัสผ่านถูก
+     *   · **ผู้ปกครองเข้าไม่ได้เลยสักคน** เพราะชื่อผู้ใช้ของผู้ปกครอง
+     *     ไม่มีวันเท่ากับรหัสประจำตัวของบุตร — โหมดผู้ปกครองทั้งโหมด
+     *     จึงไม่เคยมีใครเข้าถึงได้
+     * ทั้งสองอาการโผล่เป็น "ไม่พบข้อมูลนักศึกษาของรหัสนี้" หลังล็อกอินผ่านแล้ว
+     * ซึ่งอ่านเหมือนข้อมูลหาย ไม่เหมือนแอปเทียบผิดช่อง
+     */
+    final students = (await api.get('/students') as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    if (students.isEmpty) {
+      throw ApiException(
+          404, 'บัญชีนี้ยังไม่ได้ผูกกับนักศึกษาคนใด ติดต่องานทะเบียน');
+    }
+    // ผู้ปกครองที่มีบุตรหลายคนยังเห็นได้ทีละคน — ทั้งแอปถือ studentId เดียว
+    final me = students.first;
 
     studentId = me['id'].toString();
     displayName = me['full_name']?.toString();
@@ -133,7 +158,8 @@ class Session extends ChangeNotifier {
       'institutionId': institutionId,
       'username': username,
     }) as Map<String, dynamic>;
-    return res['message']?.toString() ?? 'ถ้ามีบัญชีนี้อยู่ ระบบได้ส่งรหัสรีเซ็ตไปให้แล้ว';
+    return res['message']?.toString() ??
+        'ถ้ามีบัญชีนี้อยู่ ระบบได้ส่งรหัสรีเซ็ตไปให้แล้ว';
   }
 
   /// ใช้รหัสรีเซ็ตตั้งรหัสผ่านใหม่ โดยไม่ต้องรู้รหัสผ่านเดิม
@@ -157,7 +183,15 @@ class Session extends ChangeNotifier {
 
   Future<void> signOut() async {
     await api.signOut();
-    for (final k in [_kStudent, _kTerm, _kName, _kCode, _kProgram, _kMustChange, _kRole]) {
+    for (final k in [
+      _kStudent,
+      _kTerm,
+      _kName,
+      _kCode,
+      _kProgram,
+      _kMustChange,
+      _kRole
+    ]) {
       await _store.remove(k);
     }
     studentId = null;

@@ -69,8 +69,9 @@ class PlatformApi {
   Future<void> _refreshAccessToken() {
     return _refreshing ??= () async {
       try {
-        final res = await send('POST', '/platform/refresh',
-            {'refreshToken': _refresh}, false) as Map<String, dynamic>;
+        final res = await send(
+                'POST', '/platform/refresh', {'refreshToken': _refresh}, false)
+            as Map<String, dynamic>;
         _access = res['accessToken']?.toString();
         _refresh = res['refreshToken']?.toString();
       } finally {

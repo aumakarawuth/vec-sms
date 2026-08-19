@@ -105,8 +105,9 @@ class PlatformSession extends ChangeNotifier {
 
   /// ยืนยันรหัสครั้งแรก — สำเร็จแล้วได้ token จริงเลย ไม่ต้องล็อกอินใหม่
   Future<void> confirmEnrollment(String code) async {
-    final res = await api.postAs(_challenge!, '/platform/mfa/confirm', {'code': code})
-        as Map<String, dynamic>;
+    final res =
+        await api.postAs(_challenge!, '/platform/mfa/confirm', {'code': code})
+            as Map<String, dynamic>;
     _adopt(res);
   }
 

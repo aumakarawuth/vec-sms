@@ -32,9 +32,10 @@ class _PlatformAuditScreenState extends State<PlatformAuditScreen> {
   final _key = GlobalKey<AsyncViewState<List<Map<String, dynamic>>>>();
 
   Future<Fetched<List<Map<String, dynamic>>>> _load() async {
-    final data =
-        await widget.session.api.get('/platform/audit?limit=200') as List<dynamic>;
-    return Fetched(data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
+    final data = await widget.session.api.get('/platform/audit?limit=200')
+        as List<dynamic>;
+    return Fetched(
+        data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
   }
 
   @override
@@ -54,8 +55,7 @@ class _PlatformAuditScreenState extends State<PlatformAuditScreen> {
               subtitle: 'แก้ไม่ได้และลบไม่ได้ แม้แต่ผู้ดูแลระดับ owner',
             ),
             const SizedBox(height: Gap.xl),
-            if (rows.isEmpty)
-              Text('ยังไม่มีบันทึก', style: t.bodyMedium),
+            if (rows.isEmpty) Text('ยังไม่มีบันทึก', style: t.bodyMedium),
             for (final r in rows) ...[
               Divider(height: 1, color: context.c.rule),
               Padding(

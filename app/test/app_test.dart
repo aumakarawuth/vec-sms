@@ -702,4 +702,86 @@ void main() {
       expect(find.textContaining('ออกจากระบบทุกอุปกรณ์'), findsWidgets);
     });
   });
+
+  // ── การเข้าสู่ระบบ ────────────────────────────────────────────────
+  //
+  // ─── ทำไมกลุ่มนี้ถึงเพิ่งมี ───
+  // เทสต์ทุกข้อก่อนหน้านี้เริ่มจาก `makeSession()` ซึ่งใส่ `studentId` ให้
+  // ไว้แล้ว — ขั้นที่แปลง "ล็อกอินสำเร็จ" เป็น "รู้ว่าตัวเองเป็นนักศึกษาคนไหน"
+  // จึงไม่เคยถูกเดินเลยสักครั้ง ทั้งที่เป็นปุ่มแรกที่ทุกคนกด
+  group('การเข้าสู่ระบบ', () {
+    Session freshSession(MockClient client) {
+      final store = MemoryStore();
+      return Session(
+        api: ApiClient(baseUrl: '/api/v1', store: store, httpClient: client),
+        store: store,
+      );
+    }
+
+    MockClient signInApi({
+      required String role,
+      required List<Map<String, Object?>> students,
+    }) =>
+        mockApi(routes: {
+          '/auth/login': {
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'role': role,
+            'mustChangePassword': false,
+          },
+          '/students': students,
+        });
+
+    Future<void> signIn(Session s, String username) => s.signIn(
+          institutionId: '11111111-1111-1111-1111-111111111111',
+          username: username,
+          password: 'Demo!vec2569',
+          termId: _term,
+          deviceId: 'device-1',
+        );
+
+    test('APP-25 ชื่อผู้ใช้ที่ไม่ใช่รหัสประจำตัวต้องเข้าได้', () async {
+      // งานทะเบียนตั้งชื่อผู้ใช้เป็นอะไรก็ได้ผ่าน POST /auth/credentials
+      // และไม่มีอะไรในระบบบังคับให้เท่ากับรหัสประจำตัว — แอปเคยเทียบสองค่านี้
+      // แล้วโยน 404 ทิ้ง คนที่รหัสผ่านถูกทุกตัวจึงเข้าไม่ได้โดยไม่มีใครอธิบายได้
+      final session = freshSession(signInApi(role: 'student', students: [
+        {'id': _sid, 'student_code': '69201010101',
+         'full_name': 'กิตติศักดิ์ ตั้งใจเรียน', 'program_name': 'ช่างยนต์'},
+      ]));
+
+      await signIn(session, 'student.demo');
+
+      expect(session.studentId, _sid);
+      expect(session.studentCode, '69201010101');
+      expect(session.isSignedIn, isTrue);
+    });
+
+    test('APP-26 ผู้ปกครองต้องเข้าได้ ทั้งที่ไม่มีรหัสประจำตัวของตัวเอง', () async {
+      // ชื่อผู้ใช้ของผู้ปกครองไม่มีวันเท่ากับรหัสประจำตัวของบุตร กฎเดิมจึง
+      // ปิดโหมดผู้ปกครองทั้งโหมดโดยไม่มีอะไรฟ้อง — ตัวแอปมี isGuardianMode
+      // และแท็บของผู้ปกครองครบอยู่แล้ว แต่ไม่มีใครไปถึงได้เลยสักคน
+      final session = freshSession(signInApi(role: 'guardian', students: [
+        {'id': _sid, 'student_code': '69201010101',
+         'full_name': 'กิตติศักดิ์ ตั้งใจเรียน', 'program_name': 'ช่างยนต์'},
+      ]));
+
+      await signIn(session, 'guardian.demo');
+
+      expect(session.studentId, _sid, reason: 'ต้องได้ระเบียนของบุตร');
+      expect(session.isGuardianMode, isTrue);
+    });
+
+    test('APP-27 บัญชีที่ยังไม่ผูกกับนักศึกษาต้องบอกให้ติดต่องานทะเบียน', () async {
+      // RLS คืนศูนย์แถวเมื่อบัญชีนั้นยังไม่ถูกผูก — ข้อความต้องบอกว่าต้องทำ
+      // อะไรต่อ ไม่ใช่ "ไม่พบข้อมูล" ซึ่งอ่านเหมือนข้อมูลหายไปจากระบบ
+      final session = freshSession(signInApi(role: 'student', students: []));
+
+      await expectLater(
+        signIn(session, 'student.demo'),
+        throwsA(isA<ApiException>().having(
+          (e) => e.message, 'message', contains('งานทะเบียน'))),
+      );
+      expect(session.studentId, isNull);
+    });
+  });
 }

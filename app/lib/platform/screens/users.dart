@@ -27,8 +27,10 @@ class _PlatformUsersScreenState extends State<PlatformUsersScreen> {
   final _key = GlobalKey<AsyncViewState<List<Map<String, dynamic>>>>();
 
   Future<Fetched<List<Map<String, dynamic>>>> _load() async {
-    final data = await widget.session.api.get('/platform/users') as List<dynamic>;
-    return Fetched(data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
+    final data =
+        await widget.session.api.get('/platform/users') as List<dynamic>;
+    return Fetched(
+        data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
   }
 
   @override
@@ -137,12 +139,14 @@ class _PlatformUsersScreenState extends State<PlatformUsersScreen> {
             if (!me)
               ListTile(
                 title: Text(disabled ? 'เปิดใช้งานบัญชี' : 'ระงับบัญชี'),
-                onTap: () => Navigator.of(context).pop(disabled ? 'enable' : 'disable'),
+                onTap: () =>
+                    Navigator.of(context).pop(disabled ? 'enable' : 'disable'),
               ),
             if (!me)
               ListTile(
                 title: const Text('ออกรหัสตั้งค่าใหม่ (ลืมรหัสผ่าน)'),
-                subtitle: const Text('รหัสผ่านเดิมและ session ทั้งหมดจะถูกยกเลิกทันที'),
+                subtitle: const Text(
+                    'รหัสผ่านเดิมและ session ทั้งหมดจะถูกยกเลิกทันที'),
                 onTap: () => Navigator.of(context).pop('reset'),
               ),
             if (me)
@@ -180,7 +184,8 @@ class _PlatformUsersScreenState extends State<PlatformUsersScreen> {
       await _key.currentState?.reload();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 }
@@ -245,7 +250,10 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const GroupHeader('ชื่อผู้ใช้'),
-              ConsoleField(controller: _username, enabled: !_busy, hint: 'vendor.support'),
+              ConsoleField(
+                  controller: _username,
+                  enabled: !_busy,
+                  hint: 'vendor.support'),
               const SizedBox(height: Gap.lg),
               const GroupHeader('ชื่อที่แสดง'),
               ConsoleField(controller: _display, enabled: !_busy),
@@ -266,7 +274,10 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                 ),
               if (_error != null) ...[
                 const SizedBox(height: Gap.md),
-                Notice(title: 'สร้างบัญชีไม่สำเร็จ', body: _error, tone: Tone.crit),
+                Notice(
+                    title: 'สร้างบัญชีไม่สำเร็จ',
+                    body: _error,
+                    tone: Tone.crit),
               ],
             ],
           ),
@@ -318,7 +329,8 @@ class _RoleOption extends StatelessWidget {
               margin: const EdgeInsets.only(top: 5, right: Gap.md),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: selected ? c.ink : c.rule2, width: 1.5),
+                border:
+                    Border.all(color: selected ? c.ink : c.rule2, width: 1.5),
                 color: selected ? c.ink : Colors.transparent,
               ),
             ),
@@ -338,7 +350,8 @@ class _RoleOption extends StatelessWidget {
                         'ทำได้ทุกอย่าง รวมถึงดูแลบัญชีผู้ดูแลด้วยกันเอง',
                       PlatformRole.billing =>
                         'แพ็กเกจ สัญญา เปิดวิทยาลัย ระงับและคืนสิทธิ์',
-                      PlatformRole.support => 'อ่านอย่างเดียว ใช้ตอบคำถามลูกค้า',
+                      PlatformRole.support =>
+                        'อ่านอย่างเดียว ใช้ตอบคำถามลูกค้า',
                     },
                     style: t.bodySmall,
                   ),

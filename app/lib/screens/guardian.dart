@@ -48,9 +48,8 @@ class GuardianScreen extends StatelessWidget {
       final rows = (r as List<dynamic>).cast<Map<String, dynamic>>();
       if (rows.isEmpty) return <String, dynamic>{};
       // แสดงวิชาที่เสี่ยงที่สุด เพราะเป็นเรื่องที่ผู้ปกครองต้องรู้ก่อน
-      rows.sort((a, b) =>
-          (Fmt.toNum(a['absences_left']) ?? 99).compareTo(
-              Fmt.toNum(b['absences_left']) ?? 99));
+      rows.sort((a, b) => (Fmt.toNum(a['absences_left']) ?? 99)
+          .compareTo(Fmt.toNum(b['absences_left']) ?? 99));
       return rows.first;
     });
 
@@ -96,7 +95,8 @@ class GuardianScreen extends StatelessWidget {
               const SizedBox(height: Gap.xl),
               const GroupHeader('เวลาเรียน'),
               const SizedBox(height: Gap.md),
-              InfoRow('เข้าเรียน', value: Fmt.percent(attendance['pct_to_date'])),
+              InfoRow('เข้าเรียน',
+                  value: Fmt.percent(attendance['pct_to_date'])),
               InfoRow(
                 'ขาดได้อีก',
                 value: '${Fmt.count(attendance['absences_left'])} คาบ',
@@ -116,8 +116,10 @@ class GuardianScreen extends StatelessWidget {
                 why: 'บัญชีผู้ปกครองนี้ยังไม่ได้รับสิทธิ์ดูผลการเรียน',
               )
             else ...[
-              InfoRow('เกรดเฉลี่ยสะสม', value: Fmt.toNum(grades['gpax'])?.toStringAsFixed(2) ?? '—'),
-              InfoRow('หน่วยกิตสะสม', value: Fmt.count(grades['credits_earned'])),
+              InfoRow('เกรดเฉลี่ยสะสม',
+                  value: Fmt.toNum(grades['gpax'])?.toStringAsFixed(2) ?? '—'),
+              InfoRow('หน่วยกิตสะสม',
+                  value: Fmt.count(grades['credits_earned'])),
             ],
 
             // ── การเงิน — เฉพาะผู้ปกครองที่ได้รับสิทธิ์ ──
@@ -130,10 +132,14 @@ class GuardianScreen extends StatelessWidget {
                 why: 'บัญชีผู้ปกครองนี้ยังไม่ได้รับสิทธิ์ดูข้อมูลการเงิน',
               )
             else ...[
-              InfoRow('ยอดค้างชำระ', value: Fmt.money(finance['balance']),
-                  tone: (Fmt.toNum(finance['balance']) ?? 0) > 0 ? Tone.warn : Tone.ok),
+              InfoRow('ยอดค้างชำระ',
+                  value: Fmt.money(finance['balance']),
+                  tone: (Fmt.toNum(finance['balance']) ?? 0) > 0
+                      ? Tone.warn
+                      : Tone.ok),
               if (finance['next_due_on'] != null)
-                InfoRow('งวดถัดไป', value: Fmt.dateShortOf(finance['next_due_on'])),
+                InfoRow('งวดถัดไป',
+                    value: Fmt.dateShortOf(finance['next_due_on'])),
             ],
 
             const SizedBox(height: Gap.xxl),
