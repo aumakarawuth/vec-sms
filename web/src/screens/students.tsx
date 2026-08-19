@@ -62,6 +62,12 @@ export function StudentsScreen() {
         sub={list.data ? `${list.data.length} รายการ` : undefined}
       />
 
+      <div className="stat-grid">
+        <div className="stat-card pink"><span>นักศึกษาทั้งหมด</span><strong>{list.data?.length ?? '—'}</strong><small>ข้อมูลล่าสุดในระบบ</small></div>
+        <div className="stat-card yellow"><span>กำลังศึกษา</span><strong>{list.data?.filter((x) => x.status === 'active').length ?? '—'}</strong><small><b>●</b> สถานะปัจจุบัน</small></div>
+        <div className="stat-card blue"><span>สำเร็จการศึกษา</span><strong>{list.data?.filter((x) => x.status === 'graduated').length ?? '—'}</strong><small>ประวัติสะสม</small></div>
+      </div>
+
       <Card>
         <div className="row">
           <Field label="ค้นหาด้วยรหัสนักศึกษา ชื่อ หรือนามสกุล">

@@ -31,6 +31,9 @@ import { ProvisioningModule } from './modules/provisioning/provisioning.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { GovernmentExportsModule } from './modules/government-exports/government-exports.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { ClubsModule } from './modules/clubs/clubs.module';
+import { OnetModule } from './modules/onet/onet.module';
 
 @Module({
   imports: [
@@ -65,6 +68,9 @@ import { GovernmentExportsModule } from './modules/government-exports/government
     PlatformModule,
     SubscriptionModule,
     GovernmentExportsModule,
+    ReportsModule,
+    ClubsModule,
+    OnetModule,
     JobsModule,
   ],
   providers: [

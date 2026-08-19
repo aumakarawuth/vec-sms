@@ -13,7 +13,9 @@ import { AcademicYearScreen } from './screens/academic-year';
 import { AdmissionsScreen } from './screens/admissions';
 import { AttendanceScreen } from './screens/attendance';
 import { BehaviorScreen } from './screens/behavior';
+import { BehaviorCenterScreen } from './screens/behavior-center';
 import { ChangeRequestsScreen } from './screens/change-requests';
+import { ClubsScreen } from './screens/clubs';
 import { CurriculumScreen } from './screens/curriculum';
 import { DocumentsScreen } from './screens/documents';
 import { DualScreen } from './screens/dual';
@@ -26,17 +28,36 @@ import { ImportScreen } from './screens/import';
 import { JobsScreen } from './screens/jobs';
 import { LettersScreen } from './screens/letters';
 import { LoginScreen } from './screens/login';
+import { OnetScreen } from './screens/onet';
+import { PersonnelCenterScreen } from './screens/personnel-center';
 import { RegistrationScreen } from './screens/registration';
+import { RegistryCenterScreen } from './screens/registry-center';
 import { RiskScreen } from './screens/risk';
 import { StudentLeaveScreen } from './screens/student-leave';
+import { SettingsCenterScreen } from './screens/settings-center';
+import { StatisticsScreen } from './screens/statistics';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { TimetableScreen } from './screens/timetable';
+import { TimetableCenterScreen } from './screens/timetable-center';
 
 interface NavItem {
   path: string;
   label: string;
   roles: Role[];
 }
+
+const NAV_ICON: Record<string, string> = {
+  '/registry': '▦',
+  '/personnel-center': '♙',
+  '/timetable-center': '◷',
+  '/settings-center': '⚙',
+  '/behavior-center': '♢',
+  '/students': '◉', '/registration': '✓', '/documents': '▤', '/graduation': '◇',
+  '/admissions': '+', '/import': '↥', '/government-exports': '↗', '/finance': '฿',
+  '/curriculum': '▦', '/timetable': '◷', '/academic-year': '◫', '/dual': '⌂',
+  '/gradebook': '★', '/attendance': '✓', '/change-requests': '↺', '/risk': '!',
+  '/behavior': '♢', '/letters': '✉', '/leaves': '◌', '/hr': '♙', '/jobs': '⚙',
+};
 
 interface NavGroup {
   title: string;
@@ -47,6 +68,16 @@ const ALL: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'dir
 const OFFICE: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 const NAV: NavGroup[] = [
+  {
+    title: 'เมนูหลัก',
+    items: [
+      { path: '/registry', label: 'ศูนย์งานทะเบียน', roles: ALL },
+      { path: '/personnel-center', label: 'ศูนย์งานบุคลากร', roles: ['registrar', 'director', 'admin'] },
+      { path: '/timetable-center', label: 'ศูนย์งานตารางเรียน', roles: ['teacher', 'registrar', 'academic', 'director', 'admin'] },
+      { path: '/settings-center', label: 'ศูนย์การตั้งค่า', roles: ['registrar', 'academic', 'director', 'admin'] },
+      { path: '/behavior-center', label: 'ศูนย์งานพฤติกรรม', roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'] },
+    ],
+  },
   {
     title: 'งานทะเบียน',
     items: [
@@ -140,11 +171,10 @@ export function App() {
   return (
     <div className="shell">
       <nav className="sidebar">
-        <h1>ระบบบริหารวิทยาลัย</h1>
+        <h1><span className="brand-mark">✦</span><span>VEC SCHOOL</span></h1>
         <div className="who">
-          {s.username}
-          <br />
-          {role ? ROLE_LABEL[role] : ''}
+          <span className="avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
+          <span><strong>{s.username}</strong><small>{role ? ROLE_LABEL[role] : ''}</small></span>
         </div>
 
         {visible.map((g) => (
@@ -156,7 +186,7 @@ export function App() {
                 href={href(i.path)}
                 className={route.path.startsWith(i.path) ? 'active' : ''}
               >
-                {i.label}
+                <span className="nav-icon">{NAV_ICON[i.path] ?? '•'}</span>{i.label}
               </a>
             ))}
           </div>
@@ -167,7 +197,13 @@ export function App() {
       </nav>
 
       <main className="main">
-        <Routes />
+        <header className="topbar">
+          <div><strong>แดชบอร์ดวิทยาลัย</strong><small>จัดการข้อมูลและติดตามงานได้ในที่เดียว</small></div>
+          <label className="global-search"><span>⌕</span><input aria-label="ค้นหาในระบบ" placeholder="ค้นหาในระบบ" /></label>
+          <button className="icon-button" aria-label="การแจ้งเตือน">♢</button>
+          <span className="top-avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
+        </header>
+        <div className="page-content"><Routes /></div>
       </main>
     </div>
   );
@@ -177,11 +213,17 @@ function Routes() {
   const { segments } = useRoute();
   const [head, second] = segments;
 
-  if (!head || head === 'students') {
-    if (head === 'students' && second) return <StudentDetailScreen id={second} />;
+  if (!head) return <RegistryCenterScreen />;
+  if (head === 'students') {
+    if (second) return <StudentDetailScreen id={second} />;
     return <StudentsScreen />;
   }
 
+  if (head === 'registry') return <RegistryCenterScreen />;
+  if (head === 'personnel-center') return <PersonnelCenterScreen />;
+  if (head === 'timetable-center') return <TimetableCenterScreen />;
+  if (head === 'settings-center') return <SettingsCenterScreen />;
+  if (head === 'behavior-center') return <BehaviorCenterScreen />;
   if (head === 'registration') return <RegistrationScreen />;
   if (head === 'attendance') return <AttendanceScreen />;
   if (head === 'gradebook') return <GradebookScreen />;
@@ -202,6 +244,9 @@ function Routes() {
   if (head === 'letters') return <LettersScreen />;
   if (head === 'behavior') return <BehaviorScreen />;
   if (head === 'dual') return <DualScreen />;
+  if (head === 'statistics') return <StatisticsScreen />;
+  if (head === 'clubs') return <ClubsScreen />;
+  if (head === 'onet') return <OnetScreen />;
 
   return (
     <div className="empty">
