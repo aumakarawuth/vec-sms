@@ -2,8 +2,8 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้าง + ข้อมูลตัวอย่าง
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- migration ล่าสุด  0064
--- ลายนิ้วมือต้นทาง  ade220ba1f883183
+-- migration ล่าสุด  0072
+-- ลายนิ้วมือต้นทาง  9539b91a421b7786
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -19835,6 +19835,1783 @@ end $$;
 drop trigger if exists student_status_audit on student;
 create trigger student_status_audit before update on student
   for each row execute function student_status_guard();
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0065_course_catalog_write_scope.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0065 — ขอบเขตการเขียนของคลังรายวิชา และช่องลบที่เปิดค้างมาตั้งแต่ 0017
+--
+-- ─── เรื่องนี้โผล่ตอนจะทำหน้าจอลงข้อมูลรายวิชา ───
+-- ยิงจริงในบริบท `app.role = 'student'` แล้วนักศึกษาทำได้ทั้งสามอย่าง:
+--   update course set credits = 99  → รายวิชาภาษาไทยพื้นฐานกลายเป็น 99 หน่วยกิต
+--   insert into course ...          → สร้างรายวิชาของตัวเองในหลักสูตร
+--   delete from course ...          → ลบรายวิชาทิ้ง
+-- ทั้งสามข้อสำเร็จจริง ทดสอบแล้วทั้งก่อนและหลังไฟล์นี้
+--
+-- ─── ทำไมถึงไม่มีใครเห็น ───
+-- 0017 ปิด `curriculum_version` · `curriculum_category` · `curriculum_course`
+-- ไว้ครบด้วย `academic_write_only` แล้ว — **ตารางลูกถูกล็อก แต่ตารางแม่เปิดอยู่**
+-- คนอ่านนโยบายจะเห็นว่าโครงสร้างหลักสูตรถูกคุ้มครอง โดยที่ `course` ซึ่งเป็น
+-- ตัวถือ **จำนวนหน่วยกิต** ที่ใช้ตัดสินการจบ ไม่มีนโยบายบทบาทเลยสักข้อ
+-- (`program` · `curriculum` · `grade_scheme` อยู่ในสภาพเดียวกัน — `grade_scheme`
+-- คือตัวกำหนดว่าเกรดไหนได้กี่แต้ม)
+-- รูปเดียวกับข้อ 10, 11, 13 และ 16 คือช่องที่ **ข้าม API ไปเลย**
+--
+-- ─── และช่องที่สอง: `with check` ไม่มีผลกับ delete ───
+-- `academic_write_only` ของ 0017 เขียนเป็น
+--     as restrictive for all using (true) with check (บทบาทวิชาการ)
+-- `using (true)` ทำให้การ**อ่าน**ไม่ถูกกระทบ ซึ่งถูกต้อง แต่ `delete` ตรวจด้วย
+-- `using` ไม่ใช่ `with check` — นักศึกษาจึง `delete from curriculum_course`
+-- ได้ทั้งตาราง (ยิงจริงแล้วลบได้ 12 จาก 12 แถว) กฎข้อนี้เขียนไว้ใน CLAUDE.md
+-- ตรง ๆ อยู่แล้ว แต่ตัวนโยบายที่ตั้งใจบังคับมันกลับติดกับดักนั้นเอง
+--
+-- ไฟล์นี้ปิดเฉพาะตระกูลหลักสูตรที่หน้าจอใหม่แตะ — ยังเหลืออีก 14 ตารางที่
+-- ติดกับดัก delete แบบเดียวกัน (`staff_role` · `ledger_transaction` ·
+-- `grade_symbol` · `grade_cutoff` · `workplace` …) TEST 274 นับไว้ให้เห็นทุกครั้ง
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ── 1. คลังรายวิชาและโครงหลักสูตรระดับบน ─────────────────────────
+--
+-- แยกเป็น insert / update / delete แทน `for all` โดยตั้งใจ — `for all`
+-- แบบ restrictive กิน `select` ไปด้วยถ้าเผลอเขียน `using` เป็นเงื่อนไขบทบาท
+-- และถึงเขียน `using (true)` ก็ยังลืม delete อยู่ดี (คือสิ่งที่เกิดขึ้นจริง)
+do $$
+declare t text;
+begin
+  foreach t in array array['course', 'program', 'curriculum', 'grade_scheme'] loop
+    execute format($f$
+      create policy academic_insert on %I
+        as restrictive for insert
+        with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+    execute format($f$
+      create policy academic_update on %I
+        as restrictive for update
+        using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+        with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+    execute format($f$
+      create policy academic_delete on %I
+        as restrictive for delete
+        using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+  end loop;
+end $$;
+
+-- ── 2. ปิดช่อง delete ของตระกูลหลักสูตรที่ 0017 เปิดค้างไว้ ────────
+--
+-- ไม่แตะ `academic_write_only` เดิม เพราะมันคุม insert/update ถูกต้องอยู่แล้ว
+-- การเพิ่มนโยบาย restrictive อีกข้อรวมกันด้วย AND จึงเป็นการ **เพิ่ม** ข้อจำกัด
+-- ไม่ใช่การเขียนทับ — ปลอดภัยกว่าการคัดลอกประโยคเดิมมาแก้ (วิธีที่ 2 ของ 0045)
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'curriculum_version', 'curriculum_category', 'curriculum_course',
+    'competency', 'course_competency', 'course_prerequisite',
+    'entry_pathway', 'graduation_rule', 'pathway_bridging_course', 'program_track'
+  ] loop
+    execute format($f$
+      create policy academic_delete on %I
+        as restrictive for delete
+        using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+  end loop;
+end $$;
+
+-- ── 3. รายวิชาที่มีคนลงทะเบียนแล้วลบไม่ได้ ────────────────────────
+--
+-- ─── ทำไมเป็น trigger ไม่ใช่นโยบาย ───
+-- เงื่อนไขคือ "มีแถวในตารางอื่นอ้างถึงไหม" ซึ่งนโยบาย RLS ตอบไม่ได้โดยไม่
+-- ทำให้ทุกคำสั่งลบต้องกางแผนไปอ่านอีกสองตาราง และ foreign key ก็กันไม่ได้
+-- เพราะ `enrollment` ชี้ที่ `class_section` ไม่ได้ชี้ที่ `course` ตรง ๆ
+--
+-- ─── ทำไมต้องกัน ───
+-- รายวิชาที่ถูกลบทิ้งแต่มีผลการเรียนอ้างอยู่ ทำให้ใบ รบ. พิมพ์ชื่อวิชาไม่ออก
+-- และ `enrollment_result` แก้ไม่ได้ตามหลักข้อ 4 — ข้อมูลจะค้างในสภาพที่
+-- ซ่อมไม่ได้อีกเลย ปิดรายวิชาด้วย `active = false` แทน ซึ่งเลือกลงหลักสูตร
+-- ใหม่ไม่ได้แต่ของเก่ายังพิมพ์ได้
+create or replace function course_delete_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_n integer;
+begin
+  select count(*) into v_n
+    from class_section cs
+   where cs.course_id = old.id;
+
+  if v_n > 0 then
+    raise exception 'ลบรายวิชา % ไม่ได้ เพราะมีกลุ่มเรียนอ้างอยู่ % กลุ่ม — ปิดการใช้งานแทนด้วยการตั้ง active = false',
+      old.code, v_n;
+  end if;
+
+  if exists (select 1 from curriculum_course cc where cc.course_id = old.id) then
+    raise exception 'ลบรายวิชา % ไม่ได้ เพราะยังอยู่ในโครงสร้างหลักสูตร — เอาออกจากหลักสูตรก่อน',
+      old.code;
+  end if;
+
+  return old;
+end $$;
+
+drop trigger if exists course_delete_guard on course;
+create trigger course_delete_guard
+  before delete on course
+  for each row execute function course_delete_guard();
+
+comment on function course_delete_guard() is
+  'กันการลบรายวิชาที่มีกลุ่มเรียนหรือหลักสูตรอ้างอยู่ — ปิดด้วย active = false แทน';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0066_transcript_credit_source.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0066 — เครื่องหมาย (*1)–(*5) บนใบ รบ. และรายวิชาเทียบโอนที่ไม่เคยขึ้นใบ
+--
+-- ═══ สองเรื่องที่ไฟล์นี้ปิด ═══
+--
+-- **1. คำอธิบายเครื่องหมายมีมาตั้งแต่ต้น แต่ไม่มีเครื่องหมาย**
+-- `reference-data.sql` ใส่ `transcript_note_1` ถึง `transcript_note_5` ให้ครบ
+-- และแม่แบบทั้ง 67 กับ 62 พิมพ์ออกมาจริงท้ายหน้า 2 แต่ค้นทั้ง repo แล้ว
+-- **ไม่มีคอลัมน์ ไม่มีช่องใน payload ไม่มีโค้ดที่ใส่ (*n) ข้างรายวิชาเลย**
+-- ใบจึงพิมพ์คำอธิบายของเครื่องหมายที่ไม่มีวันปรากฏ — รูปเดียวกับ
+-- `can_approve_leave` (ข้อ 15) และ `take_usage_snapshot` (ข้อ 8)
+--
+-- **2. รายวิชาเทียบโอนถูกนับตอนตรวจจบ แต่ไม่ขึ้นใบ รบ.**
+-- `evaluate_graduation()` บวก `transfer_credits_total()` เข้าหน่วยกิตสะสม
+-- (0051) ส่วน `transcript_data()` กับ `transcript_courses_grouped()` อ่านจาก
+-- `enrollment` อย่างเดียว — `prior_academic_record` ไม่เคยถูก join เข้ามา
+-- ผลคือ **ระบบรับรองว่าจบด้วยหน่วยกิตชุดหนึ่ง แต่กระดาษแสดงอีกชุดหนึ่ง**
+-- คนที่ถือใบไปยื่นจะบวกรายวิชาบนใบแล้วไม่ตรงกับหน่วยกิตรวมที่พิมพ์อยู่หัวใบ
+-- และกระทบนักศึกษา ปวส. เกือบทุกคนตามที่ 0060 เขียนกำกับไว้เอง
+--
+-- ─── ทำไม `credit_transfer` ใน enrollment_status ใช้แทนไม่ได้ ───
+-- ค่านั้นมีอยู่ในชนิดข้อมูลจริงและฟังก์ชันใบ รบ. ก็รับไว้แล้ว แต่
+-- `approveTransfer()` แค่ประทับ `approved_at` ลง `prior_academic_record`
+-- ไม่เคยสร้างแถว `enrollment` เลย และสร้างไม่ได้ด้วย เพราะ
+-- `class_section_id` กับ `term_id` เป็น not null ส่วนวิชาที่เทียบโอนมา
+-- ไม่มีกลุ่มเรียนของวิทยาลัยนี้ — จึงต้อง union เข้ามาตอนอ่าน
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ── 1. หน่วยกิตนี้ได้มาอย่างไร ──────────────────────────────────────
+--
+-- ─── ทำไมเป็นคอลัมน์ของ enrollment ไม่ใช่ของ course ───
+-- วิชาเดียวกันคนหนึ่งเทียบโอนมา อีกคนเรียนปกติ และคนที่สามเรียนซ้ำเพื่อ
+-- ปรับระดับคะแนน — เครื่องหมายจึงเป็นของ **การลงทะเบียนครั้งนั้น** เสมอ
+--
+-- ─── ทำไมแยกเป็น enum หนึ่งตัวกับ boolean สองตัว ───
+-- (*1)(*2)(*3) ตอบคำถาม "ได้หน่วยกิตมาอย่างไร" ซึ่งเป็นได้อย่างเดียว
+-- ส่วน (*4)(*5) ตอบ "เรียนที่ไหน/ภาษาอะไร" ซึ่งซ้อนกับข้อบนและกันเองได้
+-- วิชาที่ฝึกในสถานประกอบการและสอนเป็นภาษาอังกฤษต้องได้ทั้ง (*4) และ (*5)
+-- ถ้ายัดเป็น enum ตัวเดียวจะบังคับให้เลือกอย่างใดอย่างหนึ่งโดยไม่มีเหตุผล
+create type credit_source_kind as enum (
+  'studied',                 -- เรียนตามปกติ — ไม่มีเครื่องหมาย
+  'transferred_grade',       -- (*1) โอนผลการเรียน
+  'transferred_experience',  -- (*2) เทียบโอนความรู้และประสบการณ์
+  'regraded'                 -- (*3) เรียนปรับระดับคะแนน
+);
+
+alter table enrollment
+  add column credit_source       credit_source_kind not null default 'studied',
+  add column taught_at_workplace boolean not null default false,  -- (*4)
+  add column taught_in_english   boolean not null default false;  -- (*5)
+
+comment on column enrollment.credit_source is
+  'ที่มาของหน่วยกิต — ตัวกำหนดเครื่องหมาย (*1)(*2)(*3) บนใบ รบ.';
+comment on column enrollment.taught_at_workplace is
+  '(*4) เรียนหรือฝึกอาชีพในสถานประกอบการ — ซ้อนกับ credit_source ได้';
+comment on column enrollment.taught_in_english is
+  '(*5) จัดการเรียนการสอนเป็นภาษาอังกฤษ — ซ้อนกับทุกค่าได้';
+
+/*
+ * ─── ค่าเริ่มต้นย้อนหลังของ (*4) ───
+ * แถวที่มีอยู่แล้วซึ่งกลุ่มเรียนผูกกับสถานประกอบการ ควรได้ (*4) ตั้งแต่แรก
+ * ไม่ใช่รอให้คนไล่กดทีละแถว — ข้อมูลบอกอยู่แล้วว่าเรียนที่ไหน
+ */
+-- `dvt` คือทวิภาคี ส่วน `internship` คือฝึกงาน — ทั้งคู่คือ "เรียนหรือ
+-- ฝึกอาชีพในสถานประกอบการ" ตามถ้อยคำของ (*4) ส่วน `block` เป็นวิธีจัดตาราง
+-- ไม่ใช่สถานที่ จึงไม่นับ
+update enrollment e
+   set taught_at_workplace = true
+  from class_section cs
+ where cs.id = e.class_section_id
+   and cs.delivery_mode in ('dvt', 'internship')
+   and e.taught_at_workplace = false;
+
+-- ── 2. วิชาเทียบโอนบอกได้ว่าเป็นแบบไหน ─────────────────────────────
+--
+-- ─── ทำไมต้องมีคอลัมน์ ไม่ใช่เดาจาก counts_in_gpa ───
+-- ระเบียบ สอศ. ให้ "โอนผลการเรียน" ยกเกรดเดิมมาด้วย ส่วน "เทียบโอนความรู้
+-- และประสบการณ์" ให้หน่วยกิตโดยไม่มีแต้ม — เดาจาก `counts_in_gpa` จึงถูก
+-- เกือบทุกครั้ง แต่ "เกือบ" ไม่พอสำหรับสิ่งที่พิมพ์ลงกระดาษแล้วแก้ไม่ได้
+-- และวิทยาลัยที่บันทึกเกรดเทียบโอนแบบไม่คิด GPA จะได้เครื่องหมายผิดเงียบ ๆ
+-- ค่าเริ่มต้นเดาให้จากข้อมูลที่มี แล้วให้คนแก้ทีหลังได้
+alter table prior_academic_record
+  add column transfer_kind credit_source_kind not null default 'transferred_experience'
+    check (transfer_kind in ('transferred_grade', 'transferred_experience'));
+
+update prior_academic_record
+   set transfer_kind = 'transferred_grade'
+ where counts_in_gpa;
+
+comment on column prior_academic_record.transfer_kind is
+  'โอนผลการเรียน (*1) หรือเทียบโอนความรู้และประสบการณ์ (*2) — ค่าเริ่มต้นเดาจาก counts_in_gpa ตอน migrate';
+
+-- ── 3. แปลงเป็นเลขเครื่องหมาย ───────────────────────────────────────
+--
+-- เขียนที่เดียวเพราะทั้งสองตระกูลใบ รบ. และทั้งสองภาษาต้องได้เลขชุดเดียวกัน
+-- ถ้าปล่อยให้แต่ละฟังก์ชันแปลงเอง วันหนึ่งจะมีใบที่ (*2) แปลว่าคนละอย่าง
+create or replace function transcript_note_marks(
+  p_source      credit_source_kind,
+  p_workplace   boolean,
+  p_english     boolean
+) returns smallint[] language sql immutable as $$
+  select array_remove(array[
+    case p_source
+      when 'transferred_grade'      then 1
+      when 'transferred_experience' then 2
+      when 'regraded'               then 3
+    end::smallint,
+    case when p_workplace then 4 end::smallint,
+    case when p_english   then 5 end::smallint
+  ], null)
+$$;
+
+comment on function transcript_note_marks(credit_source_kind, boolean, boolean) is
+  'เลขเครื่องหมาย (*1)–(*5) ที่ต้องพิมพ์ท้ายชื่อวิชาบนใบ รบ. — เรียงจากน้อยไปมากเสมอ';
+
+/*
+ * ─── ภาคที่รับรองการเทียบโอน ───
+ * วิชาเทียบโอนไม่มีภาคเรียนของวิทยาลัยนี้ แต่ใบ รบ. ตระกูล 62 จัดกลุ่มตาม
+ * ภาคเรียน จึงต้องรู้ว่าจะวางไว้ภาคไหน
+ *
+ * ใช้ **ภาคที่มีวันอนุมัติอยู่ในช่วง** ไม่ใช่ภาคของสถาบันเดิม เพราะสิ่งที่
+ * ใบ รบ. ของเราแสดงคือ "วิทยาลัยนี้รับรองหน่วยกิตนี้เมื่อไร" ส่วนภาคของ
+ * สถาบันเดิมเป็นข้อมูลของอีกใบหนึ่ง การเอามาปนจะทำให้ใบมีภาคเรียนที่
+ * นักศึกษาไม่เคยลงทะเบียนกับเรา
+ *
+ * ถ้าวันอนุมัติไม่ตกในภาคไหนเลย (อนุมัติช่วงปิดภาค) ใช้ภาคแรกที่ลงทะเบียน
+ * — ดีกว่าทิ้งรายวิชาหายไปจากใบ ซึ่งเป็นสภาพก่อนไฟล์นี้
+ */
+create or replace function transfer_recognition_term(p_student_id uuid, p_approved_at timestamptz)
+returns uuid language sql stable as $$
+  select coalesce(
+    (select t.id
+       from term t
+       join academic_year ay on ay.id = t.academic_year_id
+       join student s on s.id = p_student_id
+      where ay.institution_id = s.institution_id
+        and p_approved_at::date between t.starts_on and t.ends_on
+      order by t.starts_on
+      limit 1),
+    (select e.term_id
+       from enrollment e
+       join term t on t.id = e.term_id
+      where e.student_id = p_student_id
+      order by t.starts_on
+      limit 1)
+  )
+$$;
+
+comment on function transfer_recognition_term(uuid, timestamptz) is
+  'ภาคเรียนที่ใบ รบ. จะวางรายวิชาเทียบโอนไว้ — ภาคที่รับรอง ไม่ใช่ภาคของสถาบันเดิม';
+
+-- ── 4. ตัวอ่านรายวิชาของใบ รบ. ตระกูล 62 ────────────────────────────
+--
+-- เขียนทับทั้งตัวเพราะ `returns table` เปลี่ยน — เพิ่ม `note_marks` และ
+-- union แถวเทียบโอนเข้ามา ส่วนที่เหลือคงเดิมทุกบรรทัด
+drop function if exists transcript_data(uuid);
+create function transcript_data(p_student_id uuid)
+returns table (
+  year_be        smallint,
+  term_ordinal   smallint,
+  term_label     text,
+  course_code    text,
+  course_name_th text,
+  credits        numeric(3,1),
+  grade_symbol   text,
+  grade_point    numeric(2,1),
+  credits_earned numeric(3,1),
+  category_th    text,
+  term_id        uuid,
+  course_name_en text,
+  counts_in_gpa  boolean,
+  grade_points   numeric,
+  note_marks     smallint[]
+) language sql stable as $$
+  -- ── รายวิชาที่เรียนกับวิทยาลัยนี้ ──
+  select
+    ay.year_be,
+    t.ordinal,
+    'ภาคเรียนที่ ' || t.ordinal || ' ปีการศึกษา ' || ay.year_be,
+    c.code,
+    c.name_th,
+    c.credits,
+    gsym.symbol,
+    er.grade_point,
+    er.credits_earned,
+    cat.name_th,
+    t.id,
+    coalesce(c.name_en, ''),
+    (gsym.counts_in_gpa and e.counts_toward_gpa),
+    case when gsym.counts_in_gpa and e.counts_toward_gpa
+         then er.grade_point * c.credits end,
+    transcript_note_marks(e.credit_source, e.taught_at_workplace, e.taught_in_english)
+  from enrollment e
+  join class_section cs      on cs.id = e.class_section_id
+  join course c              on c.id  = cs.course_id
+  join term t                on t.id  = e.term_id
+  join academic_year ay      on ay.id = t.academic_year_id
+  join enrollment_result er  on er.enrollment_id = e.id and er.superseded_by is null
+  join grade_symbol gsym     on gsym.id = er.grade_symbol_id
+  left join curriculum_course cc
+         on cc.curriculum_version_id = cs.curriculum_version_id
+        and cc.course_id = c.id
+  left join curriculum_category cat on cat.id = cc.curriculum_category_id
+  where e.student_id = p_student_id
+    and e.status in ('enrolled', 'credit_transfer')
+    and gsym.appears_on_transcript
+
+  union all
+
+  /*
+   * ── รายวิชาที่เทียบโอนมา ──
+   *
+   * เอาเฉพาะที่อนุมัติแล้ว — แถวที่ยังไม่อนุมัติคือคำขอ ไม่ใช่หน่วยกิต
+   * และ `evaluate_graduation()` ก็นับเฉพาะที่อนุมัติแล้วเหมือนกัน
+   * สองที่ต้องใช้เงื่อนไขเดียวกันเสมอ มิฉะนั้นใบกับการตัดสินจะไม่ตรงกันอีก
+   *
+   * ชื่อวิชาใช้ของรายวิชาที่แมปไว้ถ้ามี — ใบ รบ. ของเราต้องพิมพ์ชื่อวิชา
+   * ตามหลักสูตรของเรา ไม่ใช่ชื่อที่สถาบันเดิมใช้เรียก
+   */
+  select
+    ay.year_be,
+    t.ordinal,
+    'ภาคเรียนที่ ' || t.ordinal || ' ปีการศึกษา ' || ay.year_be,
+    coalesce(mc.code, pr.course_code),
+    coalesce(mc.name_th, pr.course_name_th),
+    pr.credits::numeric(3,1),
+    pr.grade_symbol,
+    pr.grade_point::numeric(2,1),
+    (case when pr.earns_credit then pr.credits else 0 end)::numeric(3,1),
+    cat.name_th,
+    t.id,
+    coalesce(mc.name_en, ''),
+    pr.counts_in_gpa,
+    case when pr.counts_in_gpa then pr.grade_point * pr.credits end,
+    transcript_note_marks(pr.transfer_kind, false, false)
+  from prior_academic_record pr
+  join term t           on t.id  = transfer_recognition_term(pr.student_id, pr.approved_at)
+  join academic_year ay on ay.id = t.academic_year_id
+  left join course mc   on mc.id = pr.mapped_course_id
+  left join curriculum_course cc
+         on cc.course_id = mc.id
+        -- ฉบับหลักสูตรของนักศึกษาอยู่ที่ `student_curriculum` ไม่ใช่ที่ `student`
+        -- เอาฉบับที่ยังมีผลอยู่ ถ้ามีหลายแถวเลือกอันที่เริ่มล่าสุด
+        and cc.curriculum_version_id = (
+              select sc.curriculum_version_id
+                from student_curriculum sc
+               where sc.student_id = pr.student_id
+               order by sc.effective_to nulls first, sc.effective_from desc
+               limit 1)
+  left join curriculum_category cat on cat.id = cc.curriculum_category_id
+  where pr.student_id = p_student_id
+    and pr.approved_at is not null
+
+  order by 1, 2, 4;
+$$;
+
+comment on function transcript_data(uuid) is
+  'รายวิชาทั้งหมดที่ขึ้นระเบียนแสดงผลการเรียน รวมวิชาเทียบโอนที่อนุมัติแล้ว — grade_points คือตัวตั้งของ GPA จึงต้องคิดที่นี่ที่เดียว · note_marks คือเลข (*n) ท้ายชื่อวิชา';
+
+-- ── 5. ตัวอ่านรายวิชาของใบ รบ. ตระกูล 67 ────────────────────────────
+--
+-- ─── ต่อยอดจาก 0063 ไม่ใช่จาก 0058 ───
+-- รอบแรกผมคัดลอกตัวจาก 0058 มาแก้ แล้ว `plan_year_be` กับ `plan_term_ordinal`
+-- ที่ 0063 เพิ่มไว้หายไปทั้งคู่ — ช่องภาคเรียนบนใบจะกลับไปพิมพ์ภาคที่ลงจริง
+-- แทนภาคตามแผนโดยไม่มีอะไรฟ้อง นี่คือกับดักที่ 0059 บันทึกไว้ตรง ๆ ว่า
+-- "การเขียนฟังก์ชันทับทั้งตัวเพื่อเพิ่มบรรทัดเดียวเสี่ยงและอ่านไม่ออก
+-- ว่าเปลี่ยนอะไร" — เจอกับตัวเองในไฟล์ถัดมาสามไฟล์
+drop function if exists transcript_courses_grouped(uuid);
+create function transcript_courses_grouped(p_student_id uuid)
+returns table (
+  head_code   text,
+  head_name   text,
+  head_sort   smallint,
+  head_min    numeric,
+  group_code  text,
+  group_name  text,
+  group_sort  smallint,
+  group_min   numeric,
+  year_be     smallint,
+  term_ordinal smallint,
+  term_label  text,
+  plan_year_be smallint,
+  plan_term_ordinal smallint,
+  plan_sort   smallint,
+  course_code text,
+  course_name_th text,
+  course_name_en text,
+  credits     numeric,
+  grade_symbol text,
+  grade_point numeric,
+  credits_earned numeric,
+  counts_in_gpa boolean,
+  note_marks  smallint[]
+) language sql stable as $$
+  select
+    coalesce(head.code, 'UNSORTED')            as head_code,
+    coalesce(head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด') as head_name,
+    coalesce(head.sort_order, 99)::smallint    as head_sort,
+    head.min_credits                           as head_min,
+    coalesce(grp.code, head.code, 'UNSORTED')  as group_code,
+    coalesce(grp.name_th, head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด') as group_name,
+    coalesce(grp.sort_order, 0)::smallint      as group_sort,
+    coalesce(grp.min_credits, head.min_credits) as group_min,
+    ay.year_be,
+    t.ordinal,
+    'ภาคเรียนที่ ' || t.ordinal || '/' || ay.year_be,
+    (s.admitted_year_be + cc.suggested_year - 1)::smallint as plan_year_be,
+    cc.suggested_term                          as plan_term_ordinal,
+    cc.sort_order                              as plan_sort,
+    c.code,
+    c.name_th,
+    coalesce(c.name_en, ''),
+    c.credits,
+    gsym.symbol,
+    er.grade_point,
+    er.credits_earned,
+    (gsym.counts_in_gpa and e.counts_toward_gpa),
+    transcript_note_marks(e.credit_source, e.taught_at_workplace, e.taught_in_english)
+  from enrollment e
+  join student s            on s.id  = e.student_id
+  join class_section cs     on cs.id = e.class_section_id
+  join course c             on c.id  = cs.course_id
+  join term t               on t.id  = e.term_id
+  join academic_year ay     on ay.id = t.academic_year_id
+  join enrollment_result er on er.enrollment_id = e.id and er.superseded_by is null
+  join grade_symbol gsym    on gsym.id = er.grade_symbol_id
+  left join curriculum_course cc
+         on cc.curriculum_version_id = cs.curriculum_version_id
+        and cc.course_id = c.id
+  left join curriculum_category cat  on cat.id = cc.curriculum_category_id
+  left join curriculum_category grp  on grp.id = cat.id and cat.parent_id is not null
+  left join curriculum_category head on head.id = coalesce(cat.parent_id, cat.id)
+  where e.student_id = p_student_id
+
+  union all
+
+  /*
+   * ── รายวิชาที่เทียบโอนมา ──
+   *
+   * เอาเฉพาะที่อนุมัติแล้ว — แถวที่ยังไม่อนุมัติคือคำขอ ไม่ใช่หน่วยกิต
+   * และ `evaluate_graduation()` ก็นับเฉพาะที่อนุมัติแล้วเหมือนกัน
+   * สองที่ต้องใช้เงื่อนไขเดียวกันเสมอ มิฉะนั้นใบกับการตัดสินจะไม่ตรงกันอีก
+   *
+   * ชื่อวิชาใช้ของรายวิชาที่แมปไว้ถ้ามี — ใบ รบ. ของเราต้องพิมพ์ชื่อตาม
+   * หลักสูตรของเรา ไม่ใช่ชื่อที่สถาบันเดิมใช้เรียก
+   *
+   * ภาคตามแผนเป็น null เสมอ ตามที่ 0063 เขียนกำกับไว้แล้วว่าวิชาเทียบโอน
+   * ไม่อยู่ในแผน — แม่แบบจะตกไปใช้ภาคที่รับรอง
+   */
+  select
+    coalesce(head.code, 'UNSORTED'),
+    coalesce(head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด'),
+    coalesce(head.sort_order, 99)::smallint,
+    head.min_credits,
+    coalesce(grp.code, head.code, 'UNSORTED'),
+    coalesce(grp.name_th, head.name_th, 'รายวิชาที่ยังไม่ได้จัดหมวด'),
+    coalesce(grp.sort_order, 0)::smallint,
+    coalesce(grp.min_credits, head.min_credits),
+    ay.year_be,
+    t.ordinal,
+    'ภาคเรียนที่ ' || t.ordinal || '/' || ay.year_be,
+    null::smallint,
+    null::smallint,
+    null::smallint,
+    coalesce(mc.code, pr.course_code),
+    coalesce(mc.name_th, pr.course_name_th),
+    coalesce(mc.name_en, ''),
+    pr.credits,
+    pr.grade_symbol,
+    pr.grade_point,
+    case when pr.earns_credit then pr.credits else 0 end,
+    pr.counts_in_gpa,
+    transcript_note_marks(pr.transfer_kind, false, false)
+  from prior_academic_record pr
+  join term t           on t.id  = transfer_recognition_term(pr.student_id, pr.approved_at)
+  join academic_year ay on ay.id = t.academic_year_id
+  left join course mc   on mc.id = pr.mapped_course_id
+  left join curriculum_course cc
+         on cc.course_id = mc.id
+        and cc.curriculum_version_id = (
+              select sc.curriculum_version_id
+                from student_curriculum sc
+               where sc.student_id = pr.student_id
+               order by sc.effective_to nulls first, sc.effective_from desc
+               limit 1)
+  left join curriculum_category cat  on cat.id = cc.curriculum_category_id
+  left join curriculum_category grp  on grp.id = cat.id and cat.parent_id is not null
+  left join curriculum_category head on head.id = coalesce(cat.parent_id, cat.id)
+  where pr.student_id = p_student_id
+    and pr.approved_at is not null
+$$;
+
+comment on function transcript_courses_grouped(uuid) is
+  'รายวิชาของนักศึกษาพร้อมหมวด/กลุ่มตามหลักสูตร รวมวิชาเทียบโอนที่อนุมัติแล้ว · year_be คือภาคที่ลงจริง ส่วน plan_year_be คือภาคตามโครงสร้างหลักสูตร (null เมื่อไม่อยู่ในแผน) · note_marks คือเลข (*n)';
+
+-- ── 6. ส่งเลขเครื่องหมายเข้า payload ────────────────────────────────
+--
+-- ─── ทำไมต้องอยู่ใน payload ไม่ใช่ให้แม่แบบไปอ่านเอง ───
+-- แม่แบบห้ามแตะฐานข้อมูล (หลักข้อ 5ก) และ payload ตรึงตั้งแต่วันที่ออก —
+-- ใบที่ออกวันนี้ต้องพิมพ์เครื่องหมายชุดเดิมได้อีกสิบปีแม้ระเบียนจะเปลี่ยน
+-- ถ้าแม่แบบคำนวณสดตอนพิมพ์ ใบเก่าจะเปลี่ยนความหมายเมื่อมีคนแก้ข้อมูล
+create or replace function transcript_category_tree(p_student_id uuid)
+returns jsonb language sql stable as $$
+  select coalesce(jsonb_agg(head order by head ->> 'sort'), '[]'::jsonb)
+    from (
+      select jsonb_build_object(
+               'code',        h.head_code,
+               'name_th',     h.name_th,
+               'sort',        h.sort_key,
+               'min_credits', h.min_credits,
+               'credits_earned', h.credits_earned,
+               'gpa',         h.gpa,
+               'groups',
+                 coalesce((
+                   select jsonb_agg(jsonb_build_object(
+                            'code',        g.group_code,
+                            'name_th',     g.name_th,
+                            'sort',        g.sort_key,
+                            'min_credits', g.min_credits,
+                            'credits_earned', g.credits_earned,
+                            'gpa',         g.gpa,
+                            'courses',
+                              coalesce((
+                                select jsonb_agg(jsonb_build_object(
+                                         'term_label',  c.term_label,
+                                         'year_be',     c.year_be,
+                                         'term_ordinal', c.term_ordinal,
+                                         'plan_year_be', c.plan_year_be,
+                                         'plan_term_ordinal', c.plan_term_ordinal,
+                                         'code',        c.course_code,
+                                         'name_th',     c.course_name_th,
+                                         'name_en',     c.course_name_en,
+                                         'credits',     c.credits,
+                                         'grade',       c.grade_symbol,
+                                         'grade_point', c.grade_point,
+                                         'grade_points',
+                                           case when c.counts_in_gpa
+                                                then c.grade_point * c.credits end,
+                                         'counts_in_gpa', c.counts_in_gpa,
+                                         'credits_earned', c.credits_earned,
+                                         'notes',       c.note_marks)
+                                         order by coalesce(c.plan_year_be, c.year_be),
+                                                  coalesce(c.plan_term_ordinal, c.term_ordinal),
+                                                  coalesce(c.plan_sort, 0),
+                                                  c.course_code)
+                                  from transcript_courses_grouped(p_student_id) c
+                                 where c.head_code = h.head_code
+                                   and c.group_code = g.group_code), '[]'::jsonb))
+                          order by g.sort_key)
+                     from transcript_category_summary(p_student_id) g
+                    where g.level = 'group' and g.head_code = h.head_code), '[]'::jsonb)) as head
+        from transcript_category_summary(p_student_id) h
+       where h.level = 'head'
+    ) x
+$$;
+
+comment on function transcript_category_tree(uuid) is
+  'โครงหมวด → กลุ่มวิชา → รายวิชา พร้อมยอดสรุปทุกชั้น สำหรับใบ รบ. ตระกูล 67 · notes คือเลข (*n) ท้ายชื่อวิชา';
+
+create or replace function transcript_term_tree(p_student_id uuid)
+returns jsonb language sql stable as $$
+  with c as (select * from transcript_data(p_student_id)),
+  t as (
+    select c.term_id,
+           min(c.year_be)      as year_be,
+           min(c.term_ordinal) as ordinal
+      from c
+     group by c.term_id
+  ),
+  s as (
+    select t.term_id, t.year_be, t.ordinal,
+           ts.credits_earned, ts.gpa, ts.gpax,
+           (ts.student_id is not null) as has_summary,
+           case when bool_and(ts.student_id is not null)
+                     over (order by t.year_be, t.ordinal)
+                then sum(ts.credits_earned)
+                     over (order by t.year_be, t.ordinal)
+           end as credits_cum
+      from t
+      left join term_summary ts
+             on ts.term_id = t.term_id
+            and ts.student_id = p_student_id
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'year_be',        s.year_be,
+        'ordinal',        s.ordinal,
+        'credits_earned', s.credits_earned,
+        'credits_cum',    s.credits_cum,
+        'has_summary',    s.has_summary,
+        'gpa',            s.gpa,
+        'gpax',           s.gpax,
+        'courses',
+          coalesce((select jsonb_agg(jsonb_build_object(
+                             'code',        c.course_code,
+                             'name_th',     c.course_name_th,
+                             'name_en',     c.course_name_en,
+                             'credits',     c.credits,
+                             'grade',       c.grade_symbol,
+                             'grade_point', c.grade_point,
+                             'grade_points', c.grade_points,
+                             'counts_in_gpa', c.counts_in_gpa,
+                             'credits_earned', c.credits_earned,
+                             'notes',       c.note_marks)
+                             order by c.course_code)
+                     from c where c.term_id = s.term_id), '[]'::jsonb))
+      order by s.year_be, s.ordinal),
+    '[]'::jsonb)
+  from s
+$$;
+
+comment on function transcript_term_tree(uuid) is
+  'โครงปีการศึกษา → ภาคเรียน → รายวิชา พร้อมสรุปสี่ตัวเลขท้ายภาค สำหรับใบ รบ. ตระกูล 62 — credits_cum เป็น null เมื่อมีภาคที่ยังไม่ได้ตัดยอด · notes คือเลข (*n)';
+
+-- ── 7. (*4) ต้องติดให้เองทุกครั้งที่ลงทะเบียน ไม่ใช่แค่ตอน migrate ───
+--
+-- ─── ทำไมการ backfill อย่างเดียวไม่พอ ───
+-- ข้อ 1 อัปเดตแถวที่มีอยู่แล้วให้ถูกต้อง แต่แถวที่ลงทะเบียนพรุ่งนี้จะได้
+-- ค่าเริ่มต้น false ทั้งที่กลุ่มเรียนเป็นทวิภาคี — ใบ รบ. ของรุ่นถัดไปจะ
+-- ขาด (*4) โดยไม่มีอะไรฟ้อง และคนที่ตรวจจะเห็นว่า "เคยมีแล้วหายไป"
+-- ซึ่งหาสาเหตุยากกว่า "ไม่เคยมี" มาก
+--
+-- ─── ทำไมยังเก็บเป็นคอลัมน์ ไม่อ่านสดจาก class_section ───
+-- เพราะ **นักศึกษาคนเดียวในกลุ่มปกติอาจไปฝึกที่สถานประกอบการ** ตามข้อตกลง
+-- รายบุคคล การอ่านสดจากกลุ่มเรียนจะเขียนทับกรณีนั้นทิ้งทุกครั้ง
+-- trigger ตั้งค่า**ตั้งต้น**ให้ตรงกับกลุ่มเรียน แล้วปล่อยให้แก้รายคนได้
+create or replace function enrollment_workplace_default() returns trigger
+language plpgsql as $$
+begin
+  if tg_op = 'INSERT' and new.taught_at_workplace = false then
+    select (cs.delivery_mode in ('dvt', 'internship'))
+      into new.taught_at_workplace
+      from class_section cs
+     where cs.id = new.class_section_id;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists enrollment_workplace_default on enrollment;
+create trigger enrollment_workplace_default
+  before insert on enrollment
+  for each row execute function enrollment_workplace_default();
+
+comment on function enrollment_workplace_default() is
+  'ตั้ง (*4) ให้ตรงกับรูปแบบการเรียนของกลุ่มตอนลงทะเบียน — แก้รายคนทีหลังได้';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0067_regrade_marks_credit_source.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0067 — (*3) เรียนปรับระดับคะแนน ติดให้เองเมื่อคำร้องจากรอบสอบซ่อมมีผล
+--
+-- ─── ทำไมต้องมีไฟล์นี้ ───
+-- 0066 สร้าง `credit_source = 'regraded'` ไว้พร้อมตัวแปลงและแม่แบบที่พิมพ์
+-- (*3) ได้จริง แต่ **ไม่มีเส้นทางไหนตั้งค่านั้นเลยสักที่** ถ้าปล่อยไว้มันจะ
+-- กลายเป็นของอีกชิ้นในรายการ "ประกาศเจตนาไว้แล้วไม่มีอะไรทำให้เกิด"
+-- ต่อจาก `can_approve_leave` (ข้อ 15) และ `take_usage_snapshot` (ข้อ 8)
+--
+-- ─── ทำไมเป็น trigger ไม่ใช่เขียน apply_grade_change() ทับ ───
+-- ฟังก์ชันนั้นยาว 1,683 อักขระและมีนิยามเดียวมาตั้งแต่ 0018 การเขียนทับ
+-- ทั้งตัวเพื่อเพิ่มบล็อกเดียวคือกับดักที่ 0059 บันทึกไว้ — และผมเพิ่งเดินเข้า
+-- ไปเองใน 0066 ตอนคัดลอก `transcript_courses_grouped()` มาจากรุ่นเก่าแล้ว
+-- ทำ `plan_year_be` หายไปสองช่อง
+--
+-- เงื่อนไขที่ต้องดักคือ "คำร้องนี้มีผลแล้ว" ซึ่งเป็นการเปลี่ยนค่าในแถว
+-- จึงเป็นรูปที่ trigger ตอบได้ตรงกว่า และดักได้ทุกเส้นทางที่ทำให้คำร้องมีผล
+-- ไม่ใช่เฉพาะเส้นที่ผ่าน `apply_grade_change()` (หลักเดียวกับ 0049)
+--
+-- ─── ทำไมเฉพาะ restudy ไม่รวม retest ───
+-- `regrade_kind` มีสองค่า — `retest` คือสอบซ่อม ส่วน `restudy` คือเรียน
+-- ปรับระดับคะแนน ถ้อยคำของ (*3) คือ "เรียนปรับระดับคะแนน" ตรงตัว
+-- สอบซ่อมคือการสอบใหม่หลังไม่ผ่าน ไม่ใช่การเรียนซ้ำเพื่อยกเกรดที่ผ่านแล้ว
+-- ติดเครื่องหมายให้สอบซ่อมด้วยจะทำให้ใบบอกสิ่งที่ไม่ได้เกิดขึ้น
+-- ═══════════════════════════════════════════════════════════════════
+
+create or replace function regrade_marks_credit_source() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'applied' and old.status is distinct from 'applied' then
+    /*
+     * ─── ทำไมแตะเฉพาะแถวที่ยังเป็น 'studied' ───
+     * วิชาที่เทียบโอนมาแล้วมาขอปรับเกรดทีหลังยังต้องคง (*1)/(*2) ไว้
+     * เพราะที่มาของหน่วยกิตไม่ได้เปลี่ยน — เปลี่ยนแค่ระดับคะแนน
+     * ถ้าเขียนทับ ใบจะบอกว่าเรียนเองทั้งที่โอนมา ซึ่งผิดข้อเท็จจริง
+     */
+    update enrollment e
+       set credit_source = 'regraded'
+      from regrade_candidate rc
+      join regrade_session_course rsc on rsc.id = rc.session_course_id
+      join regrade_session rs         on rs.id  = rsc.session_id
+     where rc.change_request_id = new.id
+       and rs.kind = 'restudy'
+       and e.id = rc.source_enrollment_id
+       and e.credit_source = 'studied';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists regrade_marks_credit_source on grade_change_request;
+create trigger regrade_marks_credit_source
+  after update on grade_change_request
+  for each row execute function regrade_marks_credit_source();
+
+comment on function regrade_marks_credit_source() is
+  'ติด (*3) ให้การลงทะเบียนเดิมเมื่อคำร้องจากรอบเรียนปรับระดับคะแนนมีผล — สอบซ่อมไม่ติด';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0068_receipt.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0068_receipt.sql
+--
+-- ใบเสร็จรับเงิน — เอกสารที่มีเลขที่ ตรึงเนื้อหา และแก้ไม่ได้
+--
+-- ─── ช่องที่พบตอนเทียบเมนูการเงินกับระบบที่วิทยาลัยใช้อยู่ ───
+-- ระบบนั้นมีสามเมนูที่พูดถึงใบเสร็จ (ตรวจสอบสถานะใบเสร็จ · พิมพ์ใบเสร็จ
+-- ย้อนหลัง · แบบฟอร์มชำระเงินผ่านธนาคารที่อ้างเลขที่) ส่วนของเรามีแค่
+-- `payment.receipt_no` ซึ่งเป็น**ช่องข้อความที่เจ้าหน้าที่พิมพ์เอง** ตั้งแต่
+-- 0010 — ไม่มีตัวเดินเลข ไม่มีแม่แบบพิมพ์ ไม่มีการตรึงเนื้อหา
+--
+-- ─── ทำไมเรื่องนี้หนักกว่าที่เห็น ───
+-- เอกสารอีกแปดใบของระบบนี้ถูกคุมไว้แน่นมาก (เลขเรียงจาก document_series ·
+-- payload ตรึง · แก้/ลบไม่ได้ · ยกเลิกต้องมีเหตุผล) แต่ใบเสร็จซึ่งเป็น
+-- **เอกสารทางการเงิน**กลับหลุดออกไปทั้งชุด — เลขซ้ำกันสองใบก็ได้ เว้นว่าง
+-- ก็ได้ และพิมพ์ใหม่ได้เนื้อหาที่คำนวณสดทุกครั้ง ทั้งที่ผู้ปกครองถือใบหนึ่ง
+-- และฝ่ายบัญชีถือสำเนาอีกใบ ซึ่งต้องตรงกันไปตลอด
+--
+-- สิ่งที่ทำให้มองไม่เห็นคือ `payment` บันทึกครบทุกช่องและยอดคงเหลือคำนวณ
+-- ถูกต้องเสมอ ระบบจึงดู "ครบ" จากทุกมุมที่มีเครื่องมือวัด (รูปเดียวกับ
+-- ข้อ 8 และข้อ 15 ในรายการที่เคยพังแบบเงียบ ๆ)
+--
+-- ─── ทำไมใบเสร็จอยู่ใน issued_document ไม่ใช่ตารางของตัวเอง ───
+-- คุณสมบัติที่ใบเสร็จต้องมีคือชุดเดียวกับที่ตารางนั้นบังคับอยู่แล้วทุกข้อ
+-- เลขที่ไม่ซ้ำต่อประเภทต่อปี · เนื้อหาตรึง ณ วันที่ออก · แก้ไม่ได้ ·
+-- ลบไม่ได้ · ยกเลิกต้องมีเหตุผล · พิมพ์ซ้ำอ่านจาก payload
+-- การสร้างตารางที่สองที่มีกฎชุดเดียวกันแปลว่าต้องบังคับกฎเหล่านั้นซ้ำอีกรอบ
+-- แล้ววันหนึ่งสองที่จะไม่ตรงกัน
+--
+-- ─── ทำไมออกใบเสร็จจาก post_payment() ไม่ใช่จากชั้น API ───
+-- กฎคือ "รับเงินแล้วต้องมีใบเสร็จ" ไม่ใช่ "หน้าจอควรกดออกใบเสร็จด้วย"
+-- ถ้ายกขึ้นไปไว้ที่ชั้น API ทางอื่นที่เขียน payment ได้ (สคริปต์นำเข้า ·
+-- การกระทบยอดอัตโนมัติ · pgAdmin) จะรับเงินโดยไม่มีใบเสร็จได้เงียบ ๆ
+--
+-- ─── ทำไม `adjustment` ไม่ได้ใบเสร็จ ───
+-- เป็นการปรับปรุงทางบัญชี ไม่ใช่การรับเงินจากใคร ออกใบเสร็จให้แปลว่ามี
+-- หลักฐานว่ารับเงินทั้งที่ไม่มีเงินเข้ามา ซึ่งเป็นเอกสารเท็จ
+--
+-- ─── ทำไมจำนวนเงินตัวอักษรคำนวณที่ฐานข้อมูลแล้วตรึงลง payload ───
+-- ถ้าแม่แบบแปลงเลขเป็นตัวอักษรตอนพิมพ์ มันจะเป็นสูตรชุดที่สองที่ค่อย ๆ
+-- เพี้ยนไปจากตัวเลขบนใบเดียวกัน และใบที่พิมพ์ปีหน้าจะได้คำอ่านคนละแบบกับ
+-- ใบที่ส่งไปแล้ว (หลักข้อ 5 — ค่าที่ตรึงไว้ห้ามคำนวณใหม่)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- PostgreSQL ปฏิเสธการใช้ค่า enum ใหม่ใน transaction เดียวกับที่เพิ่มมัน
+-- ("unsafe use of new value of enum type") ทั้งไฟล์จึงต้องแยกเป็นสอง
+-- transaction — ค่าใหม่ต้อง commit ก่อนจึงเขียนกฎที่อ้างถึงมันได้ (0026)
+begin;
+alter type document_kind add value if not exists 'receipt';
+commit;
+
+begin;
+
+-- ───────────────────────────────────────────────────────────────────
+-- จำนวนเงินเป็นตัวอักษร
+--
+-- เขียนเองเพราะ PostgreSQL ไม่มี bahttext() และเป็นข้อความที่ต้องอยู่บน
+-- กระดาษราชการให้ตรงกับตัวเลขเสมอ
+-- ───────────────────────────────────────────────────────────────────
+create or replace function thai_number_text(p_n bigint)
+returns text language plpgsql immutable as $$
+declare
+  digits constant text[] := array['ศูนย์','หนึ่ง','สอง','สาม','สี่','ห้า','หก','เจ็ด','แปด','เก้า'];
+  units  constant text[] := array['','สิบ','ร้อย','พัน','หมื่น','แสน'];
+  v_out  text := '';
+  v_rest bigint;
+  v_s    text;
+  v_len  int;
+  v_pos  int;
+  i      int;
+  d      int;
+begin
+  if p_n = 0 then return digits[1]; end if;
+
+  -- หลักล้านขึ้นไปอ่านเป็นกลุ่มแล้วต่อด้วย "ล้าน" ซ้อนกันได้ไม่จำกัด
+  if p_n >= 1000000 then
+    v_out  := thai_number_text(p_n / 1000000) || 'ล้าน';
+    v_rest := p_n % 1000000;
+    if v_rest > 0 then
+      v_out := v_out || thai_number_text(v_rest);
+    end if;
+    return v_out;
+  end if;
+
+  v_s   := p_n::text;
+  v_len := length(v_s);
+
+  for i in 1 .. v_len loop
+    d := substr(v_s, i, 1)::int;
+    continue when d = 0;
+
+    v_pos := v_len - i;   -- 0 = หลักหน่วย · 1 = หลักสิบ
+
+    if v_pos = 1 and d = 1 then
+      v_out := v_out || 'สิบ';        -- ไม่ใช่ "หนึ่งสิบ"
+    elsif v_pos = 1 and d = 2 then
+      v_out := v_out || 'ยี่สิบ';      -- ไม่ใช่ "สองสิบ"
+    elsif v_pos = 0 and d = 1 and v_len > 1 then
+      v_out := v_out || 'เอ็ด';        -- ไม่ใช่ "หนึ่ง" เมื่อมีหลักสูงกว่า
+    else
+      v_out := v_out || digits[d + 1] || units[v_pos + 1];
+    end if;
+  end loop;
+
+  return v_out;
+end $$;
+
+comment on function thai_number_text(bigint) is
+  'อ่านจำนวนเต็มเป็นตัวอักษรไทย — สิบ/ยี่สิบ/เอ็ด เป็นข้อยกเว้นที่ต้องเขียนแยก';
+
+create or replace function thai_baht_text(p_amount numeric)
+returns text language plpgsql immutable as $$
+declare
+  v_abs  numeric := abs(p_amount);
+  v_int  bigint;
+  v_sat  int;
+  v_out  text := '';
+begin
+  -- ปัดที่สองตำแหน่งก่อนแยกส่วน มิฉะนั้น 0.999 จะได้ 100 สตางค์
+  v_abs := round(v_abs, 2);
+  v_int := floor(v_abs)::bigint;
+  v_sat := round((v_abs - floor(v_abs)) * 100)::int;
+
+  if v_int = 0 and v_sat = 0 then
+    return 'ศูนย์บาทถ้วน';
+  end if;
+
+  if p_amount < 0 then
+    v_out := 'ลบ';
+  end if;
+
+  if v_int > 0 then
+    v_out := v_out || thai_number_text(v_int) || 'บาท';
+  end if;
+
+  if v_sat = 0 then
+    v_out := v_out || 'ถ้วน';
+  else
+    v_out := v_out || thai_number_text(v_sat) || 'สตางค์';
+  end if;
+
+  return v_out;
+end $$;
+
+comment on function thai_baht_text(numeric) is
+  'จำนวนเงินเป็นตัวอักษรสำหรับใบเสร็จ — ตรึงลง payload ตอนออกใบ ไม่คำนวณใหม่ตอนพิมพ์';
+
+-- ───────────────────────────────────────────────────────────────────
+-- หนึ่งการรับเงิน หนึ่งใบเสร็จ
+--
+-- บังคับที่ดัชนี ไม่ใช่ที่ตรรกะในฟังก์ชัน เพราะการเรียก post_payment()
+-- ซ้ำ (กระทบยอดใหม่ · เรียกจากสคริปต์) ต้องไม่ทำให้เกิดใบที่สองของเงิน
+-- ก้อนเดิม ซึ่งจะกลายเป็นหลักฐานว่ารับเงินสองรอบ
+--
+-- นับเฉพาะใบที่ยังไม่ถูกยกเลิก — ใบที่ออกผิดต้องยกเลิกแล้วออกใหม่ได้
+-- ───────────────────────────────────────────────────────────────────
+create unique index issued_document_receipt_payment_uq
+  on issued_document ((payload ->> 'payment_id'))
+  where kind = 'receipt' and voided_at is null;
+
+-- ───────────────────────────────────────────────────────────────────
+-- ใบเสร็จต้องมาจาก issue_receipt() เท่านั้น
+--
+-- ─── ทำไมเป็น trigger ไม่ใช่การเขียน issue_document() ทับ ───
+-- `issue_document()` ยาวสามร้อยบรรทัดและถูกเขียนทับมาแล้วสองรอบเพื่อเพิ่ม
+-- เงื่อนไขบรรทัดเดียว (0057/0058 — เหตุผลที่ 0059 ต้องแยก transcript_extra
+-- ออกมา) ส่วนกฎนี้เป็นเงื่อนไขระดับ**ค่าในแถว** คือ "ใบเสร็จต้องผูกกับ
+-- การรับเงินเสมอ" ซึ่งเป็นรูปเดียวกับที่ 0049 เลือก trigger แทนนโยบาย
+--
+-- และครอบทุกทาง ไม่ใช่แค่ทางที่ผ่าน issue_document()
+-- ───────────────────────────────────────────────────────────────────
+create or replace function receipt_needs_payment() returns trigger
+language plpgsql as $$
+begin
+  if new.kind = 'receipt'
+     and coalesce(new.payload ->> 'payment_id', '') = '' then
+    raise exception 'ใบเสร็จรับเงินต้องออกด้วย issue_receipt() — payload ต้องผูกกับการรับเงินที่เกิดขึ้นจริง'
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end $$;
+
+create trigger issued_document_receipt_guard before insert on issued_document
+  for each row execute function receipt_needs_payment();
+
+-- ───────────────────────────────────────────────────────────────────
+-- จ่ายเลขที่โดยระบุสถานศึกษาเอง
+--
+-- ─── ทำไมต้องมีทางที่ไม่พึ่งบริบทของ session ───
+-- ใบเสร็จออกจาก `post_payment()` ซึ่งถูกเรียกจาก
+-- `reconcile_bank_transactions(p_institution_id)` ที่**รับสถานศึกษามาเป็น
+-- พารามิเตอร์อยู่แล้ว** การให้ตัวจ่ายเลขไปอ่าน `current_institution_id()`
+-- อีกทางหนึ่งคือมีแหล่งความจริงสองแหล่งของข้อเท็จจริงเดียวกัน ซึ่งถ้าวันหนึ่ง
+-- ไม่ตรงกัน ใบเสร็จจะไปกินเลขของสายเลขวิทยาลัยอื่น
+--
+-- และ**สถานศึกษาของใบเสร็จคือของแถว payment** ไม่ใช่ของคนที่กดปุ่ม —
+-- อ่านจากข้อมูลจึงถูกกว่าอ่านจากบริบทเสมอ
+--
+-- ตัวเดิมสามอาร์กิวเมนต์ยังอยู่ครบและเปลี่ยนพฤติกรรมไม่ได้เลย เพราะมันมา
+-- เรียกตัวนี้ต่อ — ไม่ใช่คัดลอกตรรกะไปไว้สองที่แล้วรอให้เพี้ยนกันทีหลัง
+-- ───────────────────────────────────────────────────────────────────
+create or replace function next_document_no(
+  p_kind    document_kind,
+  p_year_be smallint,
+  p_lang    text,
+  p_inst    uuid
+) returns text language plpgsql as $$
+declare
+  v_no     integer;
+  v_prefix text;
+  v_width  smallint;
+begin
+  if p_inst is null then
+    raise exception 'ไม่ทราบสถานศึกษาปัจจุบัน — ชั้นแอปต้องตั้ง app.institution_id ก่อน';
+  end if;
+
+  insert into document_series (institution_id, kind, year_be, lang, prefix)
+  values (p_inst, p_kind, p_year_be, p_lang,
+          case when p_lang = 'th' then p_year_be::text
+               else 'E' || p_year_be::text end)
+  on conflict (institution_id, kind, year_be, lang) do nothing;
+
+  update document_series
+     set next_no = next_no + 1
+   where institution_id = p_inst and kind = p_kind
+     and year_be = p_year_be and lang = p_lang
+  returning next_no - 1, prefix, width into v_no, v_prefix, v_width;
+
+  if v_no is null then
+    raise exception 'ออกเลขที่เอกสารไม่ได้ ไม่พบสายเลขของสถานศึกษานี้';
+  end if;
+
+  return v_prefix || lpad(v_no::text, v_width, '0');
+end $$;
+
+comment on function next_document_no(document_kind, smallint, text, uuid) is
+  'จ่ายเลขที่เอกสารของสถานศึกษาที่ระบุ — ใช้เมื่อผู้เรียกรู้สถานศึกษาจากข้อมูล ไม่ใช่จากบริบทของ session';
+
+create or replace function next_document_no(
+  p_kind    document_kind,
+  p_year_be smallint,
+  p_lang    text default 'th'
+) returns text language sql as $$
+  select next_document_no(p_kind, p_year_be, p_lang, current_institution_id())
+$$;
+
+-- ───────────────────────────────────────────────────────────────────
+-- ออกใบเสร็จ
+--
+-- คืนใบเดิมถ้าเงินก้อนนี้เคยออกไปแล้ว ไม่ใช่ raise — เพราะผู้เรียกที่
+-- ต้องการ "ใบเสร็จของเงินก้อนนี้" ควรได้ใบนั้น ไม่ใช่ล้มทั้งรายการ
+-- ───────────────────────────────────────────────────────────────────
+create or replace function issue_receipt(p_payment_id uuid)
+returns issued_document language plpgsql as $$
+declare
+  v_pay     payment;
+  v_inst    uuid;
+  v_year    smallint;
+  v_doc_no  text;
+  v_lines   jsonb;
+  v_alloc   numeric(12,2);
+  v_payload jsonb;
+  v_row     issued_document;
+begin
+  select * into v_pay from payment where id = p_payment_id;
+  if v_pay.id is null then
+    raise exception 'ไม่พบรายการรับเงินรหัสที่ระบุ หรือไม่มีสิทธิ์เข้าถึง';
+  end if;
+
+  -- สถานศึกษาของใบเสร็จมาจากแถวเงินรับ ไม่ใช่จากบริบทของ session
+  v_inst := v_pay.institution_id;
+
+  -- ออกใบไปแล้วก็คืนใบเดิม (พิมพ์ซ้ำต้องได้ใบเดียวกันเสมอ)
+  select * into v_row from issued_document d
+   where d.kind = 'receipt'
+     and d.payload ->> 'payment_id' = p_payment_id::text
+     and d.voided_at is null
+   limit 1;
+  if v_row.id is not null then
+    return v_row;
+  end if;
+
+  if v_pay.student_id is null then
+    raise exception 'เงินก้อนนี้ยังไม่รู้ว่าเป็นของนักศึกษาคนไหน จึงออกใบเสร็จให้ใครไม่ได้ (payment=%)', p_payment_id
+      using errcode = 'check_violation';
+  end if;
+
+  if v_pay.method = 'adjustment' then
+    raise exception 'รายการปรับปรุงทางบัญชีไม่ใช่การรับเงิน จึงออกใบเสร็จไม่ได้'
+      using errcode = 'check_violation';
+  end if;
+
+  -- ปีการศึกษาที่ครอบวันที่รับเงิน — ไม่ใช่ปีปัจจุบันของนาฬิกา เพราะเงินที่
+  -- บันทึกย้อนหลังต้องอยู่ในสายเลขของปีที่รับจริง
+  v_year := coalesce(
+    (select ay.year_be from academic_year ay
+      where ay.institution_id = v_inst
+        and v_pay.received_on between ay.starts_on and ay.ends_on
+      order by ay.year_be desc limit 1),
+    (select max(ay.year_be) from academic_year ay where ay.institution_id = v_inst),
+    (extract(year from v_pay.received_on) + 543)::smallint);
+
+  v_doc_no := next_document_no('receipt'::document_kind, v_year, 'th', v_inst);
+
+  /*
+   * รายการบนใบคือ "เงินก้อนนี้ไปตัดงวดไหนบ้าง" ไม่ใช่รายการค่าธรรมเนียม
+   * ทั้งใบแจ้งหนี้ — ใบเสร็จต้องแสดงสิ่งที่**จ่ายจริงในครั้งนี้** ถ้าพิมพ์
+   * รายการทั้งใบแจ้งหนี้จะได้กระดาษที่ยอดรวมไม่ตรงกับเงินที่รับ
+   */
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'invoice_no', inv.invoice_no,
+           'term',       jsonb_build_object('year_be', ay.year_be, 'ordinal', t.ordinal),
+           'seq',        i.seq,
+           'due_on',     i.due_on,
+           'amount',     a.amount
+         ) order by inv.invoice_no, i.seq), '[]'::jsonb),
+       coalesce(sum(a.amount), 0)
+    into v_lines, v_alloc
+    from payment_allocation a
+    join installment i   on i.id = a.installment_id
+    join invoice inv     on inv.id = i.invoice_id
+    join term t          on t.id = inv.term_id
+    join academic_year ay on ay.id = t.academic_year_id
+   where a.payment_id = p_payment_id;
+
+  v_payload := jsonb_build_object(
+    'kind',       'receipt',
+    'payment_id', p_payment_id,
+    'issued_at',  now(),
+    'year_be',    v_year,
+    'institution',
+      (select jsonb_build_object('name_th', ins.name_th, 'code', ins.code)
+         from institution ins where ins.id = v_inst),
+    'student',
+      (select jsonb_build_object(
+                'student_code', s.student_code,
+                'full_name', trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '')
+                                  || ' ' || coalesce(p.last_name_th, '')))
+         from student s join person p on p.id = s.person_id
+        where s.id = v_pay.student_id),
+    'payment', jsonb_build_object(
+        'received_on', v_pay.received_on,
+        'amount',      v_pay.amount,
+        'method',      v_pay.method,
+        'bank_ref',    v_pay.bank_ref,
+        'note',        v_pay.note),
+    'lines',       v_lines,
+    -- เงินที่ยังไม่ได้ตัดงวด (ชำระเกิน) ต้องอยู่บนใบด้วย มิฉะนั้นยอดรวมของ
+    -- รายการจะไม่เท่ากับเงินที่รับ แล้วคนอ่านจะคิดว่าใบพิมพ์ผิด
+    'unallocated', v_pay.amount - v_alloc,
+    'amount_text', thai_baht_text(v_pay.amount),
+    'received_by',
+      (select trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '')
+                   || ' ' || coalesce(p.last_name_th, ''))
+         from person p where p.id = coalesce(v_pay.received_by, current_actor_id())));
+
+  insert into issued_document (institution_id, student_id, kind, doc_no, issued_by, payload)
+  values (v_inst, v_pay.student_id, 'receipt', v_doc_no, current_actor_id(), v_payload)
+  returning * into v_row;
+
+  /*
+   * เขียนเลขกลับลง payment.receipt_no
+   *
+   * ช่องนี้มีมาตั้งแต่ 0010 พร้อม unique (institution, receipt_no) และเคย
+   * เป็นช่องที่คนกรอกเอง — การให้ระบบเป็นคนเขียนทำให้ข้อจำกัดเดิมกลายเป็น
+   * ตัวกันเลขซ้ำจริง ๆ และหน้าจอ/รายงานที่อ่านช่องนี้อยู่แล้วใช้ได้ทันที
+   */
+  update payment set receipt_no = v_doc_no where id = p_payment_id;
+
+  return v_row;
+end $$;
+
+comment on function issue_receipt(uuid) is
+  'ออกใบเสร็จของการรับเงินหนึ่งครั้ง — เนื้อหาตรึง ณ วันที่ออก และคืนใบเดิมถ้าเคยออกไปแล้ว';
+
+-- ───────────────────────────────────────────────────────────────────
+-- ผูกเข้ากับการรับเงิน
+--
+-- เขียนทับ post_payment() ทั้งตัวเพราะต้องเติมขั้นสุดท้าย ส่วนที่เหลือ
+-- เหมือน 0010 ทุกบรรทัด
+-- ───────────────────────────────────────────────────────────────────
+create or replace function post_payment(p_payment_id uuid)
+returns numeric language plpgsql as $$
+declare
+  v_remaining numeric(12,2);
+  v_student   uuid;
+  v_method    payment_method;
+  r           record;
+  v_take      numeric(12,2);
+begin
+  select amount, student_id, method into v_remaining, v_student, v_method
+  from payment where id = p_payment_id;
+
+  if v_student is null then
+    raise exception 'เงินรับก้อนนี้ยังไม่ได้ระบุว่าเป็นของนักศึกษาคนไหน (payment=%)', p_payment_id;
+  end if;
+
+  for r in
+    select i.id, i.amount + i.penalty - i.paid_amount as outstanding
+    from installment i
+    join invoice inv on inv.id = i.invoice_id
+    where inv.student_id = v_student
+      and inv.status not in ('void', 'written_off')
+      and i.status <> 'paid'
+      and i.amount + i.penalty - i.paid_amount > 0
+    order by i.due_on, i.seq
+  loop
+    exit when v_remaining <= 0;
+    v_take := least(v_remaining, r.outstanding);
+
+    insert into payment_allocation (payment_id, installment_id, amount)
+    values (p_payment_id, r.id, v_take)
+    on conflict (payment_id, installment_id)
+      do update set amount = payment_allocation.amount + excluded.amount;
+
+    update installment
+    set paid_amount = paid_amount + v_take,
+        status = case when paid_amount + v_take >= amount + penalty
+                      then 'paid'::installment_status
+                      else 'partially_paid'::installment_status end
+    where id = r.id;
+
+    v_remaining := v_remaining - v_take;
+  end loop;
+
+  -- ปรับยอดบนใบแจ้งหนี้
+  update invoice inv
+  set paid_total = sub.paid,
+      status = case when sub.paid >= inv.total then 'paid'::invoice_status
+                    when sub.paid > 0          then 'partially_paid'::invoice_status
+                    else inv.status end
+  from (
+    select i.invoice_id, sum(i.paid_amount) as paid
+    from installment i
+    join invoice v on v.id = i.invoice_id
+    where v.student_id = v_student
+    group by i.invoice_id
+  ) sub
+  where inv.id = sub.invoice_id;
+
+  update payment
+  set status = 'reconciled', reconciled_at = now()
+  where id = p_payment_id;
+
+  -- ออกใบเสร็จเป็นขั้นสุดท้าย หลังตัดงวดเสร็จแล้ว เพราะรายการบนใบคือ
+  -- ผลของการตัด ถ้าออกก่อนจะได้ใบที่ไม่มีรายการสักบรรทัด
+  if v_method <> 'adjustment' then
+    perform issue_receipt(p_payment_id);
+  end if;
+
+  return v_remaining;   -- เงินเหลือที่ยังไม่ได้ตัด (ชำระเกิน)
+end $$;
+
+comment on function post_payment is
+  'ตัดงวดตามลำดับกำหนดชำระ แล้วออกใบเสร็จให้อัตโนมัติ (ยกเว้นรายการปรับปรุง) — คืนเงินที่เหลือหลังตัดครบ ถ้ามากกว่าศูนย์แปลว่าชำระเกิน';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0069_academic_history_import.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0069_academic_history_import.sql
+--
+-- นำเข้าประวัติการเรียนเดิมเป็นชุด — ปิดช่องที่ import_kind เปิดไว้ตั้งแต่
+-- 0023 แต่ไม่มีฟังก์ชันตรวจ/นำเข้าจริงรองรับ
+--
+-- ─── ทำไมช่องนี้ค้างมาตั้งแต่ 0023 ───
+-- `import_kind` มีค่า 'academic_history' และ `prior_academic_record.batch_id`
+-- มี FK ไปยัง `import_batch` มาตั้งแต่ต้น แต่ `ImportService.apply()` มีแค่
+-- `student` กับ `staff` — ยิง kind นี้ผ่าน `/import` ได้ถึงขั้นสร้างรอบ แต่
+-- validate ไม่ตรวจอะไรเลย (ไม่มี validator ให้เลือก จึงข้ามการ update
+-- errors/ok ทั้งก้อน) แล้ว apply ปฏิเสธด้วย "ยังไม่รองรับชนิดนี้" เสมอ
+-- เป็นรูปเดียวกับ `take_usage_snapshot()` และ `generate_class_meetings()`
+-- ที่ประกาศเจตนาไว้แล้วไม่มีอะไรทำให้เจตนานั้นเกิดขึ้น
+--
+-- ทางเข้าที่ใช้งานได้จริงตอนนี้มีแต่ `POST /prior-records` (เพิ่มทีละคน/
+-- ทีละไม่กี่รายการ ต้องรู้ student UUID) ซึ่งใช้ตอนรับนักศึกษาย้ายเข้าคนเดียว
+-- แต่วิทยาลัยที่ย้ายมาใช้ระบบนี้มีนักศึกษาเทียบโอนหลักร้อยพร้อมกัน — วางเป็น
+-- ตารางจากตารางคะแนนเดิมทีเดียวเหมือนนำเข้านักศึกษา/บุคลากร ต้องมีฟังก์ชัน
+-- คู่นี้เพื่อให้ `/import` กับ kind='academic_history' ใช้งานได้จริง
+--
+-- ─── ทำไมต้องตรวจว่านักศึกษามีอยู่แล้ว (สลับขั้วกับ validate_student_row) ───
+-- การนำเข้านักศึกษาใหม่ต้องไม่ให้รหัสซ้ำของเดิม แต่ประวัติการเรียนเดิม
+-- ต้องผูกกับนักศึกษาที่**มีอยู่แล้ว**ในระบบเท่านั้น — แถวที่ชี้รหัสไม่มีจริง
+-- จะสร้างประวัติลอย ๆ ที่ไม่มีใครเป็นเจ้าของ
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+-- ───────────────────────────────────────────────────────────────────
+-- ตรวจข้อมูลประวัติการเรียนเดิมหนึ่งแถว — คืนปัญหาทั้งหมด ไม่หยุดที่ข้อแรก
+-- เหตุผลเดียวกับ validate_student_row
+-- ───────────────────────────────────────────────────────────────────
+create or replace function validate_academic_history_row(
+  p_institution_id uuid,
+  p_payload        jsonb
+) returns text[]
+language plpgsql stable as $$
+declare
+  v_errors  text[] := '{}';
+  v_code    text := nullif(btrim(p_payload->>'student_code'), '');
+  v_student uuid;
+  v_source  text := nullif(btrim(p_payload->>'source_th'), '');
+  v_term    text := nullif(btrim(p_payload->>'term_label'), '');
+  v_course  text := nullif(btrim(p_payload->>'course_code'), '');
+  v_name    text := nullif(btrim(p_payload->>'course_name_th'), '');
+  v_credits text := p_payload->>'credits';
+  v_symbol  text := nullif(btrim(p_payload->>'grade_symbol'), '');
+  v_point   text := nullif(p_payload->>'grade_point', '');
+  v_kind    text := nullif(btrim(p_payload->>'transfer_kind'), '');
+  v_mapped  text := nullif(btrim(p_payload->>'mapped_course_code'), '');
+begin
+  if v_code is null then
+    v_errors := array_append(v_errors, 'ไม่มีรหัสประจำตัวนักศึกษา');
+  else
+    select id into v_student from student
+     where institution_id = p_institution_id and student_code = v_code;
+    if v_student is null then
+      v_errors := array_append(v_errors, format('ไม่พบนักศึกษารหัส %s ในวิทยาลัยนี้', v_code));
+    end if;
+  end if;
+
+  if v_source is null then v_errors := array_append(v_errors, 'ไม่มีชื่อสถานศึกษาเดิม'); end if;
+  if v_course is null then v_errors := array_append(v_errors, 'ไม่มีรหัสวิชา'); end if;
+  if v_name   is null then v_errors := array_append(v_errors, 'ไม่มีชื่อวิชา'); end if;
+  if v_symbol is null then v_errors := array_append(v_errors, 'ไม่มีสัญลักษณ์ผลการเรียน'); end if;
+
+  if v_credits is null or v_credits !~ '^\d+(\.\d)?$' or v_credits::numeric <= 0 then
+    v_errors := array_append(v_errors, 'หน่วยกิตต้องเป็นตัวเลขมากกว่าศูนย์');
+  end if;
+
+  if v_point is not null
+     and (v_point !~ '^\d+(\.\d)?$' or v_point::numeric < 0 or v_point::numeric > 4) then
+    v_errors := array_append(v_errors, 'แต้มระดับคะแนนต้องเป็นตัวเลขระหว่าง 0.0-4.0');
+  end if;
+
+  if v_kind is not null and v_kind not in ('transferred_grade', 'transferred_experience') then
+    v_errors := array_append(v_errors,
+      format('ชนิดการโอน "%s" ไม่ถูกต้อง — ต้องเป็น transferred_grade หรือ transferred_experience', v_kind));
+  end if;
+
+  if v_mapped is not null and not exists (
+       select 1 from course where institution_id = p_institution_id and code = v_mapped) then
+    v_errors := array_append(v_errors, format('ไม่พบรายวิชารหัส %s ในหลักสูตรของวิทยาลัยนี้', v_mapped));
+  end if;
+
+  -- ซ้ำกับประวัติที่มีอยู่แล้ว — ตรวจเฉพาะเมื่อมีภาคเรียนระบุ เพราะ unique
+  -- constraint ของตารางไม่ถือว่า term_label เป็น NULL สองแถวซ้ำกัน
+  if v_student is not null and v_course is not null and v_term is not null
+     and exists (select 1 from prior_academic_record
+                  where student_id = v_student and course_code = v_course and term_label = v_term) then
+    v_errors := array_append(v_errors,
+      format('มีประวัติวิชา %s ภาค %s ของนักศึกษาคนนี้อยู่แล้ว', v_course, v_term));
+  end if;
+
+  return v_errors;
+end $$;
+
+comment on function validate_academic_history_row(uuid, jsonb) is
+  'ตรวจแถวประวัติการเรียนเดิมก่อนนำเข้า — นักศึกษาต้องมีอยู่แล้วในระบบ (สลับขั้วกับ validate_student_row ที่ห้ามรหัสซ้ำ)';
+
+-- ───────────────────────────────────────────────────────────────────
+-- นำเข้าจริง — เขียนทั้งชุดหรือไม่เขียนเลย เหตุผลเดียวกับ apply_student_import
+--
+-- ผูก batch_id กับทุกแถวที่สร้าง เพื่อให้ตอบได้ว่าแถวไหนมาจากไฟล์ไหนเมื่อไร
+-- เหมือน import_batch ทุกชนิด — ต่างจาก POST /prior-records ที่เพิ่มทีละคน
+-- ซึ่งไม่ผูก batch เพราะไม่มีไฟล์ต้นทางให้ตามรอย
+-- ───────────────────────────────────────────────────────────────────
+create or replace function apply_academic_history_import(p_batch_id uuid)
+returns table (imported integer, failed integer)
+language plpgsql as $$
+declare
+  v_batch   import_batch%rowtype;
+  r         record;
+  v_student uuid;
+  v_mapped  uuid;
+  v_kind    text;
+  v_prior   uuid;
+  v_bad     integer := 0;
+  v_ok      integer := 0;
+begin
+  select * into v_batch from import_batch where id = p_batch_id;
+  if not found then
+    raise exception 'ไม่พบรอบนำเข้า % (หรือไม่มีสิทธิ์เข้าถึง)', p_batch_id;
+  end if;
+  if v_batch.status = 'applied' then
+    raise exception 'รอบนำเข้านี้ถูกนำเข้าไปแล้วเมื่อ % นำเข้าซ้ำไม่ได้', v_batch.applied_at;
+  end if;
+  if v_batch.kind <> 'academic_history' then
+    raise exception 'รอบนำเข้านี้เป็นชนิด % ไม่ใช่ประวัติการเรียนเดิม', v_batch.kind;
+  end if;
+
+  -- ตรวจทุกแถวก่อน ไม่เขียนอะไรจนกว่าจะผ่านหมด
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    declare v_errs text[];
+    begin
+      v_errs := validate_academic_history_row(v_batch.institution_id, r.payload);
+      update import_row
+         set errors = v_errs, ok = (cardinality(v_errs) = 0)
+       where id = r.id;
+      if cardinality(v_errs) > 0 then v_bad := v_bad + 1; end if;
+    end;
+  end loop;
+
+  if v_bad > 0 then
+    update import_batch
+       set status = 'failed', error_rows = v_bad,
+           ok_rows = (select count(*) from import_row where batch_id = p_batch_id and ok)
+     where id = p_batch_id;
+    -- ข้อความไม่ชี้ไปที่ import_row เพราะ raise rollback การเขียน errors ข้างบนไปด้วย
+    raise exception
+      'มี % แถวที่ยังมีปัญหา ไม่ได้นำเข้าอะไรเลย — สั่งตรวจ (validate) รอบนี้อีกครั้ง '
+      'เพื่อดูรายละเอียดรายแถว', v_bad;
+  end if;
+
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    select id into v_student from student
+     where institution_id = v_batch.institution_id
+       and student_code = btrim(r.payload->>'student_code');
+
+    v_mapped := null;
+    if nullif(btrim(r.payload->>'mapped_course_code'), '') is not null then
+      select id into v_mapped from course
+       where institution_id = v_batch.institution_id
+         and code = btrim(r.payload->>'mapped_course_code')
+       order by edition_be desc limit 1;
+    end if;
+
+    v_kind := coalesce(nullif(btrim(r.payload->>'transfer_kind'), ''), 'transferred_experience');
+
+    insert into prior_academic_record
+      (student_id, batch_id, source_th, term_label, course_code, course_name_th,
+       credits, grade_symbol, grade_point, mapped_course_id, transfer_kind, counts_in_gpa, note)
+    values (
+      v_student, p_batch_id,
+      btrim(r.payload->>'source_th'),
+      nullif(btrim(r.payload->>'term_label'), ''),
+      btrim(r.payload->>'course_code'),
+      btrim(r.payload->>'course_name_th'),
+      (r.payload->>'credits')::numeric,
+      btrim(r.payload->>'grade_symbol'),
+      nullif(r.payload->>'grade_point', '')::numeric,
+      v_mapped,
+      v_kind::credit_source_kind,
+      -- โอนผลการเรียนยกเกรดเดิมมาด้วย จึงนับ GPA · เทียบโอนความรู้และ
+      -- ประสบการณ์ให้หน่วยกิตอย่างเดียว หลักเดียวกับ ImportService.addPriorRecords
+      v_kind = 'transferred_grade',
+      nullif(btrim(r.payload->>'note'), '')
+    )
+    returning id into v_prior;
+
+    update import_row set created_ref = v_prior, ok = true where id = r.id;
+    v_ok := v_ok + 1;
+  end loop;
+
+  update import_batch
+     set status = 'applied', applied_at = now(),
+         ok_rows = v_ok, error_rows = 0, total_rows = v_ok
+   where id = p_batch_id;
+
+  imported := v_ok;
+  failed   := 0;
+  return next;
+end $$;
+
+comment on function apply_academic_history_import(uuid) is
+  'นำเข้าประวัติการเรียนเดิมทั้งชุด — มีแถวใดผิดจะไม่เขียนอะไรเลย และผูก batch_id กับทุกแถวที่สร้างเพื่อตามรอยได้';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0070_clubs.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0070_clubs.sql
+--
+-- วิชาชุมนุม/ชมรม — บันทึกพื้นฐาน (ชื่อชมรม ผู้ดูแล สมาชิก)
+--
+-- ─── ทำไมยังไม่ผูกกับเกณฑ์จบ ───
+-- `graduation_rule.kind = 'cocurricular_all_terms'` ("กิจกรรมเสริมหลักสูตร
+-- ผ่านทุกภาคเรียน") มีอยู่แล้วในหลักสูตรทุกฉบับ แต่การผูกชมรมเข้ากับเกณฑ์นั้น
+-- ต้องตัดสินใจเพิ่มว่า "เข้าร่วม" กับ "ผ่าน" ต่างกันยังไง (มาไม่ครบทุกครั้ง
+-- นับว่าผ่านไหม) ซึ่งเป็นคนละงานกับการมีที่บันทึกชื่อชมรมกับสมาชิกก่อน —
+-- ผูกคะแนน/หน่วยกิตทีหลังเมื่อรู้กติกาจริงของวิทยาลัย ไม่งั้นเดาเกณฑ์เอง
+-- แล้วเกณฑ์จบใช้ตัวเลขที่เดามาโดยไม่มีใครสั่ง
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create table club (
+  id             uuid        primary key default gen_random_uuid(),
+  institution_id uuid        not null references institution on delete restrict,
+  code           text        not null,
+  name_th        text        not null,
+  category_th    text,                        -- เช่น "กีฬา" "วิชาการ" "ศิลปะ" — ข้อความอิสระ ไม่ตรึงเป็น enum
+  advisor_staff_id uuid      references staff on delete set null,
+  description_th text,
+  active         boolean     not null default true,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  unique (institution_id, code)
+);
+create index on club (institution_id) where active;
+
+comment on table club is
+  'ชมรม/วิชาชุมนุม — บันทึกพื้นฐาน ยังไม่ผูกกับเกณฑ์จบหรือหน่วยกิตกิจกรรม (ดูคอมเมนต์บนไฟล์)';
+
+create table club_member (
+  id          uuid        primary key default gen_random_uuid(),
+  club_id     uuid        not null references club on delete cascade,
+  student_id  uuid        not null references student on delete cascade,
+  academic_year_id uuid   not null references academic_year on delete restrict,
+  role        text        not null default 'member',   -- 'member' | 'leader'
+  joined_on   date        not null default current_date,
+  left_on     date,
+  created_at  timestamptz not null default now(),
+  unique (club_id, student_id, academic_year_id)
+);
+create index on club_member (student_id);
+
+comment on column club_member.academic_year_id is
+  'ชมรมสมัครใหม่ทุกปีการศึกษา — คนเดิมที่สมัครซ้ำปีถัดไปนับเป็นสมาชิกใหม่ของปีนั้น ไม่ใช่แถวเดิมที่ยังค้าง';
+
+-- set_updated_at() มีมาตั้งแต่ 0001 — ใช้ตัวเดิม ไม่ประกาศซ้ำ
+create trigger club_touch before update on club
+  for each row execute function set_updated_at();
+
+-- ───────────────────────────────────────────────────────────────────
+-- Row-Level Security
+-- ───────────────────────────────────────────────────────────────────
+alter table club enable row level security;
+alter table club force  row level security;
+
+create policy tenant_isolation on club
+  using (institution_id = current_institution_id())
+  with check (institution_id = current_institution_id());
+
+create policy club_write on club
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+create policy club_update on club
+  as restrictive for update
+  using (true)
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+create policy club_delete on club
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+alter table club_member enable row level security;
+alter table club_member force  row level security;
+
+create policy tenant_isolation on club_member
+  using (student_institution(club_member.student_id) = current_institution_id())
+  with check (student_institution(club_member.student_id) = current_institution_id());
+
+-- อ่านได้: บทบาทระดับวิทยาลัย, ครู (ดูของนักศึกษาที่ตัวเองดูแล/สอนไม่ได้แยกในนี้
+-- เพราะสมาชิกชมรมไม่ใช่ข้อมูลอ่อนไหว), เจ้าตัวเอง, ผู้ปกครองที่ยืนยันแล้ว
+create policy club_member_scope on club_member
+  as restrictive
+  using (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or club_member.student_id in (select actor_student_ids())
+    or exists (select 1 from student_guardian sg
+                where sg.student_id = club_member.student_id
+                  and sg.person_id = current_actor_id()
+                  and sg.verified_at is not null)
+  );
+
+create policy club_member_write on club_member
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+create policy club_member_update on club_member
+  as restrictive for update
+  using (true)
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+create policy club_member_delete on club_member
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+grant select, insert, update, delete on club, club_member to app_runtime;
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0071_national_exam_results.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0071_national_exam_results.sql
+--
+-- ผลสอบ O-NET/V-NET — ตารางแบบทั่วไปก่อน ยังไม่ได้เทียบกับรูปแบบไฟล์จริง
+-- ที่ สอศ./สทศ. ส่งมา (หลักการเดียวกับ PVRS ก่อนยืนยันรูปแบบ — ดู
+-- pvrs_rows() และคอมเมนต์ formatConfirmed ใน CLAUDE.md) รหัสวิชาและชื่อวิชา
+-- จึงเป็นข้อความอิสระ ไม่ตรึงเป็น enum หรือตารางอ้างอิง เพราะยังไม่รู้ชุด
+-- วิชาที่แน่นอนของไฟล์จริง (O-NET กับ V-NET มีจำนวนและชื่อวิชาต่างกัน)
+--
+-- ─── ทำไม on conflict do update ไม่ใช่ all-or-nothing แบบ apply_student_import ───
+-- คะแนนแต่ละแถวเป็นของนักศึกษาคนละคน ไม่ใช่ชุดข้อมูลเดียวที่ต้องครบถ้วน
+-- ด้วยกัน (ต่างจากประวัติการเรียนเดิมที่ทุกแถวเป็นของ "รอบนำเข้า" เดียว
+-- ที่ต้องตามรอยได้) แถวหนึ่งพิมพ์รหัสนักศึกษาผิดไม่ควรทำให้อีกสามสิบเก้าคน
+-- ที่ถูกต้องบันทึกไม่ได้ไปด้วย — หลักเดียวกับ register_courses_bulk()
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create table national_exam_result (
+  id             uuid          primary key default gen_random_uuid(),
+  institution_id uuid          not null references institution on delete restrict,
+  student_id     uuid          not null references student on delete cascade,
+  exam_kind      text          not null default 'onet',   -- 'onet' | 'vnet' — ข้อความอิสระ เผื่อมีชนิดอื่นภายหลัง
+  exam_year_be   smallint      not null check (exam_year_be between 2500 and 2700),
+  subject_code   text          not null,
+  subject_th     text          not null,
+  score          numeric(5,2)  not null check (score >= 0 and score <= 100),
+  created_at     timestamptz   not null default now(),
+  updated_at     timestamptz   not null default now(),
+  unique (student_id, exam_kind, exam_year_be, subject_code)
+);
+create index on national_exam_result (institution_id, exam_kind, exam_year_be);
+
+comment on table national_exam_result is
+  'ผลสอบระดับชาติ (O-NET/V-NET) — โครงตารางทั่วไป ยังไม่เทียบกับรูปแบบไฟล์จริงที่หน่วยงานส่งมา';
+
+create trigger national_exam_result_touch before update on national_exam_result
+  for each row execute function set_updated_at();
+
+-- ───────────────────────────────────────────────────────────────────
+-- บันทึกผลเป็นกลุ่ม — รายวิชา/รายคนที่ผิดไม่ทำให้ทั้งชุดล้ม
+--
+-- คืนผลรายแถว (status/detail) แทนการ raise เหตุผลเดียวกับ
+-- register_courses_bulk() — ไฟล์ผลสอบมีเป็นร้อยแถว แถวเดียวพิมพ์รหัส
+-- นักศึกษาผิดต้องไม่ทำให้อีกร้อยแถวที่ถูกบันทึกไม่ได้
+-- ───────────────────────────────────────────────────────────────────
+create or replace function record_onet_results_bulk(p_rows jsonb)
+returns table (row_no integer, student_code text, subject_code text, status text, detail text)
+language plpgsql as $$
+-- คอลัมน์ที่คืนออกไป (student_code, subject_code) ซ้ำชื่อกับคอลัมน์จริงใน
+-- student/national_exam_result — สั่งให้ WHERE ตีความเป็นคอลัมน์เสมอ
+-- (รูปแบบเดียวกับ register_courses_bulk ใน 0026)
+#variable_conflict use_column
+declare
+  r         jsonb;
+  v_idx     integer := 0;
+  v_inst    uuid := current_institution_id();
+  v_student uuid;
+  v_code    text;
+  v_kind    text;
+  v_year    text;
+  v_subject_code text;
+  v_subject_th   text;
+  v_score   text;
+begin
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_idx := v_idx + 1;
+    v_code := nullif(btrim(r->>'studentCode'), '');
+    v_kind := coalesce(nullif(btrim(r->>'examKind'), ''), 'onet');
+    v_year := r->>'examYearBe';
+    v_subject_code := nullif(btrim(r->>'subjectCode'), '');
+    v_subject_th   := nullif(btrim(r->>'subjectTh'), '');
+    v_score := r->>'score';
+
+    begin
+      if v_code is null then
+        raise exception 'ไม่มีรหัสนักศึกษา';
+      end if;
+      select id into v_student from student
+       where institution_id = v_inst and student_code = v_code;
+      if v_student is null then
+        raise exception 'ไม่พบนักศึกษารหัส %', v_code;
+      end if;
+      if v_subject_code is null or v_subject_th is null then
+        raise exception 'ไม่มีรหัสหรือชื่อวิชา';
+      end if;
+      if v_year !~ '^\d{4}$' then
+        raise exception 'ปีที่สอบต้องเป็นพุทธศักราชสี่หลัก';
+      end if;
+      if v_score !~ '^\d+(\.\d+)?$' or v_score::numeric < 0 or v_score::numeric > 100 then
+        raise exception 'คะแนนต้องเป็นตัวเลข 0-100';
+      end if;
+
+      insert into national_exam_result
+        (institution_id, student_id, exam_kind, exam_year_be, subject_code, subject_th, score)
+      values (v_inst, v_student, v_kind, v_year::smallint, v_subject_code, v_subject_th, v_score::numeric)
+      on conflict (student_id, exam_kind, exam_year_be, subject_code)
+      do update set subject_th = excluded.subject_th, score = excluded.score, updated_at = now();
+
+      row_no := v_idx; student_code := v_code; subject_code := v_subject_code;
+      status := 'saved'; detail := null;
+      return next;
+    exception
+      when others then
+        row_no := v_idx; student_code := v_code; subject_code := v_subject_code;
+        status := 'error'; detail := sqlerrm;
+        return next;
+    end;
+  end loop;
+end $$;
+
+comment on function record_onet_results_bulk(jsonb) is
+  'บันทึกผลสอบ O-NET/V-NET เป็นกลุ่ม คืนผลรายแถว — แถวที่ผิดไม่ทำให้แถวอื่นบันทึกไม่ได้ (หลักเดียวกับ register_courses_bulk)';
+
+-- ───────────────────────────────────────────────────────────────────
+-- Row-Level Security — รูปแบบเดียวกับ prior_academic_record (0023/0044)
+-- ───────────────────────────────────────────────────────────────────
+alter table national_exam_result enable row level security;
+alter table national_exam_result force  row level security;
+
+create policy tenant_isolation on national_exam_result
+  using (institution_id = current_institution_id())
+  with check (institution_id = current_institution_id());
+
+create policy national_exam_result_scope on national_exam_result
+  as restrictive
+  using (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or national_exam_result.student_id in (select actor_student_ids())
+    or exists (select 1 from student_guardian sg
+                where sg.student_id = national_exam_result.student_id
+                  and sg.person_id = current_actor_id()
+                  and sg.verified_at is not null
+                  and sg.can_view_grades)
+  );
+
+create policy national_exam_result_write on national_exam_result
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','academic','director','admin']));
+create policy national_exam_result_update on national_exam_result
+  as restrictive for update
+  using (true)
+  with check (current_app_role() = any (array['registrar','academic','director','admin']));
+create policy national_exam_result_delete on national_exam_result
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','academic','director','admin']));
+
+grant select, insert, update, delete on national_exam_result to app_runtime;
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0072_graduation_survey.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0072_graduation_survey.sql
+--
+-- แบบสำรวจภาวะการมีงานทำของผู้สำเร็จการศึกษา — ชุดคำถามมาตรฐานทั่วไป
+-- ยังไม่ได้เทียบกับแบบฟอร์มที่ สอศ. กำหนดจริง (เหมือน O-NET ใน 0071)
+--
+-- ─── ทำไมไม่ผูก unique (student_id) ───
+-- วิทยาลัยบางแห่งสำรวจซ้ำหลังจบ (เช่น ทันทีที่จบ + ตามผลอีกครั้งหลังจบ 1 ปี)
+-- ผูก unique ไว้ตั้งแต่ต้นจะปิดทางสำรวจซ้ำโดยไม่มีเหตุผลรองรับ — ปล่อยให้มี
+-- ได้หลายแถวต่อคน แล้วหน้าจอแสดงแถวล่าสุดเป็นค่าเริ่มต้น
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create type employment_status_kind as enum (
+  'employed', 'employed_and_studying', 'further_study', 'seeking', 'other'
+);
+
+create table graduation_survey_response (
+  id             uuid          primary key default gen_random_uuid(),
+  institution_id uuid          not null references institution on delete restrict,
+  student_id     uuid          not null references student on delete cascade,
+  graduation_id  uuid          references student_graduation on delete set null,
+  status         employment_status_kind not null,
+
+  employer_name_th  text,
+  job_title_th      text,
+  monthly_income    numeric(10,2),
+  field_matches_study boolean,
+
+  further_study_institution_th text,
+  further_study_field_th       text,
+
+  contact_phone  text,
+  note           text,
+
+  responded_on   date          not null default current_date,
+  recorded_by    uuid,                       -- staff ที่โทรสำรวจ — ว่างได้ถ้าบัณฑิตตอบเอง
+  created_at     timestamptz   not null default now(),
+
+  constraint graduation_survey_employed_needs_employer
+    check (status not in ('employed', 'employed_and_studying') or employer_name_th is not null),
+  constraint graduation_survey_study_needs_institution
+    check (status not in ('further_study', 'employed_and_studying') or further_study_institution_th is not null)
+);
+create index on graduation_survey_response (student_id);
+create index on graduation_survey_response (institution_id, responded_on desc);
+
+comment on table graduation_survey_response is
+  'แบบสำรวจภาวะการมีงานทำของผู้สำเร็จการศึกษา — ชุดคำถามทั่วไป ยังไม่เทียบกับแบบฟอร์มที่ สอศ. กำหนดจริง ปล่อยให้สำรวจซ้ำได้หลายรอบต่อคนโดยตั้งใจ';
+
+-- ───────────────────────────────────────────────────────────────────
+-- Row-Level Security — รูปแบบเดียวกับ prior_academic_record / national_exam_result
+-- ───────────────────────────────────────────────────────────────────
+alter table graduation_survey_response enable row level security;
+alter table graduation_survey_response force  row level security;
+
+create policy tenant_isolation on graduation_survey_response
+  using (institution_id = current_institution_id())
+  with check (institution_id = current_institution_id());
+
+create policy graduation_survey_scope on graduation_survey_response
+  as restrictive
+  using (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or graduation_survey_response.student_id in (select actor_student_ids())
+  );
+
+create policy graduation_survey_write on graduation_survey_response
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','student_affairs','academic','director','admin']));
+create policy graduation_survey_update on graduation_survey_response
+  as restrictive for update
+  using (true)
+  with check (current_app_role() = any (array['registrar','student_affairs','academic','director','admin']));
+create policy graduation_survey_delete on graduation_survey_response
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','student_affairs','academic','director','admin']));
+
+grant select, insert, update, delete on graduation_survey_response to app_runtime;
 
 commit;
 
