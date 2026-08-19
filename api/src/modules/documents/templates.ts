@@ -24,6 +24,7 @@
 
 /** เอกสารหนึ่งใบตามที่อ่านมาจาก issued_document */
 import { renderLetter, type LetterDocument } from './letters';
+import { renderReceipt, type ReceiptDocument } from './receipt';
 import {
   is67Edition,
   renderTranscript67,
@@ -1001,6 +1002,10 @@ export function renderDocument(doc: IssuedDocument, opts?: PrintOptions): string
     case 'guardian_invitation':
     case 'conduct_certificate':
       return renderLetter(doc as unknown as LetterDocument);
+    // ใบเสร็จก็เป็น payload คนละชุดด้วยเหตุผลเดียวกัน — เป็นเรื่องเงินล้วน
+    // ไม่มีข้อมูลการเรียนสักช่อง และเป็นใบเดียวที่พิมพ์ลงกระดาษ A5 แนวนอน
+    case 'receipt':
+      return renderReceipt(doc as unknown as ReceiptDocument);
     default:
       throw new Error(`ยังไม่มีแม่แบบพิมพ์สำหรับเอกสารประเภท ${doc.kind}`);
   }

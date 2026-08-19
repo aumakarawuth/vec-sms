@@ -67,6 +67,9 @@ let passed = 0;
 const failures: string[] = [];
 /** ref2 ของใบแจ้งหนี้ เก็บไว้ตอน API-13 เพื่อใช้ทดสอบการกระทบยอด */
 let REF2 = '';
+/** ใบเสร็จที่ออกตอน API-15 — ชุด API-191 ถึง 197 ใช้ต่อ */
+let RECEIPT_ID = '';
+let RECEIPT_NO = '';
 
 async function check(name: string, fn: () => Promise<string | void>) {
   try {
@@ -588,13 +591,15 @@ async function main() {
     const r = await finance('/finance/payments', {
       method: 'POST',
       body: JSON.stringify({
-        studentId: F.student, amount: 4200, method: 'promptpay', receiptNo: 'E2E-0001',
+        studentId: F.student, amount: 4200, method: 'promptpay',
       }),
     });
     expect(r.status === 201 || r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
     expect(Number(r.body.overpaid) === 0, 'ไม่ควรมีเงินเหลือ');
     expect(Number(r.body.balance.outstanding) === 8400, `ควรเหลือค้าง 8,400 ได้ ${r.body.balance.outstanding}`);
-    return `ค้างอยู่ ${r.body.balance.outstanding} บาท`;
+    RECEIPT_ID = r.body.receipt?.id ?? '';
+    RECEIPT_NO = r.body.receipt?.doc_no ?? '';
+    return `ค้างอยู่ ${r.body.balance.outstanding} บาท · ใบเสร็จ ${RECEIPT_NO}`;
   });
 
   await check('API-16 กระทบยอดอัตโนมัติจาก Reference 2', async () => {
@@ -624,6 +629,99 @@ async function main() {
     expect(r.status === 200, `ได้ ${r.status}`);
     expect(r.body.length >= 1, 'ควรมีรายการค้างอย่างน้อย 1 รายการ');
     return `${r.body.length} รายการรอเจ้าหน้าที่ตัดสิน`;
+  });
+
+  console.log('');
+  console.log('══ ใบเสร็จรับเงิน (0068) ══');
+
+  /*
+   * ─── ทำไมชุดนี้ต้องพิมพ์ใบออกมาอ่าน ไม่ใช่ตรวจแค่ว่ามีแถว ───
+   * ก่อน 0068 ระบบมีช่อง `receipt_no` ให้กรอกอยู่แล้ว เทสต์ที่ตรวจว่า
+   * "บันทึกการรับชำระได้" จึงเขียวมาตลอดโดยที่ไม่มีใบเสร็จจริงสักใบ
+   * สิ่งที่ต้องพิสูจน์คือมี**กระดาษ**ที่มีเลขที่ ยอดเงิน และตัวอักษรอยู่บนนั้น
+   */
+  await check('API-191 รับชำระแล้วได้เลขที่ใบเสร็จกลับมาทันที', async () => {
+    expect(RECEIPT_ID && RECEIPT_NO, 'API-15 ต้องได้ใบเสร็จติดมากับคำตอบของการรับชำระ');
+    const list = await finance(`/finance/receipts?studentId=${F.student}`);
+    expect(list.status === 200, `ได้ ${list.status}: ${JSON.stringify(list.body)}`);
+    const mine = list.body.find((x: any) => x.id === RECEIPT_ID);
+    expect(mine, 'ใบที่เพิ่งออกต้องอยู่ในรายการใบเสร็จของนักศึกษาคนนั้น');
+    expect(Number(mine.amount) === 4200, `ยอดบนใบต้องเป็น 4,200 ได้ ${mine.amount}`);
+    expect(String(mine.amount_text).includes('บาท'), 'ต้องมีจำนวนเงินตัวอักษรเก็บไว้กับใบ');
+    return `${RECEIPT_NO} — ${mine.amount_text}`;
+  });
+
+  await check('API-192 พิมพ์ใบเสร็จได้กระดาษที่มีเลขที่และยอดจริง', async () => {
+    const r = await finance(`/finance/receipts/${RECEIPT_ID}/print`);
+    expect(r.status === 200, `ได้ ${r.status}`);
+    const html = String(r.body);
+    expect(html.includes('ใบเสร็จรับเงิน'), 'ต้องมีหัวเรื่องใบเสร็จ');
+    expect(html.includes(RECEIPT_NO), `ต้องมีเลขที่ ${RECEIPT_NO} บนกระดาษ`);
+    expect(html.includes('4,200.00'), 'ต้องมียอดเงินบนกระดาษ');
+    expect(/บาท(ถ้วน|[ก-๙])/.test(html), 'ต้องมีจำนวนเงินตัวอักษรบนกระดาษ');
+    // ต้องไม่มีหัวข้อที่ไม่มีค่าอยู่ใต้มัน — ช่องว่างบนใบเสร็จอ่านไม่ออกว่า
+    // ระบบยังไม่เสร็จหรือข้อมูลหาย (บทเรียนเดียวกับ API-172)
+    expect(!html.includes('ได้รับเงินจาก <strong></strong>'), 'ชื่อผู้จ่ายเงินต้องไม่ว่าง');
+    return `${html.length} ตัวอักษร`;
+  });
+
+  await check('API-193 พิมพ์ซ้ำได้ใบเดิม ไม่กินเลขใหม่', async () => {
+    const before = await finance(`/finance/receipts?studentId=${F.student}`);
+    const again = await finance(`/finance/receipts/${RECEIPT_ID}/print`);
+    expect(again.status === 200, `ได้ ${again.status}`);
+    expect(String(again.body).includes(RECEIPT_NO), 'พิมพ์ซ้ำต้องได้เลขที่เดิม');
+    const after = await finance(`/finance/receipts?studentId=${F.student}`);
+    expect(after.body.length === before.body.length,
+      `พิมพ์ซ้ำต้องไม่ออกใบใหม่ — จาก ${before.body.length} เป็น ${after.body.length}`);
+  });
+
+  await check('API-194 บทบาทอื่นเปิดใบเสร็จไม่ได้', async () => {
+    // งานทะเบียนออกใบ รบ. ได้ แต่ไม่ใช่คนรับเงิน — และครูยิ่งไม่ใช่
+    const a = await registrar(`/finance/receipts?studentId=${F.student}`);
+    expect(a.status === 403, `งานทะเบียนควรได้ 403 ได้ ${a.status}`);
+    const b = await teacher(`/finance/receipts/${RECEIPT_ID}/print`);
+    expect(b.status === 403, `ครูควรได้ 403 ได้ ${b.status}`);
+  });
+
+  await check('API-195 เส้นทางพิมพ์ใบเสร็จปฏิเสธเอกสารชนิดอื่น', async () => {
+    /*
+     * เปิดให้ finance พิมพ์ "เอกสารอะไรก็ได้ที่รู้รหัส" แปลว่างานการเงิน
+     * เปิดใบ รบ. กับระเบียนสะสมของใครก็ได้ ซึ่งเป็นข้อมูลคนละเรื่องกับ
+     * หน้าที่ของตำแหน่ง — เส้นทางนี้จึงต้องดูชนิดเอกสารก่อนเสมอ
+     */
+    const doc = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'certification', yearBe: 2569 }),
+    });
+    expect(doc.status === 201, `เตรียมข้อมูลไม่สำเร็จ ${doc.status}`);
+    const r = await finance(`/finance/receipts/${doc.body.id}/print`);
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  await check('API-196 ส่งเลขที่ใบเสร็จมาเองไม่ได้อีกแล้ว', async () => {
+    // เลขต้องมาจากสายเลขของสถานศึกษา ไม่ใช่จากผู้เรียก — ฟิลด์ที่ไม่รู้จัก
+    // ถูกปฏิเสธด้วย 400 ผู้เรียกเก่าจึงรู้ตัวทันที ไม่ใช่ถูกเมินเงียบ ๆ
+    const r = await finance('/finance/payments', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: F.student, amount: 10, method: 'cash', receiptNo: 'ปลอม-0001',
+      }),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  await check('API-197 วิทยาลัยอื่นเปิดใบเสร็จของเราไม่ได้', async () => {
+    /*
+     * ต้องเป็น**งานการเงินของอีกวิทยาลัย** ไม่ใช่บทบาทอื่น มิฉะนั้นจะติด
+     * ด่านบทบาทก่อนถึง RLS แล้วเทสต์จะเขียวโดยไม่ได้พิสูจน์การแยกข้อมูลเลย
+     * (เหมือน API-194 ที่ทดสอบคนละเรื่องกัน)
+     */
+    const otherFinance = api(base, await token(app, base, F.personAdmin2, 'finance', INST2));
+    const a = await otherFinance(`/finance/receipts?studentId=${F.student}`);
+    expect(a.status === 200, `ได้ ${a.status}: ${JSON.stringify(a.body)}`);
+    expect(a.body.length === 0, `ควรไม่เห็นใบเสร็จเลย เห็น ${a.body.length} ใบ`);
+    const b = await otherFinance(`/finance/receipts/${RECEIPT_ID}/print`);
+    expect(b.status === 404, `ควรได้ 404 ได้ ${b.status}`);
   });
 
   console.log('');
@@ -1067,9 +1165,15 @@ async function main() {
     expect(r.body.doc_no === docNo, `เลขที่ต้องเป็นใบเดิม ${docNo} ได้ ${r.body.doc_no}`);
     expect(r.body.payload, 'ต้องคืนเนื้อหาที่ตรึงไว้');
 
+    /*
+     * นับเฉพาะใบ รบ. ไม่ใช่ทุกใบของนักศึกษาคนนี้ — ตั้งแต่ 0068 ใบเสร็จ
+     * รับเงินอยู่ในตารางเดียวกัน การนับรวมจึงกลายเป็นการนับสิ่งที่งานการเงิน
+     * ทำไว้ก่อนหน้า ซึ่งไม่เกี่ยวกับสิ่งที่ข้อนี้ทดสอบ
+     */
     const list = await registrar(`/documents/students/${F.student}`);
-    expect(list.body.length === 1, `ควรมีเอกสารใบเดียว ได้ ${list.body.length} ใบ`);
-    return `อ่านซ้ำได้เลขที่เดิม ${r.body.doc_no} และยังมีใบเดียว`;
+    const transcripts = list.body.filter((d: any) => d.kind === 'transcript');
+    expect(transcripts.length === 1, `ควรมีใบ รบ. ใบเดียว ได้ ${transcripts.length} ใบ`);
+    return `อ่านซ้ำได้เลขที่เดิม ${r.body.doc_no} และยังมีใบ รบ. ใบเดียว`;
   });
 
   await check('API-37 ยกเลิกเอกสารต้องบอกเหตุผล', async () => {
@@ -3765,6 +3869,216 @@ async function main() {
     });
     expect(bogus.status === 400, `รายวิชานอกฉบับต้องถูกปฏิเสธ ได้ ${bogus.status}`);
     return `ย้ายภาคได้ · จัดลำดับ ${swapped.length} รายวิชา · ตัวนอกฉบับถูกปฏิเสธ`;
+  });
+
+  await check('API-179 วิชาเทียบโอนขึ้นใบ รบ. พร้อมเครื่องหมาย (*n)', async () => {
+    /*
+     * ─── ทำไมข้อนี้ต้องพิมพ์ใบออกมาอ่าน ไม่ใช่ตรวจแค่ payload ───
+     * ก่อน 0066 ทั้ง `prior_academic_record` และ `transfer_credits_total()`
+     * ทำงานถูกต้องครบทุกอย่าง — สิ่งที่ขาดคือใบ รบ. ไม่เคย join ตารางนั้น
+     * เข้ามาเลย เทสต์ที่ตรวจว่า "บันทึกได้" หรือ "นับหน่วยกิตถูก" จึงเขียว
+     * สนิทมาตลอดโดยที่กระดาษขาดรายวิชาไปทั้งชุด
+     *
+     * และคำอธิบาย (*1)–(*5) ก็พิมพ์อยู่ท้ายใบมาตั้งแต่ต้นโดยไม่มีเครื่องหมาย
+     * ไหนปรากฏจริงสักตัว — สองอย่างนี้เห็นได้ทางเดียวคืออ่านใบที่พิมพ์ออกมา
+     */
+    const added = await registrar('/prior-records', {
+      method: 'POST',
+      body: JSON.stringify({
+        records: [{
+          studentId: F.student,
+          sourceTh: 'วิทยาลัยเดิม',
+          courseCode: 'XFER-901',
+          courseNameTh: 'วิชาที่เทียบโอนมาเพื่อทดสอบ',
+          credits: 3,
+          gradeSymbol: 'B',
+          gradePoint: 3,
+          termLabel: '1/2566',
+          transferKind: 'transferred_grade',
+        }],
+      }),
+    });
+    expect(added.status < 400, `บันทึกวิชาเทียบโอนไม่ได้ ${added.status} ${JSON.stringify(added.body)}`);
+
+    // เส้นทางนี้คืน **ออบเจ็กต์** `{records, summary}` ไม่ใช่อาร์เรย์
+    // — รูปเดียวกับ `/staff` ที่เคยทำให้หน้าจอขาวทั้งหน้า
+    const list = await registrar(`/prior-records/students/${F.student}`);
+    const rec = ((list.body as any)?.records as any[])?.find((r) => r.course_code === 'XFER-901');
+    expect(Boolean(rec), 'อ่านวิชาเทียบโอนที่เพิ่งบันทึกกลับมาไม่ได้');
+
+    // ยังไม่อนุมัติต้องยังไม่ขึ้นใบ — แถวที่ยังไม่อนุมัติคือคำขอ ไม่ใช่หน่วยกิต
+    const before = await registrar('/documents/issue', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const htmlBefore = String((await registrar(`/documents/${before.body.id}/print`)).body);
+    expect(!htmlBefore.includes('XFER-901') && !htmlBefore.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'วิชาที่ยังไม่อนุมัติต้องไม่ขึ้นใบ');
+
+    /*
+     * ─── คนกรอกกับคนอนุมัติต้องไม่ใช่คนเดียวกัน ───
+     * งานทะเบียนบันทึกวิชาที่เทียบโอนมาได้ แต่อนุมัติไม่ได้ (403) —
+     * การรับรองว่าหน่วยกิตจากที่อื่นใช้แทนหลักสูตรของเราได้เป็นเรื่องของ
+     * ฝ่ายวิชาการ หลักเดียวกับที่งานทะเบียนสร้างสถานประกอบการได้แต่
+     * อนุมัติไม่ได้ (API-148) — ยืนยันไว้ตรงนี้ด้วย ไม่ใช่แค่เลี่ยงไปใช้
+     * บัญชีที่ผ่าน
+     */
+    const denied = await registrar('/prior-records/approve', {
+      method: 'POST', body: JSON.stringify({ recordIds: [rec.id] }),
+    });
+    expect(denied.status === 403, `งานทะเบียนต้องอนุมัติเองไม่ได้ ได้ ${denied.status}`);
+
+    const ok = await director('/prior-records/approve', {
+      method: 'POST', body: JSON.stringify({ recordIds: [rec.id] }),
+    });
+    expect(ok.status < 400, `อนุมัติเทียบโอนไม่ได้ ${ok.status} ${JSON.stringify(ok.body)}`);
+
+    const after = await registrar('/documents/issue', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    const html = String((await registrar(`/documents/${after.body.id}/print`)).body);
+
+    expect(html.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'อนุมัติแล้ววิชาเทียบโอนต้องขึ้นใบ');
+    expect(html.includes('(*1)'),
+      'วิชาที่โอนผลการเรียนมาต้องมีเครื่องหมาย (*1) ท้ายชื่อวิชา');
+
+    /*
+     * ใบเก่าที่ออกก่อนอนุมัติต้องพิมพ์ซ้ำได้เหมือนเดิมทุกประการ —
+     * payload ตรึงแล้วแก้ไม่ได้ (หลักข้อ 5) การเพิ่มเครื่องหมายให้ใบเก่า
+     * ย้อนหลังจะทำให้ใบที่คนถืออยู่ไม่ตรงกับที่ระบบพิมพ์ใหม่
+     */
+    const reprint = String((await registrar(`/documents/${before.body.id}/print`)).body);
+    expect(!reprint.includes('วิชาที่เทียบโอนมาเพื่อทดสอบ'),
+      'ใบที่ออกก่อนอนุมัติต้องพิมพ์ซ้ำได้เหมือนเดิม ไม่ใช่เปลี่ยนตามข้อมูลใหม่');
+
+    return 'งานทะเบียนอนุมัติเองไม่ได้ · ยังไม่อนุมัติไม่ขึ้นใบ · อนุมัติแล้วขึ้นพร้อม (*1) · ใบเก่าพิมพ์ซ้ำได้เหมือนเดิม';
+  });
+
+  console.log('');
+  console.log('══ ลงข้อมูลรายวิชาเข้าคลังและหลักสูตร (0065) ══');
+
+  await check('API-176 สร้างรายวิชาในคลังได้ และคาบต่อสัปดาห์คำนวณให้เอง', async () => {
+    /*
+     * ─── ทำไมเส้นทางนี้เพิ่งมี ───
+     * ก่อนหน้านี้ **ไม่มีทางสร้างรายวิชาในระบบเลยสักทาง** — ค้นทั้ง repo
+     * แล้ว `insert into course` มีอยู่สองที่คือ `db/seed` กับ
+     * `db/deploy/demo-data.sql` วิทยาลัยที่เปิดใหม่จึงลงหลักสูตรของตัวเอง
+     * ไม่ได้เลย ทั้งที่หน้าจอโครงสร้างหลักสูตรเปิดดูได้ปกติ
+     *
+     * และ `weekly_periods` ต้องมาจาก ท+ป เสมอ ไม่ใช่ช่องให้กรอก — ถ้ากรอกเอง
+     * มันเพี้ยนจาก ท-ป-น ได้ทันทีที่มีคนแก้ค่าเดียว แล้วตารางสอนกับหนังสือ
+     * หลักสูตรจะบอกจำนวนคาบไม่ตรงกันโดยไม่มีอะไรฟ้อง (SISA เก็บสองค่านี้
+     * แยกกันจริง ๆ และประกอบกลับเป็น ท-ป-น ไม่ได้)
+     */
+    const code = `T${Date.now().toString().slice(-7)}`;
+    const made = await registrar('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code, nameTh: 'รายวิชาทดสอบการลงข้อมูล', nameEn: 'Data Entry Test',
+        editionBe: 2567, theoryHours: 1, practiceHours: 2, credits: 2,
+      }),
+    });
+    expect(made.status < 400, `สร้างรายวิชาไม่ได้ ${made.status} ${JSON.stringify(made.body)}`);
+    expect(Number(made.body.weekly_periods) === 3,
+      `คาบต่อสัปดาห์ต้องเป็น 1+2=3 ได้ ${made.body.weekly_periods}`);
+
+    // รหัสซ้ำในฉบับเดียวกันต้องถูกปฏิเสธพร้อมบอกว่าซ้ำกับฉบับไหน
+    const dup = await registrar('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code, nameTh: 'ซ้ำ', editionBe: 2567,
+        theoryHours: 1, practiceHours: 0, credits: 1,
+      }),
+    });
+    expect(dup.status === 400, `รหัสซ้ำต้องได้ 400 ได้ ${dup.status}`);
+
+    const edited = await registrar(`/curriculum/catalog/${made.body.id}`, {
+      method: 'PATCH', body: JSON.stringify({ theoryHours: 2, practiceHours: 0 }),
+    });
+    expect(Number(edited.body.weekly_periods) === 2,
+      `แก้ ท-ป แล้วคาบต้องคิดใหม่เป็น 2 ได้ ${edited.body.weekly_periods}`);
+    return `${code} · 1-2-2 → คาบ 3 · แก้เป็น 2-0 → คาบ 2 · รหัสซ้ำถูกปฏิเสธ`;
+  });
+
+  await check('API-177 ครูสร้างรายวิชาเองไม่ได้', async () => {
+    // หน่วยกิตของรายวิชาคือตัวตั้งของการตรวจจบทั้งรุ่น
+    const r = await teacher('/curriculum/catalog', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: 'TCH-001', nameTh: 'ครูสร้างเอง', editionBe: 2567,
+        theoryHours: 1, practiceHours: 0, credits: 1,
+      }),
+    });
+    expect(r.status === 403, `ครูต้องได้ 403 ได้ ${r.status}`);
+    return 'ครูถูกปฏิเสธที่ชั้น API';
+  });
+
+  await check('API-178 วางทั้งตารางแล้วได้ผลรายบรรทัด ไม่ล้มทั้งก้อน', async () => {
+    /*
+     * ─── ทำไมต้องคืนผลรายบรรทัด ───
+     * หลักสูตรฉบับหนึ่งมีร้อยกว่ารายวิชา ถ้ามีบรรทัดเดียวชนของเดิมแล้ว
+     * `rollback` ทั้งชุด คนกรอกจะต้องไล่หาบรรทัดที่ผิดเองโดยไม่มีอะไรบอก
+     * แล้ววางใหม่ทั้งก้อน (หลักเดียวกับ `register_courses_bulk`)
+     *
+     * ─── และรายวิชาที่มีอยู่แล้วแต่ ท-ป-น ไม่ตรง ต้องไม่ถูกเขียนทับ ───
+     * หน่วยกิตของรายวิชาที่มีคนเรียนไปแล้วคือเกณฑ์จบย้อนหลังของคนกลุ่มนั้น
+     * การวางตารางผิดฉบับแล้วเขียนทับเงียบ ๆ จะเปลี่ยนเกณฑ์จบของคนที่เรียน
+     * ไปครึ่งทาง — รายงานว่าไม่ตรงแล้วให้คนตัดสินใจ
+     */
+    const versions = await registrar('/curriculum/versions');
+    const version = (versions.body as any[])?.[0];
+    if (!version) return 'ข้ามเพราะยังไม่มีฉบับหลักสูตร';
+
+    const st = await registrar(`/curriculum/versions/${version.id}`);
+    const category = (st.body?.categories ?? [])[0];
+    if (!category) return 'ข้ามเพราะฉบับนี้ยังไม่มีหมวดวิชา';
+
+    const stamp = Date.now().toString().slice(-6);
+    const rows = [
+      { code: `B${stamp}1`, nameTh: 'วิชาวางใหม่หนึ่ง', theoryHours: 2, practiceHours: 0, credits: 2 },
+      { code: `B${stamp}2`, nameTh: 'วิชาวางใหม่สอง', theoryHours: 0, practiceHours: 2, credits: 1 },
+    ];
+
+    const first = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ curriculumCategoryId: category.id, rows }),
+    });
+    expect(first.status < 400, `วางตารางไม่ได้ ${first.status} ${JSON.stringify(first.body)}`);
+    expect(first.body.created === 2, `ต้องสร้างใหม่ 2 ได้ ${first.body.created}`);
+
+    // วางซ้ำก้อนเดิม — ต้องไม่สร้างซ้ำและไม่ผูกซ้ำ
+    const again = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ curriculumCategoryId: category.id, rows }),
+    });
+    expect(again.body.created === 0 && again.body.already === 2,
+      `วางซ้ำต้องได้ already 2 ได้ created=${again.body.created} already=${again.body.already}`);
+
+    // ก้อนเดียวกันแต่หน่วยกิตต่างจากของเดิม — ต้องรายงาน ไม่ใช่เขียนทับ
+    const changed = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({
+        curriculumCategoryId: category.id,
+        rows: [{ ...rows[0], credits: 9 }],
+      }),
+    });
+    expect(changed.body.mismatch === 1, `ต้องรายงานว่าไม่ตรง 1 ได้ ${changed.body.mismatch}`);
+
+    const after = await registrar('/curriculum/courses?q=' + encodeURIComponent(rows[0].code));
+    const still = (after.body as any[])?.find((c) => c.code === rows[0].code);
+    expect(still && Number(still.credits) === 2,
+      `หน่วยกิตเดิมต้องไม่ถูกเขียนทับ ได้ ${still?.credits}`);
+
+    // หมวดวิชาของฉบับอื่นต้องถูกปฏิเสธ ไม่ใช่เพิ่มไปผิดที่เงียบ ๆ
+    const wrong = await registrar(`/curriculum/versions/${version.id}/courses/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({
+        curriculumCategoryId: '00000000-0000-0000-0000-000000000001', rows,
+      }),
+    });
+    expect(wrong.status === 400, `หมวดนอกฉบับต้องได้ 400 ได้ ${wrong.status}`);
+
+    return `สร้าง 2 · วางซ้ำได้ already 2 · ท-ป-น ไม่ตรงรายงาน 1 โดยไม่เขียนทับ`;
   });
 
   console.log('');

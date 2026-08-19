@@ -12,9 +12,11 @@
  * นักศึกษาลงทะเบียนได้เดี๋ยวนี้ ไม่ใช่พรุ่งนี้
  */
 import { useState } from 'react';
-import { api } from '../core/api';
+import { api, qs } from '../core/api';
 import { money, thaiDate } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
+} from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const METHOD: Record<string, string> = {
@@ -53,6 +55,23 @@ interface StudentRow {
   full_name: string;
 }
 
+interface Receipt {
+  id: string;
+  doc_no: string;
+  issued_on: string;
+  voided_at: string | null;
+  void_reason: string | null;
+  amount: string | number;
+  method: string;
+  amount_text: string;
+}
+
+interface PaymentResult {
+  paymentId: string;
+  receipt: { id: string; doc_no: string } | null;
+  overpaid: number;
+}
+
 interface Balance {
   billed: number | string;
   paid: number | string;
@@ -70,13 +89,23 @@ export function FinanceScreen() {
   const [installments, setInstallments] = useState('2');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
-  const [receiptNo, setReceiptNo] = useState('');
+  const [note, setNote] = useState('');
+  /** ใบเสร็จของการรับเงินครั้งล่าสุด — สิ่งที่ต้องพิมพ์ให้คนที่ยืนรออยู่ */
+  const [justIssued, setJustIssued] = useState<{ id: string; doc_no: string } | null>(null);
 
   const balance = useAsync(
     () =>
       studentId
         ? api.get<Balance>(`/students/${studentId}/balance`)
         : Promise.resolve(null as unknown as Balance),
+    [studentId],
+  );
+
+  const receipts = useAsync(
+    () =>
+      studentId
+        ? api.get<Receipt[]>(`/finance/receipts${qs({ studentId })}`)
+        : Promise.resolve([]),
     [studentId],
   );
 
@@ -216,32 +245,100 @@ export function FinanceScreen() {
                   ))}
                 </select>
               </Field>
-              <Field label="เลขที่ใบเสร็จ (ถ้ามี)">
-                <input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} />
+              <Field label="หมายเหตุ (ถ้ามี)">
+                <input value={note} onChange={(e) => setNote(e.target.value)} />
               </Field>
               <div className="shrink">
                 <ActionButton
                   className="primary"
                   onRun={() =>
-                    api.post('/finance/payments', {
+                    api.post<PaymentResult>('/finance/payments', {
                       studentId,
                       amount: Number(amount),
                       method,
-                      ...(receiptNo.trim() ? { receiptNo: receiptNo.trim() } : {}),
+                      ...(note.trim() ? { note: note.trim() } : {}),
                     })
                   }
-                  onDone={() => {
+                  onDone={(r) => {
                     setAmount('');
-                    setReceiptNo('');
+                    setNote('');
+                    setJustIssued((r as PaymentResult).receipt);
                     balance.reload();
                     aging.reload();
+                    receipts.reload();
                   }}
                 >
                   บันทึกการรับชำระ
                 </ActionButton>
               </div>
             </div>
+            {/*
+              ─── ไม่มีช่องให้กรอกเลขที่ใบเสร็จอีกแล้ว ───
+              เลขออกจากสายเลขของสถานศึกษาตอนบันทึกการรับชำระ (0068) ของเดิม
+              ให้พิมพ์เอง ซึ่งแปลว่าเลขซ้ำกันสองใบก็ได้ เว้นว่างก็ได้ และไม่มี
+              อะไรผูกเลขนั้นกับกระดาษที่พิมพ์ออกไปเลย
+            */}
+            {justIssued && (
+              <Notice kind="ok">
+                <div className="row" style={{ alignItems: 'center' }}>
+                  <span>
+                    รับชำระแล้ว — ใบเสร็จเลขที่ <strong>{justIssued.doc_no}</strong>
+                  </span>
+                  <div className="shrink">
+                    <PrintButton path={`/finance/receipts/${justIssued.id}/print`}>
+                      พิมพ์ใบเสร็จ
+                    </PrintButton>
+                  </div>
+                </div>
+              </Notice>
+            )}
           </Card>
+
+          <TableCard title="ใบเสร็จที่ออกให้นักศึกษาคนนี้">
+            <AsyncView state={receipts} empty="ยังไม่เคยออกใบเสร็จให้นักศึกษาคนนี้">
+              {(rows) => (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 130 }}>เลขที่</th>
+                      <th style={{ width: 130 }}>วันที่</th>
+                      <th className="num" style={{ width: 120 }}>จำนวนเงิน</th>
+                      <th>ตัวอักษร</th>
+                      <th style={{ width: 130 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id} style={{ opacity: r.voided_at ? 0.55 : 1 }}>
+                        <td className="mono">{r.doc_no}</td>
+                        <td>{thaiDate(r.issued_on)}</td>
+                        <td className="num">{money(r.amount)}</td>
+                        <td>
+                          {r.amount_text}
+                          {r.voided_at && (
+                            <>
+                              {' '}
+                              <Badge kind="danger">ยกเลิกแล้ว</Badge>
+                              {r.void_reason ? ` — ${r.void_reason}` : ''}
+                            </>
+                          )}
+                        </td>
+                        <td>
+                          {/*
+                            พิมพ์ซ้ำอ่านจาก payload ที่ตรึงไว้ ไม่ได้ออกใบใหม่ —
+                            เลขที่จึงไม่เดินและกระดาษที่ได้เหมือนใบแรกทุกตัวอักษร
+                          */}
+                          <PrintButton path={`/finance/receipts/${r.id}/print`}>
+                            พิมพ์ซ้ำ
+                          </PrintButton>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </AsyncView>
+          </TableCard>
 
           <Notice kind="info">
             เงินที่รับเข้ามาจะถูกตัดกับงวดที่ครบกำหนดก่อนเสมอตามลำดับที่

@@ -1,17 +1,23 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  Header,
   Injectable,
   Module,
+  NotFoundException,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
 import { ArrayNotEmpty, IsArray, IsIn, IsISO8601, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
-import { IsUuid } from '../../common/validation/uuid';
+import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { renderDocument, type IssuedDocument } from '../documents/templates';
 
 const METHODS = [
   'cash', 'bank_transfer', 'promptpay', 'credit_card', 'counter_service',
@@ -24,13 +30,22 @@ class IssueInvoiceDto {
   @IsOptional() @IsInt() @Min(1) @Max(6) installments?: number;
 }
 
+/**
+ * ─── ทำไมไม่มี receiptNo ให้กรอกอีกแล้ว ───
+ * เลขที่ใบเสร็จออกโดย `issue_receipt()` จากสายเลขของสถานศึกษา ไม่ใช่ค่าที่
+ * เจ้าหน้าที่พิมพ์เข้ามา — ของเดิมพิมพ์เลขซ้ำกันสองใบก็ได้ เว้นว่างก็ได้
+ * และไม่มีอะไรผูกเลขนั้นกับกระดาษที่พิมพ์ออกไปเลย
+ *
+ * ฟิลด์ที่ไม่รู้จักถูกปฏิเสธด้วย 400 อยู่แล้ว (API-23) ผู้เรียกเก่าจึงรู้ตัว
+ * ทันทีแทนที่จะส่งเลขมาแล้วถูกเมินเงียบ ๆ
+ */
 class PaymentDto {
   @IsUuid() studentId: string;
   @IsNumber() @Min(0.01) amount: number;
   @IsIn(METHODS as unknown as string[]) method: string;
   @IsOptional() @IsISO8601() receivedOn?: string;
-  @IsOptional() @IsString() receiptNo?: string;
   @IsOptional() @IsString() bankRef?: string;
+  @IsOptional() @IsString() note?: string;
 }
 
 class BankTxnDto {
@@ -98,20 +113,30 @@ export class FinanceService {
     return this.db.tx(async (c) => {
       const pay = await c.query<{ id: string }>(
         `insert into payment
-           (institution_id, student_id, received_on, amount, method, receipt_no, bank_ref, received_by)
+           (institution_id, student_id, received_on, amount, method, bank_ref, note, received_by)
          select s.institution_id, s.id, coalesce($2::date, current_date), $3, $4::payment_method,
                 $5, $6, current_actor_id()
            from student s where s.id = $1
          returning id`,
         [
           dto.studentId, dto.receivedOn ?? null, dto.amount,
-          dto.method, dto.receiptNo ?? null, dto.bankRef ?? null,
+          dto.method, dto.bankRef ?? null, dto.note ?? null,
         ],
       );
 
       const paymentId = pay.rows[0].id;
+      // post_payment() ออกใบเสร็จให้ในตัว — กฎ "รับเงินแล้วต้องมีใบเสร็จ"
+      // อยู่ที่ฐานข้อมูล ไม่ใช่ที่นี่ (0068)
       const left = await c.query<{ remaining: string }>(
         `select post_payment($1) as remaining`,
+        [paymentId],
+      );
+
+      const receipt = await c.query<{ id: string; doc_no: string }>(
+        `select id, doc_no from issued_document
+          where kind = 'receipt' and payload ->> 'payment_id' = $1
+            and voided_at is null
+          limit 1`,
         [paymentId],
       );
 
@@ -123,6 +148,9 @@ export class FinanceService {
 
       return {
         paymentId,
+        // คืนเลขที่กับรหัสใบเสร็จออกไปด้วย เพราะสิ่งแรกที่เจ้าหน้าที่ต้องทำ
+        // ต่อจากกดรับเงินคือพิมพ์ใบให้ผู้ปกครองที่ยืนรออยู่ตรงนั้น
+        receipt: receipt.rows[0] ?? null,
         overpaid: Number(left.rows[0].remaining),
         balance: balance.rows[0] ?? { outstanding: 0 },
       };
@@ -185,6 +213,52 @@ export class FinanceService {
     return { placed: Number(row?.placed ?? 0), released: Number(row?.released ?? 0) };
   }
 
+  /**
+   * ใบเสร็จที่ออกให้นักศึกษาคนหนึ่ง — ปิดเมนู "พิมพ์ใบเสร็จย้อนหลัง"
+   *
+   * ─── ทำไมอ่านยอดจาก payload ไม่ใช่ join กลับไปที่ payment ───
+   * ตัวเลขบนกระดาษคือตัวเลข ณ วันที่ออกใบ ถ้าดึงจาก `payment` ตอนนี้แล้ว
+   * วันหนึ่งมีการแก้ไขรายการ (คืนเงิน · ปรับปรุง) รายการในหน้าจอจะไม่ตรงกับ
+   * ใบที่ผู้ปกครองถืออยู่ โดยที่ทั้งสองฝั่งดูถูกต้องในสายตาตัวเอง
+   */
+  async receipts(studentId: string) {
+    return this.db.query(
+      `select d.id, d.doc_no, d.issued_on, d.voided_at, d.void_reason,
+              (d.payload -> 'payment' ->> 'amount')::numeric as amount,
+              d.payload -> 'payment' ->> 'method'            as method,
+              d.payload ->> 'amount_text'                    as amount_text
+         from issued_document d
+        where d.kind = 'receipt' and d.student_id = $1
+        order by d.issued_on desc, d.doc_no desc
+        limit 200`,
+      [studentId],
+    );
+  }
+
+  /**
+   * หน้ากระดาษของใบเสร็จหนึ่งใบ
+   *
+   * ─── ทำไมไม่ใช้ `GET /documents/:id/print` ที่มีอยู่แล้ว ───
+   * เส้นทางนั้นเปิดให้ registrar/academic/student_affairs/director/admin
+   * ซึ่ง**ไม่มี finance** — งานการเงินจึงออกใบเสร็จได้แต่พิมพ์ไม่ได้ ส่วนการ
+   * เติม finance เข้าไปในเส้นทางนั้นแปลว่างานการเงินพิมพ์ใบ รบ. กับระเบียน
+   * สะสมของใครก็ได้ด้วย ซึ่งเป็นข้อมูลคนละเรื่องกับหน้าที่ของตำแหน่ง
+   *
+   * ทางนี้จึงพิมพ์ได้เฉพาะ kind = 'receipt' และปฏิเสธใบชนิดอื่นอย่างชัดเจน
+   */
+  async printReceipt(id: string) {
+    const doc = await this.db.queryOne<IssuedDocument>(
+      `select id, kind, doc_no, copy_no, issued_on, voided_at, void_reason, payload
+         from issued_document where id = $1`,
+      [id],
+    );
+    if (!doc) throw new NotFoundException('ไม่พบใบเสร็จ หรือไม่มีสิทธิ์เข้าถึง');
+    if (doc.kind !== 'receipt') {
+      throw new BadRequestException('เส้นทางนี้พิมพ์ได้เฉพาะใบเสร็จรับเงิน');
+    }
+    return renderDocument(doc);
+  }
+
   async aging() {
     return this.db.query(
       `select bucket, students, amount from v_ar_aging
@@ -215,6 +289,23 @@ class FinanceController {
   @Post('payments')
   pay(@Body() dto: PaymentDto) {
     return this.svc.recordPayment(dto);
+  }
+
+  @Get('receipts')
+  receipts(@Query('studentId', ParseUuidPipe) studentId: string) {
+    return this.svc.receipts(studentId);
+  }
+
+  /**
+   * คืน HTML พร้อมพิมพ์ ไม่ใช่ JSON — และติด `@Audit` เหมือนการพิมพ์เอกสาร
+   * ชนิดอื่น เพราะ "ใครพิมพ์ใบเสร็จของใครเมื่อไร" เป็นคำถามที่ต้องตอบได้
+   * เวลามีใบเสร็จลอยอยู่หลายใบ
+   */
+  @Audit('issued_document', 'id')
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('receipts/:id/print')
+  printReceipt(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.printReceipt(id);
   }
 
   @Post('bank-transactions')
