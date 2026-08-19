@@ -69,6 +69,25 @@ interface Course62 {
   grade_points: string | number | null;
   counts_in_gpa: boolean;
   credits_earned: string | number | null;
+  /**
+   * เลขเครื่องหมาย (*1)–(*5) ที่ต้องพิมพ์ท้ายชื่อวิชา
+   *
+   * ตัวเลือก เพราะใบที่ออกก่อน 0066 ไม่มีช่องนี้ใน payload และ payload
+   * แก้ไม่ได้ — ใบเก่าต้องพิมพ์ซ้ำได้เหมือนวันที่ออกทุกประการ
+   */
+  notes?: number[] | null;
+}
+
+/**
+ * เครื่องหมาย (*n) ท้ายชื่อวิชา
+ *
+ * ต่อท้ายชื่อในคอลัมน์เดิม ไม่เพิ่มคอลัมน์ใหม่ — กรอบตารางวัดมาจากไฟล์จริง
+ * แล้วตรึงไว้ (เส้นตั้ง 11 เส้น สูง 480.6/437.3 pt) และใบจริงก็พิมพ์
+ * เครื่องหมายไว้ท้ายชื่อวิชาอยู่แล้ว
+ */
+function noteSuffix(notes?: number[] | null): string {
+  if (!notes || notes.length === 0) return '';
+  return ' ' + notes.map((n) => `(*${n})`).join('');
 }
 
 interface Term62 {
@@ -579,7 +598,7 @@ function renderRow(r: Row62, lang: 'th' | 'en'): string {
    * ทั้งที่ข้อมูลอังกฤษไม่ครบ — 0057 ปฏิเสธไปแล้วตั้งแต่ขั้นออกใบ
    * ตรงนี้จึงใช้ชื่ออังกฤษตรง ๆ ได้โดยไม่ต้อง fallback เป็นไทย
    */
-  const courseName = lang === 'en' ? c.name_en : c.name_th;
+  const courseName = (lang === 'en' ? c.name_en : c.name_th) + noteSuffix(c.notes);
   /*
    * วิชาที่ไม่นับ GPA พิมพ์ "-" ทั้งช่องหน่วยกิตและช่องผลคูณ
    * (วัดจากไฟล์จริง — กิจกรรมลูกเสือวิสามัญได้ ผ. พิมพ์ "-" ไม่ใช่ "0")
@@ -628,8 +647,14 @@ function estimateLines(text: string, availPt: number, fontPt: number): number {
 /** จำนวนบรรทัดที่แถวหนึ่งกินจริง — แถวสรุปเป็นสองบรรทัดเสมอ */
 function rowLines(r: Row62, lang: 'th' | 'en', fontPt: number): number {
   if (r.kind === 'course') {
-    return estimateLines(lang === 'en' ? r.course.name_en : r.course.name_th,
-                         G.nameWidth, fontPt);
+    /*
+     * ต้องนับความกว้างของ (*n) เข้าไปด้วย มิฉะนั้นตัวคำนวณความจุจะบอกว่า
+     * ลงครบทั้งที่ชื่อวิชายาวขึ้นจนตัดบรรทัดเพิ่ม แล้วตารางล้นกรอบ —
+     * เป็นอาการเดียวกับเรื่องฟอนต์สำรองที่กว้างกว่าเดิม 47%
+     */
+    return estimateLines(
+      (lang === 'en' ? r.course.name_en : r.course.name_th) + noteSuffix(r.course.notes),
+      G.nameWidth, fontPt);
   }
   if (r.kind === 'term') return estimateLines(r.text, G.nameWidth, fontPt);
   // บรรทัดสรุปพิมพ์ที่ 0.928 em ของขนาดตาราง จึงเตี้ยกว่าแถวปกติเล็กน้อย

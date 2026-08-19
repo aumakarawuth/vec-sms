@@ -56,6 +56,14 @@ interface Course67 {
    */
   plan_year_be?: number | null;
   plan_term_ordinal?: number | null;
+  /**
+   * เลขเครื่องหมาย (*1)–(*5) ที่ต้องพิมพ์ท้ายชื่อวิชา
+   *
+   * ตัวเลือก เพราะใบที่ออกก่อน 0066 ไม่มีช่องนี้ใน payload และ payload
+   * แก้ไม่ได้ — ใบเก่าต้องพิมพ์ซ้ำได้เหมือนวันที่ออกทุกประการ คือไม่มี
+   * เครื่องหมาย ไม่ใช่ขึ้นเครื่องหมายที่วันนั้นยังไม่มีใครตัดสินใจ
+   */
+  notes?: number[] | null;
   code: string;
   name_th: string;
   name_en: string;
@@ -670,7 +678,14 @@ const WIDTH_SAFETY = 1.05;
 /** ข้อความที่อยู่ในคอลัมน์ชื่อวิชาของแถวนั้น — ตัวเดียวที่ตัดบรรทัดได้ */
 function rowText(r: Row, lang: 'th' | 'en'): string {
   if (r.t !== 'course') return r.text;
-  return (lang === 'en' && r.c.name_en ? r.c.name_en : r.c.name_th) ?? '';
+  /*
+   * ต้องรวม (*n) เข้าไปด้วย เพราะข้อความนี้คือสิ่งที่ตัวคำนวณความจุใช้
+   * ตัดสินว่าจะย่อฟอนต์กี่ขั้น ถ้าวัดชื่อเปล่าแล้วพิมพ์ชื่อ+เครื่องหมาย
+   * ตารางจะล้นกรอบเฉพาะใบของคนที่มีวิชาเทียบโอน — ซึ่งมองไม่เห็นจน
+   * กระดาษออกมาจากเครื่องพิมพ์
+   */
+  const name = (lang === 'en' && r.c.name_en ? r.c.name_en : r.c.name_th) ?? '';
+  return name + noteSuffix(r.c.notes);
 }
 
 /**
@@ -784,6 +799,22 @@ function termCell(c: Course67, lang: 'th' | 'en'): string {
  * ทั้งห้าช่องทุกแถว) ถ้าใช้ colspan ข้อความสรุปที่ยาวจะไหลไปทับคอลัมน์
  * ตัวเลข แล้วบรรทัดสรุปจะดูเหมือนเป็นรายวิชาที่ไม่มีหน่วยกิต
  */
+/**
+ * เครื่องหมาย (*n) ท้ายชื่อวิชา
+ *
+ * ─── ทำไมต่อท้ายชื่อ ไม่ใช่คอลัมน์ใหม่ ───
+ * กรอบตารางของใบวัดมาจากไฟล์จริงแล้วตรึงไว้ (เส้นตั้ง 11 เส้น) การเพิ่ม
+ * คอลัมน์แปลว่าต้องวัดใหม่ทั้งใบ และใบจริงก็พิมพ์เครื่องหมายไว้ท้ายชื่อวิชา
+ * ในคอลัมน์เดียวกันอยู่แล้ว
+ *
+ * หลายเครื่องหมายพร้อมกันเขียนติดกันเป็น `(*4)(*5)` ตามที่ปรากฏบนใบจริง
+ * ไม่ใช่ `(*4, *5)` ซึ่งเป็นรูปที่ไม่มีใครใช้
+ */
+function noteSuffix(notes?: number[] | null): string {
+  if (!notes || notes.length === 0) return '';
+  return ' ' + notes.map((n) => `(*${n})`).join('');
+}
+
 function renderRow(r: Row, lang: 'th' | 'en'): string {
   if (r.t === 'course') {
     const c = r.c;
@@ -791,7 +822,7 @@ function renderRow(r: Row, lang: 'th' | 'en'): string {
     return `<tr>
       <td class="term">${esc(termCell(c, lang))}</td>
       <td>${esc(c.code)}</td>
-      <td>${esc(name)}</td>
+      <td>${esc(name + noteSuffix(c.notes))}</td>
       <td class="credit">${esc(c.grade_point === null || c.grade_point === undefined
                                  ? '-' : credits(c.credits))}</td>
       <td class="grade">${esc(gradeCell(c))}</td>
