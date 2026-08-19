@@ -102,7 +102,18 @@ select v.id::uuid, r.inst, v.code, v.name_th, v.kind::department_kind
     ('d2000000-0000-0000-0000-000000000001', 'AUTO', 'แผนกวิชาช่างยนต์', 'department'),
     ('d2000000-0000-0000-0000-000000000002', 'ACAD', 'ฝ่ายวิชาการ',      'division')
   ) as v(id, code, name_th, kind)
-on conflict (id) do update set name_th = excluded.name_th;
+/*
+ * ─── ชนกับคีย์ธรรมชาติ ไม่ใช่กับ id ───
+ * เดิมเขียน `on conflict (id)` ซึ่งกันการรันไฟล์นี้ซ้ำได้จริง แต่ไม่กัน
+ * กรณีที่มีแถวรหัสเดียวกัน **จากที่อื่น** อยู่ก่อนแล้ว — ซึ่งเกิดขึ้นจริงบน
+ * `vecsms_api_test` เพราะชุดเทสต์ API สร้าง department รหัส `ACAD` ด้วย
+ * UUID สุ่มไปแล้ว (e2e.ts) ตาราง `department` มี unique ที่ (institution, code)
+ * ทั้งทรานแซกชันจึง rollback ด้วย duplicate key ทั้งที่หัวไฟล์เขียนว่า "รันซ้ำได้"
+ *
+ * อาการนี้โผล่เฉพาะบนฐานที่เคยรันเทสต์มาก่อน ซึ่งคือฐานที่หัวไฟล์สั่งให้ใช้
+ * — ฐานที่เพิ่งสร้างใหม่จะผ่านทุกครั้ง จึงไม่มีใครเห็นตอนทดสอบไฟล์นี้
+ */
+on conflict (institution_id, code) do update set name_th = excluded.name_th;
 
 insert into room (id, institution_id, code, name_th, capacity, kind)
 select v.id::uuid, r.inst, v.code, v.name_th, v.capacity, v.kind::room_kind
