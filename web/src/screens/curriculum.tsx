@@ -10,7 +10,8 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, PageHead, TableCard, useAsync } from '../ui/kit';
+import { ActionButton, AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
+import { CourseEntry } from './course-entry';
 
 interface Version {
   id: string;
@@ -94,6 +95,72 @@ function PlanTermEditor(
         </>
       )}
     </span>
+  );
+}
+
+/**
+ * โคลนฉบับหลักสูตรเป็นฉบับใหม่ — ทางเดียวที่สร้างฉบับใหม่ได้
+ *
+ * ฉบับเดิมแก้ไม่ได้ตามใจเพราะมีนักศึกษาผูกอยู่แล้ว (ดูคอมเมนต์บนสุดของไฟล์)
+ * แต่ก่อนหน้านี้ไม่มีปุ่มเรียก `clone_curriculum_version()` เลยสักที่ — วิทยาลัย
+ * ที่หลักสูตรเดิมหมดอายุจึงไม่มีทางออกฉบับใหม่ได้จากหน้าจอ
+ */
+function CloneVersionCard({ version, onDone }: { version: Version; onDone: () => void }) {
+  const [editionBe, setEditionBe] = useState(String(version.edition_be + 1));
+  const [fromYear, setFromYear] = useState(String(version.edition_be + 1));
+  const [toYear, setToYear] = useState('');
+  const [note, setNote] = useState('');
+
+  return (
+    <Card title={`โคลนฉบับ ${version.edition_be} เป็นฉบับใหม่`}>
+      <p className="hint">
+        คัดลอกหมวดวิชา รายวิชา และกฎการจบทั้งหมดจากฉบับ {version.edition_be} ไปเป็นฉบับใหม่
+        แล้วแก้ต่อจากตรงนั้นได้ — ฉบับเดิมไม่ถูกแตะเลยเพราะยังมีนักศึกษาผูกอยู่
+      </p>
+      <div className="row">
+        <Field label="ฉบับ (พ.ศ.)">
+          <input
+            type="number" value={editionBe}
+            onChange={(e) => setEditionBe(e.target.value)}
+            style={{ maxWidth: 100 }}
+          />
+        </Field>
+        <Field label="เริ่มใช้ปีการศึกษา">
+          <input
+            type="number" value={fromYear}
+            onChange={(e) => setFromYear(e.target.value)}
+            style={{ maxWidth: 100 }}
+          />
+        </Field>
+        <Field label="ถึงปีการศึกษา (ถ้ามี)">
+          <input
+            type="number" value={toYear}
+            onChange={(e) => setToYear(e.target.value)}
+            style={{ maxWidth: 100 }}
+          />
+        </Field>
+        <Field label="หมายเหตุ (ถ้ามี)">
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น ปรับตามเกณฑ์ สอศ. ใหม่" />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            confirm={`โคลนฉบับ ${version.edition_be} เป็นฉบับ ${editionBe} ยืนยันหรือไม่`}
+            onRun={() =>
+              api.post<{ id: string }>(`/curriculum/versions/${version.id}/clone`, {
+                editionBe: Number(editionBe),
+                effectiveFromYearBe: Number(fromYear),
+                ...(toYear ? { effectiveToYearBe: Number(toYear) } : {}),
+                ...(note.trim() ? { note: note.trim() } : {}),
+              })
+            }
+            onDone={onDone}
+          >
+            โคลนเป็นฉบับใหม่
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -209,6 +276,13 @@ export function CurriculumScreen() {
         </AsyncView>
       </TableCard>
 
+      {versionId && versions.data && (
+        <CloneVersionCard
+          version={versions.data.find((v) => v.id === versionId)!}
+          onDone={() => versions.reload()}
+        />
+      )}
+
       {versionId && (
         <AsyncView state={structure}>
           {(s) => (
@@ -237,6 +311,19 @@ export function CurriculumScreen() {
                   </tbody>
                 </table>
               </TableCard>
+
+              {/*
+                วางไว้ **เหนือ** รายการหมวดวิชาโดยตั้งใจ — คนที่เปิดหน้านี้ตอน
+                เปิดวิทยาลัยใหม่มาเพื่อ "ลงข้อมูล" ไม่ใช่เพื่ออ่านของที่ยังไม่มี
+                ถ้าอยู่ท้ายสุด หลักสูตรที่ยังว่างจะแสดงหมวดเปล่า ๆ สิบกว่าใบ
+                คั่นก่อนถึงกล่องที่ใช้ทำงานจริง
+              */}
+              <CourseEntry
+                versionId={versionId}
+                editionBe={s.edition_be}
+                categories={s.categories}
+                onDone={structure.reload}
+              />
 
               {s.categories.map((c) => (
                 <TableCard

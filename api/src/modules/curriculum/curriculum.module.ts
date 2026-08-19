@@ -13,6 +13,9 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -21,7 +24,9 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, IsUuidArray, ParseUuidPipe } from '../../common/validation/uuid';
@@ -46,6 +51,67 @@ const CATEGORY_KIND = [
   'core_competency', 'vocational', 'voc_basic', 'voc_specific',
   'voc_elective', 'practicum', 'project', 'free_elective', 'activity',
 ] as const;
+
+/**
+ * รายวิชาในคลัง — ท-ป-น ตามที่พิมพ์อยู่ในหนังสือหลักสูตร
+ *
+ * ─── ทำไมเก็บ ท กับ ป แยกกัน ไม่ใช่ "หน่วยกิต + คาบ + ประเภท" ───
+ * SISA เก็บสามค่าคือ CREDIT · HR · STATUS(ทฤษฎี/ปฏิบัติ/ทั้งสอง) ซึ่ง
+ * **ประกอบกลับเป็น ท-ป-น ไม่ได้** — วิชา 2 หน่วยกิต 3 คาบ แบบ "ทฤษฎีและ
+ * ปฏิบัติ" เป็นได้ทั้ง 1-2-2 และ 2-1-2 ระบบเดาแทนไม่ได้ แต่ ท-ป-น คือ
+ * รูปที่พิมพ์อยู่บนหนังสือหลักสูตรและบนเอกสารที่ยื่น สอศ. จริง
+ *
+ * เก็บ ท-ป-น แล้ว **คำนวณ** คาบต่อสัปดาห์กับประเภทวิชาออกมาเอง เป็นทิศทาง
+ * ตรงข้ามกับ SISA และไม่มีทางเสียข้อมูลระหว่างทาง
+ */
+class CourseDto {
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsInt() @Min(2500) @Max(2700) editionBe: number;
+  @IsInt() @Min(0) @Max(40) theoryHours: number;
+  @IsInt() @Min(0) @Max(40) practiceHours: number;
+  @IsNumber() @Min(0) @Max(40) credits: number;
+  @IsOptional() @IsInt() @Min(0) @Max(40) selfStudyHours?: number;
+  @IsOptional() @IsIn(['point', 'pass_fail', 'attend']) gradingMode?: string;
+  @IsOptional() @IsBoolean() isPracticum?: boolean;
+  @IsOptional() @IsBoolean() isProject?: boolean;
+}
+
+/** แก้รายวิชาในคลัง — ส่งมาเฉพาะช่องที่จะเปลี่ยน */
+class UpdateCatalogDto {
+  @IsOptional() @IsString() @MaxLength(200) nameTh?: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(40) theoryHours?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(40) practiceHours?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(40) credits?: number;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+
+/**
+ * หนึ่งบรรทัดจากหนังสือหลักสูตร
+ *
+ * ทุกช่องที่ไม่ใช่ ท-ป-น เป็นตัวเลือก เพราะหนังสือหลักสูตรมีแค่
+ * รหัส · ชื่อวิชา · ท-ป-น จริง ๆ ที่เหลือเป็นสิ่งที่คนกรอกเติมทีหลัง
+ */
+class BulkRowDto {
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsInt() @Min(0) @Max(40) theoryHours: number;
+  @IsInt() @Min(0) @Max(40) practiceHours: number;
+  @IsNumber() @Min(0) @Max(40) credits: number;
+  @IsOptional() @IsIn(REQUIREMENT as unknown as string[]) requirement?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(4) suggestedYear?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(3) suggestedTerm?: number;
+}
+
+class BulkCoursesDto {
+  @IsUuid() curriculumCategoryId: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => BulkRowDto)
+  @ArrayMaxSize(300)
+  rows: BulkRowDto[];
+}
 
 class CloneVersionDto {
   @IsInt() @Min(2500) @Max(2700) editionBe: number;
@@ -116,11 +182,13 @@ export class CurriculumService {
               cv.requires_prof_standard, cv.requires_all_activity, cv.normal_duration_terms,
               cv.approved_at,
               gs.code as grade_scheme_code,
+              cur.name_th as curriculum_name, cur.shift,
               (select count(*) from curriculum_course cc where cc.curriculum_version_id = cv.id) as courses,
               (select count(*) from graduation_rule gr where gr.curriculum_version_id = cv.id)   as rules,
               (select count(*) from student_curriculum sc where sc.curriculum_version_id = cv.id) as students
          from curriculum_version cv
          left join grade_scheme gs on gs.id = cv.grade_scheme_id
+         join curriculum cur on cur.id = cv.curriculum_id
         where ($1::uuid is null or cv.curriculum_id = $1)
         order by cv.effective_from_year_be desc, cv.edition_be desc`,
       [curriculumId ?? null],
@@ -268,6 +336,190 @@ export class CurriculumService {
     );
   }
 
+  /**
+   * สร้างรายวิชาในคลัง
+   *
+   * `weekly_periods` คำนวณจาก ท + ป เสมอ ไม่ใช่ช่องให้กรอก — ถ้าให้กรอกเอง
+   * มันจะเพี้ยนจาก ท-ป-น ได้ทันทีที่มีคนแก้อย่างใดอย่างหนึ่ง แล้วตารางสอน
+   * กับหนังสือหลักสูตรจะบอกจำนวนคาบไม่ตรงกันโดยไม่มีอะไรฟ้อง
+   */
+  async createCourse(dto: CourseDto) {
+    const dup = await this.db.queryOne<{ id: string }>(
+      `select id from course where edition_be = $1 and code = $2`,
+      [dto.editionBe, dto.code.trim()],
+    );
+    if (dup) {
+      throw new BadRequestException(
+        `รหัสวิชา ${dto.code} มีอยู่แล้วในหลักสูตรฉบับ ${dto.editionBe}`,
+      );
+    }
+
+    return this.db.queryOne(
+      /*
+       * ─── ไม่มี weekly_periods ในรายการคอลัมน์โดยตั้งใจ ───
+       * สคีมาประกาศไว้เป็น `generated always as (theory_hours + practice_hours)`
+       * อยู่แล้ว — ฐานข้อมูลเป็นเจ้าของกฎข้อนี้ตามหลักข้อ 1 การเขียนค่าลงไปเอง
+       * ถูกปฏิเสธด้วย 428C9 และถ้าเขียนได้ มันจะกลายเป็นสูตรชุดที่สองที่
+       * ค่อย ๆ เพี้ยนไปจาก ท-ป-น (เรื่องเดียวกับที่ SISA เก็บ HR แยกจาก CREDIT)
+       */
+      `insert into course
+         (institution_id, edition_be, code, name_th, name_en,
+          theory_hours, practice_hours, self_study_hours, credits,
+          grading_mode, is_practicum, is_project)
+       values (current_institution_id(), $1, $2, $3, $4,
+               $5, $6, coalesce($7, 0), $8,
+               coalesce($9::grading_mode, 'point'),
+               coalesce($10, false), coalesce($11, false))
+       returning id, code, name_th, credits, theory_hours, practice_hours, weekly_periods`,
+      [
+        dto.editionBe, dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null,
+        dto.theoryHours, dto.practiceHours, dto.selfStudyHours ?? null, dto.credits,
+        dto.gradingMode ?? null, dto.isPracticum ?? null, dto.isProject ?? null,
+      ],
+    );
+  }
+
+  /** แก้รายละเอียดรายวิชาในคลัง — คาบต่อสัปดาห์คำนวณใหม่ให้เสมอ */
+  async updateCatalog(id: string, dto: UpdateCatalogDto) {
+    const row = await this.db.queryOne(
+      `update course
+          set name_th        = coalesce($2, name_th),
+              name_en        = coalesce($3, name_en),
+              theory_hours   = coalesce($4, theory_hours),
+              practice_hours = coalesce($5, practice_hours),
+              credits        = coalesce($6, credits),
+              active         = coalesce($7, active),
+              -- weekly_periods เป็น generated column คิดใหม่ให้เองเมื่อ ท/ป เปลี่ยน
+              updated_at     = now()
+        where id = $1
+      returning id, code, name_th, credits, theory_hours, practice_hours, weekly_periods, active`,
+      [
+        id, dto.nameTh?.trim() ?? null, dto.nameEn?.trim() ?? null,
+        dto.theoryHours ?? null, dto.practiceHours ?? null,
+        dto.credits ?? null, dto.active ?? null,
+      ],
+    );
+    if (!row) throw new NotFoundException('ไม่พบรายวิชานี้');
+    return row;
+  }
+
+  /**
+   * วางทั้งตารางจากหนังสือหลักสูตรทีเดียว
+   *
+   * ─── ทำไมต้องมี ───
+   * SISA ให้กรอกทีละช่อง — หลักสูตรหนึ่งฉบับมี ~120 รายวิชา × 12 ช่อง
+   * คือการพิมพ์ 1,400 ช่องด้วยมือต่อหนึ่งวิทยาลัยที่เปิดใหม่ ทั้งที่ต้นทาง
+   * เป็นตารางในหนังสือที่คัดลอกมาวางได้ทั้งก้อน
+   *
+   * ─── ทำไมคืนผลรายบรรทัด ไม่ใช่ raise เมื่อมีบรรทัดเสีย ───
+   * `rollback` จะล้างบรรทัดที่ผ่านไปแล้วทิ้งด้วย คนกรอกจะต้องไล่หาบรรทัด
+   * ที่ผิดในกองร้อยกว่าบรรทัดโดยไม่มีอะไรบอกว่าอันไหน แล้ววางใหม่ทั้งก้อน
+   * (หลักเดียวกับ `register_courses_bulk`)
+   *
+   * ─── ทำไมรายวิชาที่มีอยู่แล้วและค่าไม่ตรงถึงไม่ถูกเขียนทับ ───
+   * หน่วยกิตของรายวิชาที่มีคนเรียนไปแล้วคือตัวตั้งของการตรวจจบย้อนหลัง
+   * การเขียนทับเงียบ ๆ จากการวางตารางผิดฉบับจะเปลี่ยนเกณฑ์จบของคนที่
+   * เรียนไปครึ่งทาง — รายงานว่าไม่ตรงแล้วให้คนตัดสินใจ
+   */
+  async bulkAddCourses(versionId: string, dto: BulkCoursesDto) {
+    const version = await this.db.queryOne<{ edition_be: number }>(
+      `select edition_be from curriculum_version where id = $1`,
+      [versionId],
+    );
+    if (!version) throw new NotFoundException('ไม่พบหลักสูตรฉบับนี้');
+
+    const category = await this.db.queryOne<{ id: string }>(
+      `select id from curriculum_category
+        where id = $1 and curriculum_version_id = $2`,
+      [dto.curriculumCategoryId, versionId],
+    );
+    if (!category) {
+      throw new BadRequestException('หมวดวิชาที่เลือกไม่ได้อยู่ในหลักสูตรฉบับนี้');
+    }
+
+    const results: {
+      code: string;
+      status: 'created' | 'linked' | 'already' | 'mismatch';
+      detail?: string;
+    }[] = [];
+
+    for (const row of dto.rows) {
+      const code = row.code.trim();
+      const existing = await this.db.queryOne<{
+        id: string; credits: string; theory_hours: number; practice_hours: number;
+      }>(
+        `select id, credits, theory_hours, practice_hours
+           from course where edition_be = $1 and code = $2`,
+        [version.edition_be, code],
+      );
+
+      let courseId: string;
+      let status: 'created' | 'linked' | 'already' | 'mismatch' = 'linked';
+      let detail: string | undefined;
+
+      if (existing) {
+        courseId = existing.id;
+        const same =
+          Number(existing.credits) === row.credits &&
+          existing.theory_hours === row.theoryHours &&
+          existing.practice_hours === row.practiceHours;
+        if (!same) {
+          status = 'mismatch';
+          detail =
+            `ในระบบเป็น ${existing.theory_hours}-${existing.practice_hours}-${Number(existing.credits)} ` +
+            `แต่ที่วางมาเป็น ${row.theoryHours}-${row.practiceHours}-${row.credits} — ไม่ได้เขียนทับให้`;
+        }
+      } else {
+        const made = await this.db.queryOne<{ id: string }>(
+          `insert into course
+             (institution_id, edition_be, code, name_th, name_en,
+              theory_hours, practice_hours, credits)
+           values (current_institution_id(), $1, $2, $3, $4, $5, $6, $7)
+           returning id`,
+          [
+            version.edition_be, code, row.nameTh.trim(), row.nameEn?.trim() ?? null,
+            row.theoryHours, row.practiceHours, row.credits,
+          ],
+        );
+        courseId = made!.id;
+        status = 'created';
+      }
+
+      const linked = await this.db.queryOne<{ id: string }>(
+        `select id from curriculum_course
+          where curriculum_version_id = $1 and course_id = $2`,
+        [versionId, courseId],
+      );
+      if (linked) {
+        if (status === 'linked') status = 'already';
+      } else {
+        await this.db.query(
+          `insert into curriculum_course
+             (curriculum_version_id, curriculum_category_id, course_id,
+              requirement, suggested_year, suggested_term, sort_order)
+           values ($1, $2, $3, coalesce($4::requirement_kind, 'required'), $5, $6,
+                   coalesce((select max(sort_order) + 1 from curriculum_course
+                              where curriculum_version_id = $1), 0))`,
+          [
+            versionId, dto.curriculumCategoryId, courseId,
+            row.requirement ?? null, row.suggestedYear ?? null, row.suggestedTerm ?? null,
+          ],
+        );
+      }
+
+      results.push({ code, status, ...(detail ? { detail } : {}) });
+    }
+
+    return {
+      total: results.length,
+      created: results.filter((r) => r.status === 'created').length,
+      linked: results.filter((r) => r.status === 'linked').length,
+      already: results.filter((r) => r.status === 'already').length,
+      mismatch: results.filter((r) => r.status === 'mismatch').length,
+      rows: results,
+    };
+  }
+
   async addCourse(versionId: string, dto: AddCourseDto) {
     return this.db.queryOne(
       `insert into curriculum_course
@@ -402,6 +654,34 @@ class CurriculumController {
   @Post('versions/:id/courses')
   addCourse(@Param('id', ParseUuidPipe) id: string, @Body() dto: AddCourseDto) {
     return this.svc.addCourse(id, dto);
+  }
+
+  /**
+   * คลังรายวิชา — ตัวรายวิชาเอง แยกจากการวางรายวิชาลงหลักสูตร
+   *
+   * ─── ทำไมเป็นคนละเส้นทางกับ `versions/:id/courses` ───
+   * รายวิชาหนึ่งตัวอยู่ได้หลายฉบับหลักสูตร และการเอาออกจากฉบับหนึ่งไม่ใช่
+   * การลบรายวิชาทิ้ง สองเรื่องนี้แยกกันในสคีมาอยู่แล้ว (`course` กับ
+   * `curriculum_course`) เส้นทางจึงต้องแยกด้วย มิฉะนั้นคนเรียกจะเดาไม่ออก
+   * ว่ากด "ลบ" แล้วหายไปจากฉบับนี้หรือหายไปจากทั้งวิทยาลัย
+   */
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('catalog')
+  createCourse(@Body() dto: CourseDto) {
+    return this.svc.createCourse(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('catalog/:id')
+  updateCatalog(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateCatalogDto) {
+    return this.svc.updateCatalog(id, dto);
+  }
+
+  /** วางทั้งตารางจากหนังสือหลักสูตร — คืนผลรายบรรทัด ไม่ล้มทั้งก้อน */
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('versions/:id/courses/bulk')
+  bulkAddCourses(@Param('id', ParseUuidPipe) id: string, @Body() dto: BulkCoursesDto) {
+    return this.svc.bulkAddCourses(id, dto);
   }
 
   /**

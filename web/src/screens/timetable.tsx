@@ -14,10 +14,19 @@
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
-import { ActionButton, AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const DAY = ['', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
+
+const ROOM_KIND: Record<string, string> = {
+  classroom: 'ห้องเรียน',
+  workshop: 'ห้องฝึกปฏิบัติ',
+  lab: 'ห้องปฏิบัติการ',
+  computer: 'ห้องคอมพิวเตอร์',
+  auditorium: 'หอประชุม',
+  outdoor: 'กลางแจ้ง',
+};
 
 interface Room {
   id: string;
@@ -69,6 +78,12 @@ export function TimetableScreen() {
   const [roomId, setRoomId] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [autoResult, setAutoResult] = useState<unknown>(null);
+
+  const [roomCode, setRoomCode] = useState('');
+  const [roomName, setRoomName] = useState('');
+  const [roomKind, setRoomKind] = useState('classroom');
+  const [roomCapacity, setRoomCapacity] = useState('');
+  const [roomBuilding, setRoomBuilding] = useState('');
 
   useEffect(() => {
     setSectionId('');
@@ -269,6 +284,58 @@ export function TimetableScreen() {
         </AsyncView>
       </TableCard>
 
+      <Card title="เพิ่มห้องเรียน">
+        <div className="row">
+          <Field label="รหัสห้อง">
+            <input value={roomCode} onChange={(e) => setRoomCode(e.target.value)} placeholder="เช่น 301" />
+          </Field>
+          <Field label="ชื่อห้อง">
+            <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="เช่น ห้อง 301 อาคาร 3" />
+          </Field>
+          <Field label="ประเภท">
+            <select value={roomKind} onChange={(e) => setRoomKind(e.target.value)}>
+              {Object.entries(ROOM_KIND).map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="อาคาร (ถ้ามี)">
+            <input value={roomBuilding} onChange={(e) => setRoomBuilding(e.target.value)} placeholder="เช่น อาคาร 3" />
+          </Field>
+          <Field label="ความจุ (ถ้ามี)">
+            <input
+              type="number" min={1} max={500}
+              value={roomCapacity}
+              onChange={(e) => setRoomCapacity(e.target.value)}
+              style={{ maxWidth: 100 }}
+            />
+          </Field>
+          <div className="shrink">
+            <ActionButton
+              className="primary"
+              onRun={() =>
+                api.post('/timetable/rooms', {
+                  code: roomCode.trim(),
+                  nameTh: roomName.trim(),
+                  kind: roomKind,
+                  ...(roomBuilding.trim() ? { building: roomBuilding.trim() } : {}),
+                  ...(roomCapacity ? { capacity: Number(roomCapacity) } : {}),
+                })
+              }
+              onDone={() => {
+                setRoomCode('');
+                setRoomName('');
+                setRoomBuilding('');
+                setRoomCapacity('');
+                rooms.reload();
+              }}
+            >
+              เพิ่มห้อง
+            </ActionButton>
+          </div>
+        </div>
+      </Card>
+
       <TableCard title="ห้องเรียนของวิทยาลัย">
         <AsyncView state={rooms} empty="ยังไม่ได้บันทึกห้องเรียน">
           {(list) => (
@@ -287,7 +354,7 @@ export function TimetableScreen() {
                   <tr key={r.id}>
                     <td className="mono">{r.code}</td>
                     <td>{r.name_th}</td>
-                    <td>{r.kind}</td>
+                    <td>{ROOM_KIND[r.kind] ?? r.kind}</td>
                     <td>{r.building ?? '—'}</td>
                     <td className="num">{r.capacity ?? '—'}</td>
                   </tr>
