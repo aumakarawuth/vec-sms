@@ -68,6 +68,16 @@ class PriorRecordDto {
   @IsOptional() @IsNumber() gradePoint?: number;
   @IsOptional() @IsUuid() mappedCourseId?: string;
   @IsOptional() @IsString() note?: string;
+
+  /**
+   * โอนผลการเรียน (*1) หรือเทียบโอนความรู้และประสบการณ์ (*2)
+   *
+   * เป็นตัวกำหนดเครื่องหมายที่พิมพ์ท้ายชื่อวิชาบนใบ รบ. — ถ้าไม่ส่งมา
+   * ฐานข้อมูลตั้งเป็น `transferred_experience` ซึ่งเป็นกรณีที่พบบ่อยกว่า
+   * และเป็นค่าที่ "ปลอดภัยกว่า" เพราะไม่ได้อ้างว่ามีเกรดเดิมรองรับ
+   */
+  @IsOptional() @IsIn(['transferred_grade', 'transferred_experience'])
+  transferKind?: string;
 }
 
 class ApproveTransferDto {
@@ -125,6 +135,7 @@ export class ImportService {
     const validator =
       kind === 'student' ? 'validate_student_row'
       : kind === 'staff' ? 'validate_staff_row'
+      : kind === 'academic_history' ? 'validate_academic_history_row'
       : null;
 
     if (validator) {
@@ -217,11 +228,12 @@ export class ImportService {
       const fn =
         kind === 'student' ? 'apply_student_import'
         : kind === 'staff' ? 'apply_staff_import'
+        : kind === 'academic_history' ? 'apply_academic_history_import'
         : null;
 
       if (!fn) {
         throw new UnprocessableEntityException(
-          `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษาและบุคลากร`,
+          `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษา บุคลากร และประวัติการเรียนเดิม`,
         );
       }
 
@@ -244,13 +256,20 @@ export class ImportService {
         const res = await c.query(
           `insert into prior_academic_record
              (student_id, source_th, term_label, course_code, course_name_th,
-              credits, grade_symbol, grade_point, mapped_course_id, note)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              credits, grade_symbol, grade_point, mapped_course_id, note,
+              transfer_kind, counts_in_gpa)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                   coalesce($11::credit_source_kind, 'transferred_experience'),
+                   -- โอนผลการเรียนยกเกรดเดิมมาด้วย จึงนับ GPA ส่วนเทียบโอน
+                   -- ความรู้และประสบการณ์ให้หน่วยกิตอย่างเดียว สองค่านี้
+                   -- ต้องเดินคู่กันเสมอ มิฉะนั้นใบจะพิมพ์ (*1) ให้วิชาที่
+                   -- ไม่มีแต้ม หรือ (*2) ให้วิชาที่มีแต้มอยู่ในตาราง
+                   $11 = 'transferred_grade')
            on conflict (student_id, term_label, course_code) do nothing`,
           [
             r.studentId, r.sourceTh, r.termLabel ?? null, r.courseCode,
             r.courseNameTh, r.credits, r.gradeSymbol, r.gradePoint ?? null,
-            r.mappedCourseId ?? null, r.note ?? null,
+            r.mappedCourseId ?? null, r.note ?? null, r.transferKind ?? null,
           ],
         );
         written += res.rowCount ?? 0;

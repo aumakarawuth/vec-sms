@@ -47,6 +47,8 @@ const TEMPLATE: Record<string, string> = {
     'student_code,prefix_th,first_name_th,last_name_th,admitted_year_be,gender,birth_date,phone,email',
   staff:
     'staff_code,prefix_th,first_name_th,last_name_th,employment_kind,is_teacher,department_code,position_th',
+  academic_history:
+    'student_code,source_th,term_label,course_code,course_name_th,credits,grade_symbol,grade_point,transfer_kind,mapped_course_code,note',
 };
 
 export function ImportScreen() {
@@ -123,6 +125,7 @@ export function ImportScreen() {
             <select value={kind} onChange={(e) => setKind(e.target.value)}>
               <option value="student">นักศึกษา</option>
               <option value="staff">บุคลากร</option>
+              <option value="academic_history">ประวัติการเรียนเดิม</option>
             </select>
           </Field>
           <Field label="ชื่อไฟล์ต้นทาง">
@@ -176,6 +179,17 @@ export function ImportScreen() {
             ไฟล์บุคลากร <strong>ตั้งบทบาทไม่ได้เลยสักค่า</strong> เพราะทุกบทบาทเห็นข้อมูล
             ทั้งวิทยาลัย ต้องแต่งตั้งทีละคนหลังนำเข้า — ส่วน <code>is_teacher</code> ตั้งได้
             (ค่าเริ่มต้นคือไม่ใช่ครู)
+          </Notice>
+        )}
+
+        {kind === 'academic_history' && (
+          <Notice kind="info">
+            แต่ละแถวต้องเป็นของ<strong>นักศึกษาที่มีอยู่ในระบบแล้ว</strong> (นำเข้านักศึกษา
+            ก่อนแล้วค่อยนำเข้าประวัติ) · <code>transfer_kind</code> เว้นว่างได้ ค่าเริ่มต้นคือ
+            เทียบโอนความรู้และประสบการณ์ (ให้หน่วยกิตอย่างเดียว ไม่นับ GPA) — ใส่{' '}
+            <code>transferred_grade</code> เมื่อยกเกรดเดิมมาด้วยเพื่อให้นับ GPA ·{' '}
+            <code>mapped_course_code</code> เว้นว่างได้ ถ้าระบุต้องตรงกับรหัสวิชาที่มีในหลักสูตร
+            ของวิทยาลัยนี้
           </Notice>
         )}
       </Card>
