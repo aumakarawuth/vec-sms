@@ -12,7 +12,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { IsIn, IsISO8601, IsNumber, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsISO8601, IsNumber, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
@@ -185,6 +185,29 @@ class AddGraduateDto {
 
   @IsOptional() @IsString() professionalStandardNo?: string;
   @IsOptional() @IsString() note?: string;
+}
+
+/**
+ * แบบสำรวจภาวะการมีงานทำ — ชุดคำถามทั่วไป ยังไม่เทียบกับแบบฟอร์ม สอศ. จริง
+ * (ดูคอมเมนต์เต็มที่ migration 0072) เงื่อนไข "ทำงานแล้วต้องมีสถานประกอบการ"
+ * ตรวจซ้ำที่นี่เพื่อข้อความที่อ่านง่ายกว่า check constraint ดิบ ๆ
+ */
+class RecordSurveyDto {
+  @IsUuid() studentId: string;
+  @IsIn(['employed', 'employed_and_studying', 'further_study', 'seeking', 'other'])
+  status: string;
+
+  @IsOptional() @IsString() employerNameTh?: string;
+  @IsOptional() @IsString() jobTitleTh?: string;
+  @IsOptional() @IsNumber() @Min(0) monthlyIncome?: number;
+  @IsOptional() @IsBoolean() fieldMatchesStudy?: boolean;
+
+  @IsOptional() @IsString() furtherStudyInstitutionTh?: string;
+  @IsOptional() @IsString() furtherStudyFieldTh?: string;
+
+  @IsOptional() @IsString() contactPhone?: string;
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsISO8601() respondedOn?: string;
 }
 
 /**
@@ -452,6 +475,67 @@ export class GraduationService {
       rows,
     };
   }
+
+  /**
+   * รายชื่อผู้สำเร็จการศึกษาพร้อมสถานะแบบสำรวจล่าสุด
+   *
+   * เริ่มจาก "คนที่ต้องสำรวจ" ไม่ใช่ช่องค้นหา หลักเดียวกับ
+   * absence_notice_candidates() — งานสำรวจภาวะงานทำเปิดหน้ามาเพื่อรู้ว่า
+   * ใครยังไม่ได้ตอบ ไม่ใช่เพื่อค้นหาคนที่คิดไว้แล้ว
+   */
+  async surveyCandidates() {
+    return this.db.query(
+      `select sg.student_id, s.student_code,
+              trim(coalesce(p.prefix_th,'') || p.first_name_th || ' ' || p.last_name_th) as full_name,
+              sg.completed_on,
+              latest.status as latest_status, latest.responded_on as latest_responded_on
+         from student_graduation sg
+         join student s on s.id = sg.student_id
+         join person p  on p.id = s.person_id
+         left join lateral (
+           select r.status, r.responded_on from graduation_survey_response r
+            where r.student_id = sg.student_id
+            order by r.responded_on desc, r.created_at desc limit 1
+         ) latest on true
+        order by sg.completed_on desc, p.first_name_th`,
+    );
+  }
+
+  async recordSurvey(dto: RecordSurveyDto) {
+    return this.db.queryOne(
+      `insert into graduation_survey_response
+         (institution_id, student_id, graduation_id, status, employer_name_th, job_title_th,
+          monthly_income, field_matches_study, further_study_institution_th, further_study_field_th,
+          contact_phone, note, responded_on, recorded_by)
+       values (
+         current_institution_id(), $1,
+         (select id from student_graduation where student_id = $1),
+         $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, current_date),
+         (select id from staff where person_id = current_actor_id()))
+       returning id, status, responded_on`,
+      [
+        dto.studentId, dto.status, dto.employerNameTh ?? null, dto.jobTitleTh ?? null,
+        dto.monthlyIncome ?? null, dto.fieldMatchesStudy ?? null,
+        dto.furtherStudyInstitutionTh ?? null, dto.furtherStudyFieldTh ?? null,
+        dto.contactPhone ?? null, dto.note ?? null, dto.respondedOn ?? null,
+      ],
+    );
+  }
+
+  /** สรุปตามสถานะล่าสุดของแต่ละคน — คนที่สำรวจซ้ำนับครั้งเดียวจากคำตอบล่าสุด */
+  async surveySummary() {
+    return this.db.query(
+      `select latest.status, count(*)::integer as students
+         from student_graduation sg
+         join lateral (
+           select r.status from graduation_survey_response r
+            where r.student_id = sg.student_id
+            order by r.responded_on desc, r.created_at desc limit 1
+         ) latest on true
+        group by latest.status
+        order by students desc`,
+    );
+  }
 }
 
 @Roles('registrar', 'academic', 'director', 'admin')
@@ -585,6 +669,25 @@ class GraduationController {
     @Body() dto: CompletedOnDto,
   ) {
     return this.svc.setCompletedOn(studentId, dto);
+  }
+
+  @Roles('registrar', 'student_affairs', 'academic', 'director', 'admin')
+  @Get('survey/candidates')
+  surveyCandidates() {
+    return this.svc.surveyCandidates();
+  }
+
+  @Roles('registrar', 'student_affairs', 'academic', 'director', 'admin')
+  @Audit('graduation_survey_response', 'studentId')
+  @Post('survey')
+  recordSurvey(@Body() dto: RecordSurveyDto) {
+    return this.svc.recordSurvey(dto);
+  }
+
+  @Roles('registrar', 'student_affairs', 'academic', 'director', 'admin')
+  @Get('survey/summary')
+  surveySummary() {
+    return this.svc.surveySummary();
   }
 }
 
