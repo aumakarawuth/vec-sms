@@ -123,6 +123,28 @@ async function main() {
     return { status: res.status, body };
   };
 
+  /*
+   * ยืนยัน MFA ด้วยรหัสของ "ช่วงก่อนหน้า" (เพื่อให้ช่วงปัจจุบันว่างไว้ให้เทสต์
+   * ถัดไปใช้ต่อ) แล้วคำนวณรหัสใหม่ลองอีกครั้งถ้าเจอ 401 — เผื่อช่วง 30 วินาที
+   * ขยับข้ามพอดีระหว่างคำนวณรหัสฝั่งนี้กับตรวจฝั่งเซิร์ฟเวอร์ (เจอจริงบน CI
+   * run 32501576301) เพราะ WINDOW ของ verifyTotp ย้อนหลังได้แค่ช่วงเดียว
+   * ไม่มีระยะเผื่อไปข้างหน้าเลย รหัสของ "ช่วงก่อนหน้า" จึงกินระยะเผื่อทั้งหมด
+   * ไปกับการจงใจย้อนหนึ่งช่วง เหลือศูนย์ให้กับความหน่วงของคำขอเอง
+   * รหัสที่คำนวณใหม่หลังพลาดครั้งแรกจะเลื่อนตามช่วงที่ขยับไปแล้วเสมอ
+   * จึงยังทิ้งช่วงปัจจุบัน (ใหม่) ว่างไว้เหมือนเดิม ไม่เสียคุณสมบัตินั้นไป
+   */
+  const confirmMfaPrevStep = async (
+    path: string,
+    secret: Buffer,
+    headers: Record<string, string>,
+  ) => {
+    let res = await json(await post(path, { code: totpCode(secret, currentStep() - 1) }, headers));
+    if (res.status === 401) {
+      res = await json(await post(path, { code: totpCode(secret, currentStep() - 1) }, headers));
+    }
+    return res;
+  };
+
   let ownerSetupCode = '';
   let ownerToken = '';
   let ownerSecret: Buffer | undefined;
@@ -236,8 +258,8 @@ async function main() {
     ownerSecret = base32Decode(m![1]);
 
     // ใช้ช่วงเวลาก่อนหน้าหนึ่งช่วง เพื่อให้รหัสของช่วงปัจจุบันยังใช้ได้ต่อ
-    const confirm = await json(await post('/platform/mfa/confirm',
-      { code: totpCode(ownerSecret!, currentStep() - 1) }, auth));
+    // (ลองใหม่หนึ่งครั้งถ้าเจอ 401 — ดูคอมเมนต์ที่ confirmMfaPrevStep)
+    const confirm = await confirmMfaPrevStep('/platform/mfa/confirm', ownerSecret!, auth);
     expect(confirm.status === 200 || confirm.status === 201,
       `ยืนยันควรสำเร็จ ได้ ${confirm.status} ${confirm.body.message}`);
     expect(typeof confirm.body.accessToken === 'string',
@@ -352,8 +374,7 @@ async function main() {
     const challenge = { authorization: `Bearer ${login.body.challengeToken}` };
     const enroll = await json(await post('/platform/mfa/enroll', {}, challenge));
     const secret = base32Decode(/secret=([A-Z2-7]+)/.exec(String(enroll.body.otpauthUri))![1]);
-    const confirm = await json(await post('/platform/mfa/confirm',
-      { code: totpCode(secret, currentStep() - 1) }, challenge));
+    const confirm = await confirmMfaPrevStep('/platform/mfa/confirm', secret, challenge);
     expect(typeof confirm.body.accessToken === 'string',
       `บัญชีใหม่ต้องเข้าระบบได้ ได้ ${confirm.status} ${confirm.body.message}`);
     supportToken = String(confirm.body.accessToken);
