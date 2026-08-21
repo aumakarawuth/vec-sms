@@ -763,6 +763,27 @@ class TimetableController {
  * เปิดสอนวิชาแรกไม่ได้เลยถ้าไม่ยิง SQL ตรง
  * ═══════════════════════════════════════════════════════════════════ */
 
+class CreateAcademicYearDto {
+  @IsInt() @Min(2500) @Max(2700) yearBe: number;
+  @IsISO8601() startsOn: string;
+  @IsISO8601() endsOn: string;
+}
+
+class CreateTermDto {
+  @IsInt() @Min(1) @Max(3) ordinal: number;
+  @IsOptional() @IsIn(['regular', 'summer']) kind?: string;
+  @IsISO8601() startsOn: string;
+  @IsISO8601() endsOn: string;
+  @IsOptional() @IsISO8601() addDropEndsOn?: string;
+  @IsOptional() @IsISO8601() withdrawEndsOn?: string;
+  @IsOptional() @IsISO8601() gradeDueOn?: string;
+}
+
+class TermStatusDto {
+  @IsIn(['planning', 'registration', 'open', 'grading', 'closed'])
+  status: string;
+}
+
 class CreateSectionDto {
   @IsUuid() termId: string;
   @IsUuid() courseId: string;
@@ -796,6 +817,51 @@ export class CatalogService {
          from term t
          join academic_year ay on ay.id = t.academic_year_id
         order by ay.year_be desc, t.ordinal`,
+    );
+  }
+
+  /** ปีการศึกษาทั้งหมด — ใช้เลือกตอนเปิดภาคเรียนใหม่ */
+  async years() {
+    return this.db.query(
+      `select id, year_be, starts_on, ends_on
+         from academic_year order by year_be desc`,
+    );
+  }
+
+  /**
+   * เปิดปีการศึกษาใหม่ — ไม่มีเส้นทางนี้เลยตั้งแต่ 0001 (ดูคอมเมนต์หัวไฟล์
+   * 0073) วิทยาลัยที่ผ่านปีแรกไปแล้วไม่มีทางเปิดปีถัดไปได้ผ่านหน้าจอ
+   */
+  async createYear(dto: CreateAcademicYearDto) {
+    return this.db.queryOne(
+      `insert into academic_year (institution_id, year_be, starts_on, ends_on)
+       values (current_institution_id(), $1, $2, $3)
+       returning id, year_be, starts_on, ends_on`,
+      [dto.yearBe, dto.startsOn, dto.endsOn],
+    );
+  }
+
+  async createTerm(academicYearId: string, dto: CreateTermDto) {
+    return this.db.queryOne(
+      `insert into term
+         (academic_year_id, ordinal, kind, starts_on, ends_on,
+          add_drop_ends_on, withdraw_ends_on, grade_due_on)
+       values ($1, $2, coalesce($3, 'regular')::term_kind, $4, $5, $6, $7, $8)
+       returning id, ordinal, kind, status, starts_on, ends_on,
+                 add_drop_ends_on, withdraw_ends_on, grade_due_on`,
+      [
+        academicYearId, dto.ordinal, dto.kind ?? null, dto.startsOn, dto.endsOn,
+        dto.addDropEndsOn ?? null, dto.withdrawEndsOn ?? null, dto.gradeDueOn ?? null,
+      ],
+    );
+  }
+
+  /** เดินสถานะภาคเรียนทีละขั้น — ลำดับและข้อความปฏิเสธมาจาก advance_term_status() (0073) */
+  async setTermStatus(termId: string, status: string) {
+    return this.db.queryOne(
+      `select id, ordinal, kind, status, starts_on, ends_on
+         from advance_term_status($1, $2::term_status)`,
+      [termId, status],
     );
   }
 
@@ -972,6 +1038,33 @@ class CatalogController {
   @Get('terms')
   terms() {
     return this.svc.terms();
+  }
+
+  @Get('years')
+  years() {
+    return this.svc.years();
+  }
+
+  // เปิดปีการศึกษา/ภาคเรียนใหม่กระทบทั้งวิทยาลัย จำกัดไว้เหมือนการเปิดกลุ่มเรียน
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('academic_year')
+  @Post('years')
+  createYear(@Body() dto: CreateAcademicYearDto) {
+    return this.svc.createYear(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term')
+  @Post('years/:id/terms')
+  createTerm(@Param('id', ParseUuidPipe) id: string, @Body() dto: CreateTermDto) {
+    return this.svc.createTerm(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term', 'id')
+  @Post('terms/:id/status')
+  setTermStatus(@Param('id', ParseUuidPipe) id: string, @Body() dto: TermStatusDto) {
+    return this.svc.setTermStatus(id, dto.status);
   }
 
   @Get('sections/:sectionId/meetings')

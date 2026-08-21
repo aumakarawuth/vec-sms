@@ -125,6 +125,19 @@ class RejectDto {
 export class GradebookService {
   constructor(private readonly db: DbService) {}
 
+  /**
+   * สัญลักษณ์ผลการเรียนทั้งหมดของวิทยาลัย — ให้หน้าจอที่ต้องเลือกสัญลักษณ์
+   * (เช่น บันทึกผลสอบซ่อม) เลือกจากรายการจริง ไม่ใช่พิมพ์ uuid เอง
+   */
+  async gradeSymbols() {
+    return this.db.query(
+      `select sy.id, sy.symbol, sy.name_th, sy.grade_scheme_id, gs.code as scheme_code
+         from grade_symbol sy
+         join grade_scheme gs on gs.id = sy.grade_scheme_id
+        order by gs.code, sy.sort_order`,
+    );
+  }
+
   // ─── ชิ้นงานในสมุดคะแนน ────────────────────────────────────────
 
   async listItems(sectionId: string) {
@@ -508,6 +521,11 @@ export class GradebookService {
 @Controller('gradebook')
 class GradebookController {
   constructor(private readonly svc: GradebookService) {}
+
+  @Get('grade-symbols')
+  gradeSymbols() {
+    return this.svc.gradeSymbols();
+  }
 
   @Get('sections/:sectionId/items')
   items(@Param('sectionId', ParseUuidPipe) sectionId: string) {

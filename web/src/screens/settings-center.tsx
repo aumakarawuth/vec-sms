@@ -4,7 +4,7 @@ type State='ready'|'partial'|'planned'; type Item={key:string;title:string;desc:
 const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
  {title:'การตั้งค่า',subtitle:'โครงสร้างหลักสูตรและข้อมูลพื้นฐาน',items:[
   {key:'curriculum',title:'โครงสร้างหลักสูตร',desc:'รุ่นหลักสูตร หมวดวิชา รายวิชา และแผนการเรียน',path:'/curriculum',state:'ready'},
-  {key:'term-type',title:'หมวดภาคเรียน',desc:'ปีการศึกษา ภาคเรียน และช่วงเปิด–ปิดภาค',path:'/academic-year',state:'partial'},
+  {key:'term-type',title:'หมวดภาคเรียน',desc:'เปิดปีการศึกษา/ภาคเรียนใหม่ และเดินสถานะภาคเรียนตามลำดับ',path:'/academic-year',state:'ready'},
   {key:'tuition',title:'ค่าเรียน',desc:'ค่าธรรมเนียม ใบแจ้งหนี้ และตารางการชำระ',path:'/finance',state:'partial'},
   {key:'grade-level',title:'ระดับชั้น',desc:'ชั้นปีและการจัดนักศึกษาเข้ากลุ่มเรียน',path:'/academic-year',state:'partial'},
   {key:'class-types',title:'ประเภท/สาขา/ชั้นเรียน/ห้องเรียน',desc:'สาขาวิชา กลุ่มเรียน และห้องสำหรับจัดตาราง',path:'/timetable',state:'partial'},
