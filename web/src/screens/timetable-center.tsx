@@ -6,12 +6,12 @@ const item=(key:string,title:string,desc:string,path:string|undefined,state:Stat
 const GROUPS=[
  {title:'งานตารางเรียน',subtitle:'ลงทะเบียน เรียนเสริม และการโอนย้าย',items:[
   item('extra-registration','จัดการลงทะเบียนเรียนเสริม/เรียนปรับเกรด','ลงทะเบียนรายคนสำหรับเรียนซ้ำ ตกค้าง หรือปรับผลการเรียน','/registration?tab=student','ready'),
-  item('transfer','โอนย้ายตารางสอน','ย้ายคาบ ห้อง หรือครูผู้สอนระหว่างตาราง',undefined,'partial'),
+  item('transfer','โอนย้ายตารางสอน','ย้ายคาบ ห้อง หรือครูผู้สอนระหว่างตาราง','/timetable','ready'),
  ]},
  {title:'รายงาน',subtitle:'ตารางเรียน ภาระงาน และการใช้ห้อง',items:[
   item('class-timetable','ตารางเรียน/ตารางสอน','ดูและจัดตารางตามภาคเรียน ห้อง และกลุ่มเรียน','/timetable','ready'),
   item('teacher-availability','รายงานคาบว่างของอาจารย์','ตรวจช่วงเวลาว่างและข้อจำกัดของผู้สอน','/timetable','ready'),
-  item('teacher-load','รายงานคาบสอนของอาจารย์','สรุปวิชา กลุ่มเรียน และจำนวนคาบของผู้สอน',undefined,'partial'),
+  item('teacher-load','รายงานคาบสอนของอาจารย์','สรุปวิชา กลุ่มเรียน และจำนวนคาบของผู้สอน','/timetable','ready'),
   item('workload','ภาระงาน','สรุปภาระการสอนและงานที่ได้รับมอบหมาย',undefined,'partial'),
   item('classroom-use','การใช้ห้อง','ตรวจห้องว่างและตารางการใช้ห้องเรียน','/timetable','ready'),
  ]},

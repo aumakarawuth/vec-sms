@@ -6,6 +6,7 @@ import {
   Get,
   Injectable,
   Module,
+  NotFoundException,
   Param,
   Post,
   Query,
@@ -232,6 +233,13 @@ class TimeslotCheckDto {
 
 class AddTimeslotDto extends TimeslotCheckDto {}
 
+class MoveTimeslotDto {
+  @IsInt() @Min(1) @Max(7) dayOfWeek: number;
+  @IsInt() @Min(1) @Max(20) periodFrom: number;
+  @IsInt() @Min(1) @Max(20) periodTo: number;
+  @IsOptional() @IsUuid() roomId?: string;
+}
+
 class AvailabilityDto {
   @IsUuid() staffId: string;
   @IsInt() @Min(1) @Max(7) dayOfWeek: number;
@@ -377,6 +385,61 @@ export class TimetableService {
        returning id, day_of_week, period_from, period_to, room_id`,
       [dto.classSectionId, dto.dayOfWeek, dto.periodFrom, dto.periodTo, dto.roomId ?? null],
     );
+  }
+
+  /** ยกเลิกคาบที่วางไว้ — ไม่วางคาบใหม่แทน (ใช้ตอนย้ายไปสอนออนไลน์ หรือยกเลิกจริง ๆ) */
+  async removeSlot(id: string) {
+    const r = await this.db.query(
+      `delete from section_timeslot where id = $1 returning id`,
+      [id],
+    );
+    if (r.length === 0) {
+      throw new NotFoundException('ไม่พบคาบนี้ หรือไม่มีสิทธิ์ลบ');
+    }
+    return { removed: id };
+  }
+
+  /**
+   * ย้ายคาบที่วางไว้แล้วไปวัน/เวลา/ห้องใหม่
+   *
+   * ลบคาบเดิมก่อนแล้วค่อยตรวจการชนของคาบใหม่ ภายในทรานแซกชันเดียว —
+   * ถ้าตรวจก่อนลบ คาบเดิมของกลุ่มเรียนตัวเองจะโดนนับเป็นคาบที่ชนกันเอง
+   * (timeslot_conflicts นับคาบของกลุ่มเรียนตัวเองด้วยโดยตั้งใจ ดู kind='self')
+   * ทั้งที่กำลังจะย้ายออกจากคาบนั้นพอดี ถ้าชนคาบใหม่จริงจะ rollback
+   * กลับไปมีคาบเดิมอยู่เหมือนไม่มีอะไรเกิดขึ้น
+   */
+  async moveSlot(id: string, dto: MoveTimeslotDto) {
+    return this.db.tx(async (c) => {
+      const old = await c.query<{ class_section_id: string }>(
+        `delete from section_timeslot where id = $1 returning class_section_id`,
+        [id],
+      );
+      if (old.rows.length === 0) {
+        throw new NotFoundException('ไม่พบคาบนี้ หรือไม่มีสิทธิ์ย้าย');
+      }
+      const sectionId = old.rows[0].class_section_id;
+
+      const conflicts = await c.query<{ kind: string; message_th: string }>(
+        `select kind, message_th
+           from timeslot_conflicts($1, $2::smallint, $3::smallint, $4::smallint, $5)`,
+        [sectionId, dto.dayOfWeek, dto.periodFrom, dto.periodTo, dto.roomId ?? null],
+      );
+      if (conflicts.rows.length > 0) {
+        throw new BadRequestException({
+          message: 'ย้ายคาบนี้ไม่ได้ เพราะชนกับรายการต่อไปนี้',
+          conflicts: conflicts.rows.map((row) => row.message_th),
+        });
+      }
+
+      const inserted = await c.query(
+        `insert into section_timeslot
+           (class_section_id, day_of_week, period_from, period_to, room_id)
+         values ($1, $2::smallint, $3::smallint, $4::smallint, $5)
+         returning id, day_of_week, period_from, period_to, room_id`,
+        [sectionId, dto.dayOfWeek, dto.periodFrom, dto.periodTo, dto.roomId ?? null],
+      );
+      return inserted.rows[0];
+    });
   }
 
   /**
@@ -720,6 +783,18 @@ class TimetableController {
   }
 
   @Audit('section_timeslot')
+  @Post('slots/:id/remove')
+  removeSlot(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.removeSlot(id);
+  }
+
+  @Audit('section_timeslot')
+  @Post('slots/:id/move')
+  moveSlot(@Param('id', ParseUuidPipe) id: string, @Body() dto: MoveTimeslotDto) {
+    return this.svc.moveSlot(id, dto);
+  }
+
+  @Audit('section_timeslot')
   @Post('terms/:termId/auto-schedule')
   auto(@Param('termId', ParseUuidPipe) termId: string) {
     return this.svc.autoSchedule(termId);
@@ -801,6 +876,11 @@ class CreateSectionDto {
   @IsOptional() @IsInt() @Min(1) @Max(1000) plannedPeriods?: number;
 
   @IsOptional() @IsIn(['onsite', 'online', 'hybrid']) deliveryMode?: string;
+}
+
+class ReassignSectionDto {
+  @IsOptional() @IsUuid() teacherId?: string;
+  @IsOptional() @IsUuid() roomId?: string;
 }
 
 @Injectable()
@@ -916,6 +996,19 @@ export class CatalogService {
     );
   }
 
+  /** คาบประจำสัปดาห์ที่วางไว้ให้กลุ่มเรียนหนึ่ง — ใช้ตอนย้าย/ยกเลิกคาบ */
+  async timeslots(sectionId: string) {
+    return this.db.query(
+      `select st.id, st.day_of_week, st.period_from, st.period_to,
+              st.room_id, r.code as room_code, r.name_th as room_name
+         from section_timeslot st
+         left join room r on r.id = st.room_id
+        where st.class_section_id = $1
+        order by st.day_of_week, st.period_from`,
+      [sectionId],
+    );
+  }
+
   /** เรียก generate_class_meetings() ซึ่งเดิมไม่มีเส้นทางไหนเรียกเลย */
   async generateMeetings(sectionId: string) {
     const row = await this.db.queryOne<{ n: number }>(
@@ -1024,6 +1117,30 @@ export class CatalogService {
       return row.rows[0];
     });
   }
+
+  /**
+   * ย้ายผู้สอน/ห้องของกลุ่มเรียนที่เปิดไว้แล้ว
+   *
+   * ไม่แตะคาบที่วางไว้ใน section_timeslot — ถ้าเปลี่ยนห้องแล้วต้องการให้
+   * คาบที่วางไว้ตามไปด้วย ต้องย้ายคาบแยกที่ /timetable/slots/:id/move
+   * เพราะห้องของ "กลุ่มเรียน" กับห้องของ "คาบหนึ่ง ๆ" เป็นคนละช่องกัน
+   * (กลุ่มเรียนอาจไม่มีคาบตายตัว หรือใช้คนละห้องในแต่ละคาบก็ได้)
+   */
+  async reassignSection(id: string, dto: ReassignSectionDto) {
+    if (dto.teacherId === undefined && dto.roomId === undefined) {
+      throw new BadRequestException('ต้องระบุผู้สอนใหม่หรือห้องใหม่อย่างน้อยหนึ่งอย่าง');
+    }
+    const row = await this.db.queryOne(
+      `update class_section
+          set teacher_id = coalesce($2, teacher_id),
+              room_id    = coalesce($3, room_id)
+        where id = $1
+        returning id, teacher_id, room_id`,
+      [id, dto.teacherId ?? null, dto.roomId ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบกลุ่มเรียนนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
 }
 
 /**
@@ -1072,6 +1189,11 @@ class CatalogController {
     return this.svc.meetings(sectionId);
   }
 
+  @Get('sections/:sectionId/timeslots')
+  timeslots(@Param('sectionId', ParseUuidPipe) sectionId: string) {
+    return this.svc.timeslots(sectionId);
+  }
+
   /**
    * สร้างคาบเรียนจริงจากตารางสอนที่วางไว้
    *
@@ -1101,6 +1223,13 @@ class CatalogController {
   @Post('sections')
   create(@Body() dto: CreateSectionDto) {
     return this.svc.createSection(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('class_section', 'id')
+  @Post('sections/:id/reassign')
+  reassign(@Param('id', ParseUuidPipe) id: string, @Body() dto: ReassignSectionDto) {
+    return this.svc.reassignSection(id, dto);
   }
 }
 

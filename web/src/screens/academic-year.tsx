@@ -92,6 +92,15 @@ interface RegradeCandidate {
   registered_at: string;
 }
 
+interface PlaceableStudent {
+  id: string;
+  student_code: string;
+  full_name: string;
+  status: string;
+  study_year: number | null;
+  group_code: string | null;
+}
+
 interface GradeSymbol {
   id: string;
   symbol: string;
@@ -609,6 +618,152 @@ function RegradeCandidateRow({
   );
 }
 
+/**
+ * จัดนักศึกษาเข้าชั้นปี/ห้อง — เป็นก้อนละไม่เกิน 500 คน (เพดานของ place_students())
+ *
+ * เหตุผลเดียวกับ registerInChunks ใน registration.tsx — กอง "ยังไม่จัดห้อง"
+ * ของวิทยาลัยที่เพิ่งเริ่มใช้ระบบคือนักศึกษาทั้งรุ่น ถ้าไม่แบ่งก้อน ปุ่มจะกดไม่ได้เลย
+ */
+async function placeInChunks(
+  academicYearId: string,
+  studentIds: string[],
+  studyYear: number,
+  groupCode: string | undefined,
+): Promise<{ requested: number; placed: number; skipped: { studentId: string; action: string; note: string | null }[] }> {
+  const CHUNK = 500;
+  const merged = { requested: 0, placed: 0, skipped: [] as { studentId: string; action: string; note: string | null }[] };
+  for (let i = 0; i < studentIds.length; i += CHUNK) {
+    const chunk = studentIds.slice(i, i + CHUNK);
+    const r = await api.post<typeof merged>('/rollover/placements', {
+      academicYearId, studentIds: chunk, studyYear, ...(groupCode ? { groupCode } : {}),
+    });
+    merged.requested += r.requested;
+    merged.placed += r.placed;
+    merged.skipped.push(...r.skipped);
+  }
+  return merged;
+}
+
+function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string; onDone: () => void }) {
+  // ต้องส่ง academicYearId ไปด้วยเสมอ — ฝั่ง API join student_class_placement
+  // ด้วยเงื่อนไข academic_year_id = $3 ถ้าไม่ส่งไป group_code จะเป็น null
+  // เสมอไม่ว่าจะจัดห้องไว้แล้วหรือยัง เพราะ "อะไรก็ตาม = null" ไม่จริงใน SQL
+  const students = useAsync(
+    () => api.get<PlaceableStudent[]>(`/students${qs({ limit: '200', academicYearId })}`),
+    [academicYearId],
+  );
+  const [q, setQ] = useState('');
+  const [onlyUnplaced, setOnlyUnplaced] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [studyYear, setStudyYear] = useState('1');
+  const [groupCode, setGroupCode] = useState('');
+  const [result, setResult] = useState<Awaited<ReturnType<typeof placeInChunks>> | null>(null);
+
+  const visible = (students.data ?? []).filter((s) => {
+    if (onlyUnplaced && s.group_code) return false;
+    if (s.status !== 'active') return false;
+    const needle = q.trim().toLowerCase();
+    if (!needle) return true;
+    return s.student_code.includes(needle) || s.full_name.toLowerCase().includes(needle);
+  });
+
+  const toggleOne = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+
+  return (
+    <Card title="จัดนักศึกษาเข้าชั้นปี/ห้อง">
+      <div className="row">
+        <Field label="ค้นหารหัสหรือชื่อ">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="เช่น 69201 หรือ ปวริศ" />
+        </Field>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 22 }}>
+          <input type="checkbox" checked={onlyUnplaced} onChange={(e) => setOnlyUnplaced(e.target.checked)} />
+          แสดงเฉพาะที่ยังไม่จัดห้อง
+        </label>
+        <div style={{ marginTop: 22, color: 'var(--ink-soft)', fontSize: 12 }}>
+          เลือกแล้ว {selected.size} คน
+        </div>
+      </div>
+
+      <AsyncView state={students} empty="ไม่มีนักศึกษา">
+        {() => (
+          <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 8 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }} />
+                  <th style={{ width: 150 }}>รหัสนักศึกษา</th>
+                  <th>ชื่อ — นามสกุล</th>
+                  <th style={{ width: 160 }}>ห้องปัจจุบัน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleOne(s.id)} />
+                    </td>
+                    <td className="mono">{s.student_code}</td>
+                    <td>{s.full_name}</td>
+                    <td>{s.group_code ? `ปี ${s.study_year} ห้อง ${s.group_code}` : 'ยังไม่จัดห้อง'}</td>
+                  </tr>
+                ))}
+                {visible.length === 0 && (
+                  <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--ink-soft)' }}>ไม่พบรายชื่อ</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AsyncView>
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <Field label="ชั้นปี">
+          <select value={studyYear} onChange={(e) => setStudyYear(e.target.value)} style={{ maxWidth: 90 }}>
+            {[1, 2, 3, 4, 5, 6].map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="รหัสห้อง (ถ้ามี)">
+          <input value={groupCode} onChange={(e) => setGroupCode(e.target.value)} placeholder="เช่น 1/1" style={{ maxWidth: 100 }} />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            confirm={selected.size > 20 ? `จัดห้องให้ ${selected.size} คนพร้อมกัน ยืนยันหรือไม่` : undefined}
+            onRun={() => {
+              if (selected.size === 0) throw new Error('เลือกนักศึกษาก่อน');
+              return placeInChunks(academicYearId, [...selected], Number(studyYear), groupCode.trim() || undefined);
+            }}
+            onDone={(r) => {
+              setResult(r as Awaited<ReturnType<typeof placeInChunks>>);
+              setSelected(new Set());
+              students.reload();
+              onDone();
+            }}
+          >
+            จัดห้องให้ผู้ที่เลือก
+          </ActionButton>
+        </div>
+      </div>
+
+      {result && (
+        <Notice kind={result.skipped.length === 0 ? 'ok' : 'warn'}>
+          จัดห้องสำเร็จ {result.placed} จาก {result.requested} คน
+          {result.skipped.length > 0 && (
+            <> — ข้าม {result.skipped.length} คน: {result.skipped.map((s) => s.note).filter(Boolean).join(', ')}</>
+          )}
+        </Notice>
+      )}
+    </Card>
+  );
+}
+
 export function AcademicYearScreen() {
   const { terms } = useTermPicker();
   const rollovers = useAsync(() => api.get<RolloverLog[]>('/rollover'), []);
@@ -779,6 +934,8 @@ export function AcademicYearScreen() {
           </label>
         </div>
       </Card>
+
+      {ayId && <PlaceStudentsForm academicYearId={ayId} onDone={() => placements.reload()} />}
 
       {ayId && (
         <TableCard title="นักศึกษาแยกตามชั้นปีและห้อง">

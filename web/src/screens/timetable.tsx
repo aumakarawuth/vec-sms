@@ -55,9 +55,197 @@ interface Suggestion {
   note: string | null;
 }
 
+interface Timeslot {
+  id: string;
+  day_of_week: number;
+  period_from: number;
+  period_to: number;
+  room_id: string | null;
+  room_code: string | null;
+  room_name: string | null;
+}
+
+interface StaffRow {
+  id: string;
+  person_id: string;
+  staff_code: string;
+  full_name: string;
+}
+
+function TransferRow({ slot, rooms, onDone }: { slot: Timeslot; rooms: Room[]; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [dayOfWeek, setDayOfWeek] = useState(String(slot.day_of_week));
+  const [periodFrom, setPeriodFrom] = useState(String(slot.period_from));
+  const [periodTo, setPeriodTo] = useState(String(slot.period_to));
+  const [roomId, setRoomId] = useState(slot.room_id ?? '');
+
+  return (
+    <>
+      <tr>
+        <td>{DAY[slot.day_of_week]}</td>
+        <td>{slot.period_from}–{slot.period_to}</td>
+        <td>{slot.room_code ? `${slot.room_code} ${slot.room_name}` : '— ไม่ระบุห้อง —'}</td>
+        <td>
+          <button className="ghost" onClick={() => setOpen(!open)}>{open ? 'ปิด' : 'ย้าย'}</button>{' '}
+          <ActionButton
+            confirm="ยกเลิกคาบนี้ ยืนยันหรือไม่ — ไม่มีคาบใหม่มาแทน"
+            onRun={() => api.post(`/timetable/slots/${slot.id}/remove`)}
+            onDone={onDone}
+          >
+            ยกเลิก
+          </ActionButton>
+        </td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={4}>
+            <div className="row">
+              <Field label="วัน">
+                <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)} style={{ maxWidth: 130 }}>
+                  {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                    <option key={d} value={d}>{DAY[d]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="คาบเริ่ม">
+                <input type="number" min={1} max={20} value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={{ maxWidth: 80 }} />
+              </Field>
+              <Field label="คาบสิ้นสุด">
+                <input type="number" min={1} max={20} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={{ maxWidth: 80 }} />
+              </Field>
+              <label className="field">
+                <span>ห้อง (ถ้ามี)</span>
+                <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+                  <option value="">— ไม่ระบุห้อง —</option>
+                  {rooms.map((r) => (
+                    <option key={r.id} value={r.id}>{r.code} {r.name_th}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="shrink">
+                <ActionButton
+                  className="primary"
+                  onRun={() =>
+                    api.post(`/timetable/slots/${slot.id}/move`, {
+                      dayOfWeek: Number(dayOfWeek),
+                      periodFrom: Number(periodFrom),
+                      periodTo: Number(periodTo),
+                      ...(roomId ? { roomId } : {}),
+                    })
+                  }
+                  onDone={() => { setOpen(false); onDone(); }}
+                >
+                  ย้ายคาบนี้
+                </ActionButton>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function TransferSectionForm({
+  sections, rooms, staff,
+}: { sections: Section[]; rooms: Room[]; staff: StaffRow[] }) {
+  const [sectionId, setSectionId] = useState('');
+  const slots = useAsync(
+    () => (sectionId ? api.get<Timeslot[]>(`/academic/sections/${sectionId}/timeslots`) : Promise.resolve([])),
+    [sectionId],
+  );
+  const [teacherId, setTeacherId] = useState('');
+  const [reassignRoomId, setReassignRoomId] = useState('');
+
+  const current = sections.find((s) => s.id === sectionId);
+
+  return (
+    <Card title="โอนย้ายตารางสอน — เปลี่ยนผู้สอน/ห้อง หรือย้าย/ยกเลิกคาบ">
+      <div className="row">
+        <label className="field" style={{ flex: 2 }}>
+          <span>กลุ่มเรียน</span>
+          <select value={sectionId} onChange={(e) => { setSectionId(e.target.value); setTeacherId(''); setReassignRoomId(''); }}>
+            <option value="">— เลือกกลุ่มเรียน —</option>
+            {sections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.code} {s.name_th} · กลุ่ม {s.section_no} · {s.teacher_name || 'ยังไม่มีครู'}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {sectionId && (
+        <>
+          <div className="row">
+            <label className="field">
+              <span>เปลี่ยนผู้สอนเป็น</span>
+              <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+                <option value="">— ไม่เปลี่ยน —</option>
+                {staff.map((t) => (
+                  <option key={t.id} value={t.id}>{t.full_name} ({t.staff_code})</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>เปลี่ยนห้องประจำกลุ่มเป็น</span>
+              <select value={reassignRoomId} onChange={(e) => setReassignRoomId(e.target.value)}>
+                <option value="">— ไม่เปลี่ยน —</option>
+                {rooms.map((r) => (
+                  <option key={r.id} value={r.id}>{r.code} {r.name_th}</option>
+                ))}
+              </select>
+            </label>
+            <div className="shrink">
+              <ActionButton
+                onRun={() => {
+                  if (!teacherId && !reassignRoomId) throw new Error('เลือกผู้สอนใหม่หรือห้องใหม่ก่อน');
+                  return api.post(`/academic/sections/${sectionId}/reassign`, {
+                    ...(teacherId ? { teacherId } : {}),
+                    ...(reassignRoomId ? { roomId: reassignRoomId } : {}),
+                  });
+                }}
+                onDone={() => { setTeacherId(''); setReassignRoomId(''); }}
+              >
+                บันทึกการเปลี่ยนแปลง
+              </ActionButton>
+            </div>
+          </div>
+          {current && (
+            <div style={{ color: 'var(--ink-soft)', fontSize: 12, marginBottom: 10 }}>
+              ปัจจุบัน — ผู้สอน: {current.teacher_name || 'ยังไม่มี'} · ห้องประจำกลุ่ม: {current.room_name ?? 'ยังไม่มี'}
+            </div>
+          )}
+
+          <AsyncView state={slots} empty="กลุ่มเรียนนี้ยังไม่มีคาบที่วางไว้">
+            {(rows) => (
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 110 }}>วัน</th>
+                    <th style={{ width: 110 }}>คาบ</th>
+                    <th>ห้อง</th>
+                    <th style={{ width: 160 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <TransferRow key={s.id} slot={s} rooms={rooms} onDone={() => slots.reload()} />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </AsyncView>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function TimetableScreen() {
   const { terms, termId, setTerm } = useTermPicker();
   const rooms = useAsync(() => api.get<Room[]>('/timetable/rooms'), []);
+  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
   const sections = useAsync(
     () => (termId ? fetchSections(termId) : Promise.resolve([])),
     [termId],
@@ -248,6 +436,8 @@ export function TimetableScreen() {
         )}
       </Card>
 
+      <TransferSectionForm sections={sections.data ?? []} rooms={rooms.data ?? []} staff={staff.data?.items ?? []} />
+
       <TableCard
         title="คาบที่ชนกันในภาคเรียนนี้"
         actions={<button onClick={() => conflicts.reload()}>ตรวจใหม่</button>}
@@ -363,6 +553,50 @@ export function TimetableScreen() {
             </table>
           )}
         </AsyncView>
+      </TableCard>
+
+      <TableCard title="ภาระงานสอนของอาจารย์ — ภาคเรียนนี้">
+        <AsyncView state={sections} empty="ยังไม่มีกลุ่มเรียนในภาคเรียนนี้">
+          {(rows) => {
+            const byTeacher = new Map<string, { name: string; courses: number; periods: number; students: number }>();
+            for (const s of rows) {
+              const key = s.teacher_id ?? '';
+              const name = s.teacher_name || 'ยังไม่ระบุผู้สอน';
+              const entry = byTeacher.get(key) ?? { name, courses: 0, periods: 0, students: 0 };
+              entry.courses += 1;
+              entry.periods += Number(s.planned_periods) || 0;
+              entry.students += Number(s.enrolled) || 0;
+              byTeacher.set(key, entry);
+            }
+            const summary = [...byTeacher.entries()].sort((a, b) => b[1].periods - a[1].periods);
+            return (
+              <table>
+                <thead>
+                  <tr>
+                    <th>ผู้สอน</th>
+                    <th className="num" style={{ width: 100 }}>รายวิชา</th>
+                    <th className="num" style={{ width: 140 }}>คาบ/สัปดาห์รวม</th>
+                    <th className="num" style={{ width: 120 }}>นักศึกษารวม</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.map(([id, v]) => (
+                    <tr key={id || 'none'}>
+                      <td>{v.name}</td>
+                      <td className="num">{v.courses}</td>
+                      <td className="num">{v.periods}</td>
+                      <td className="num">{v.students}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          }}
+        </AsyncView>
+        <div style={{ color: 'var(--ink-soft)', fontSize: 12, marginTop: 6 }}>
+          นับจากคาบที่วางแผนไว้ต่อสัปดาห์ของแต่ละกลุ่มเรียน — วิชาที่ยังไม่ได้วางคาบยังนับรวมด้วย
+          เพราะเป็นภาระที่รับไว้แล้วแม้จะยังไม่ได้ลงตาราง
+        </div>
       </TableCard>
     </>
   );
