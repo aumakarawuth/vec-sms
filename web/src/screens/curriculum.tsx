@@ -201,10 +201,375 @@ const REQUIREMENT: Record<string, string> = {
   free_elective: 'เลือกเสรี',
 };
 
+/**
+ * ต้นไม้สาขาวิชา — หมวดสาขา → สาขาวิชา → สาขางาน → หลักสูตร
+ *
+ * ─── ทำไมต้องมีชั้นนี้ ───
+ * `GET /curriculum/programs` มีมาตั้งแต่แรกแต่ไม่เคยมีหน้าจอไหนเรียกเลย
+ * และไม่มีเส้นทางสร้างสักชั้น วิทยาลัยที่ deploy ใหม่ตาม reference-data.sql
+ * (ซึ่งตั้งใจไม่ใส่สาขาวิชาให้ เพราะเป็นเรื่องเฉพาะของแต่ละวิทยาลัย) จึงเปิด
+ * "โครงสร้างหลักสูตร" มาแล้วสร้างฉบับหลักสูตรไม่ได้เลยสักฉบับ — ไม่มีสาขา
+ * ให้เลือกตั้งแต่ขั้นแรก
+ */
+interface ProgramRow {
+  program_type_id: string;
+  type_code: string;
+  type_name: string;
+  program_id: string;
+  program_code: string;
+  program_name: string;
+  program_level: string;
+  track_id: string | null;
+  track_code: string | null;
+  track_name: string | null;
+  curriculum_id: string | null;
+  curriculum_name: string | null;
+  curriculum_shift: string | null;
+  versions: string | number;
+}
+
+interface GradeScheme {
+  id: string;
+  code: string;
+  name_th: string;
+  level: string;
+  effective_from_year_be: number;
+}
+
+const QUALIFICATION_LEVEL: Record<string, string> = { PVC: 'ปวช.', PVS: 'ปวส.', TVB: 'ทวิภาคีบัณฑิต' };
+const CLASS_SHIFT: Record<string, string> = { morning: 'เช้า', afternoon: 'บ่าย', evening: 'ค่ำ', weekend: 'เสาร์-อาทิตย์' };
+
+/** เอาแถวที่ id ไม่ซ้ำกันจากอาร์เรย์ที่แบนอยู่ — ต้นไม้ทั้งก้อนมาเป็นแถวเดียวต่อหนึ่งใบไม้ */
+function uniqueBy<T, K>(rows: T[], key: (row: T) => K | null | undefined): T[] {
+  const seen = new Set<K>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const k = key(row);
+    if (k == null || seen.has(k)) continue;
+    seen.add(k);
+    out.push(row);
+  }
+  return out;
+}
+
+function AddProgramTypeForm({ onDone }: { onDone: () => void }) {
+  const [code, setCode] = useState('');
+  const [nameTh, setNameTh] = useState('');
+
+  return (
+    <Card title="เพิ่มหมวดสาขา">
+      <p className="hint">ระดับบนสุด เช่น อุตสาหกรรม พาณิชยกรรม คหกรรม — ส่วนใหญ่วิทยาลัยหนึ่งมีไม่กี่หมวด</p>
+      <div className="row">
+        <Field label="รหัสหมวด">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น 01" style={{ maxWidth: 100 }} />
+        </Field>
+        <Field label="ชื่อหมวด">
+          <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น อุตสาหกรรม" />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อหมวดสาขา');
+              return api.post('/curriculum/program-types', { code: code.trim(), nameTh: nameTh.trim() });
+            }}
+            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
+          >
+            เพิ่มหมวดสาขา
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AddProgramForm({ programTypes, onDone }: { programTypes: ProgramRow[]; onDone: () => void }) {
+  const [programTypeId, setProgramTypeId] = useState('');
+  const [level, setLevel] = useState('PVC');
+  const [code, setCode] = useState('');
+  const [nameTh, setNameTh] = useState('');
+
+  return (
+    <Card title="เพิ่มสาขาวิชา">
+      <p className="hint">ผูกระดับการศึกษาไว้ที่ชั้นนี้ — สาขาเดียวกันที่เปิดทั้ง ปวช. และ ปวส. ต้องสร้างสองแถว</p>
+      <div className="row">
+        <Field label="หมวดสาขา">
+          <select value={programTypeId} onChange={(e) => setProgramTypeId(e.target.value)}>
+            <option value="">— เลือกหมวดสาขา —</option>
+            {programTypes.map((t) => (
+              <option key={t.program_type_id} value={t.program_type_id}>{t.type_code} {t.type_name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="ระดับ">
+          <select value={level} onChange={(e) => setLevel(e.target.value)} style={{ maxWidth: 140 }}>
+            {Object.entries(QUALIFICATION_LEVEL).map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="รหัสสาขา">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น 20101" style={{ maxWidth: 120 }} />
+        </Field>
+        <Field label="ชื่อสาขาวิชา">
+          <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น ช่างยนต์" />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!programTypeId) throw new Error('เลือกหมวดสาขาก่อน');
+              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อสาขาวิชา');
+              return api.post('/curriculum/programs', {
+                programTypeId, level, code: code.trim(), nameTh: nameTh.trim(),
+              });
+            }}
+            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
+          >
+            เพิ่มสาขาวิชา
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AddProgramTrackForm({ programs, onDone }: { programs: ProgramRow[]; onDone: () => void }) {
+  const [programId, setProgramId] = useState('');
+  const [code, setCode] = useState('');
+  const [nameTh, setNameTh] = useState('');
+
+  return (
+    <Card title="เพิ่มสาขางาน">
+      <p className="hint">แขนงย่อยภายในสาขาวิชาหนึ่ง เช่น ช่างยนต์ → ยานยนต์ / ตัวถังและสี</p>
+      <div className="row">
+        <Field label="สาขาวิชา">
+          <select value={programId} onChange={(e) => setProgramId(e.target.value)}>
+            <option value="">— เลือกสาขาวิชา —</option>
+            {programs.map((p) => (
+              <option key={p.program_id} value={p.program_id}>
+                {p.program_code} {p.program_name} ({QUALIFICATION_LEVEL[p.program_level] ?? p.program_level})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="รหัสสาขางาน">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น 20101010" style={{ maxWidth: 140 }} />
+        </Field>
+        <Field label="ชื่อสาขางาน">
+          <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น ยานยนต์" />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!programId) throw new Error('เลือกสาขาวิชาก่อน');
+              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อสาขางาน');
+              return api.post('/curriculum/program-tracks', { programId, code: code.trim(), nameTh: nameTh.trim() });
+            }}
+            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
+          >
+            เพิ่มสาขางาน
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AddCurriculumForm({ tracks, onDone }: { tracks: ProgramRow[]; onDone: () => void }) {
+  const [trackId, setTrackId] = useState('');
+  const [nameTh, setNameTh] = useState('');
+  const [shift, setShift] = useState('morning');
+  const [isContinuing, setIsContinuing] = useState(false);
+
+  return (
+    <Card title="เพิ่มหลักสูตรใหม่">
+      <p className="hint">
+        สาขางานเดียวกันเปิดได้หลายกะ (เช้า/บ่าย/เสาร์-อาทิตย์) แต่ละกะนับเป็นคนละหลักสูตร —
+        หลักสูตรที่สร้างตรงนี้ยังไม่มีฉบับ ต้องออกฉบับแรกในหัวข้อถัดไป
+      </p>
+      <div className="row">
+        <Field label="สาขางาน">
+          <select value={trackId} onChange={(e) => setTrackId(e.target.value)}>
+            <option value="">— เลือกสาขางาน —</option>
+            {tracks.map((t) => (
+              <option key={t.track_id!} value={t.track_id!}>
+                {t.program_name} · {t.track_code} {t.track_name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="ชื่อหลักสูตร">
+          <input
+            value={nameTh} onChange={(e) => setNameTh(e.target.value)}
+            placeholder="เช่น ปวช. ช่างยนต์ สาขางานยานยนต์"
+          />
+        </Field>
+        <Field label="กะเรียน">
+          <select value={shift} onChange={(e) => setShift(e.target.value)} style={{ maxWidth: 150 }}>
+            {Object.entries(CLASS_SHIFT).map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>
+            ))}
+          </select>
+        </Field>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 22 }}>
+          <input type="checkbox" checked={isContinuing} onChange={(e) => setIsContinuing(e.target.checked)} />
+          หลักสูตรต่อเนื่อง
+        </label>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!trackId) throw new Error('เลือกสาขางานก่อน');
+              if (!nameTh.trim()) throw new Error('กรอกชื่อหลักสูตร');
+              return api.post('/curriculum/curricula', {
+                programTrackId: trackId, nameTh: nameTh.trim(), shift, isContinuing,
+              });
+            }}
+            onDone={() => { setNameTh(''); setIsContinuing(false); onDone(); }}
+          >
+            เพิ่มหลักสูตร
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AddVersionForm({
+  curricula, gradeSchemes, onDone,
+}: { curricula: ProgramRow[]; gradeSchemes: GradeScheme[]; onDone: () => void }) {
+  const [curriculumId, setCurriculumId] = useState('');
+  const [editionBe, setEditionBe] = useState('');
+  const [fromYear, setFromYear] = useState('');
+  const [gradeSchemeId, setGradeSchemeId] = useState('');
+  const [minTotalCredits, setMinTotalCredits] = useState('');
+  const [minGpax, setMinGpax] = useState('2.00');
+  const [normalDurationTerms, setNormalDurationTerms] = useState('6');
+
+  return (
+    <Card title="ออกฉบับแรกของหลักสูตร">
+      <p className="hint">
+        หลักสูตรที่เพิ่งสร้างยังไม่มีฉบับ — เส้นทางนี้สร้างฉบับเปล่าให้ ต่างจาก "โคลนฉบับ" ที่ต้องมีฉบับต้นทางอยู่ก่อน
+        ใส่หมวดวิชาและรายวิชาต่อได้ที่ตาราง "ฉบับหลักสูตร" ด้านล่างหลังสร้างเสร็จ
+      </p>
+      <div className="row">
+        <Field label="หลักสูตร">
+          <select value={curriculumId} onChange={(e) => setCurriculumId(e.target.value)} style={{ minWidth: 260 }}>
+            <option value="">— เลือกหลักสูตร —</option>
+            {curricula.map((c) => (
+              <option key={c.curriculum_id!} value={c.curriculum_id!}>
+                {c.curriculum_name} ({CLASS_SHIFT[c.curriculum_shift ?? ''] ?? c.curriculum_shift})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="ฉบับ (พ.ศ.)">
+          <input type="number" value={editionBe} onChange={(e) => setEditionBe(e.target.value)} style={{ maxWidth: 100 }} />
+        </Field>
+        <Field label="เริ่มใช้ปีการศึกษา">
+          <input type="number" value={fromYear} onChange={(e) => setFromYear(e.target.value)} style={{ maxWidth: 100 }} />
+        </Field>
+        <Field label="ระเบียบการวัดและประเมินผล">
+          <select value={gradeSchemeId} onChange={(e) => setGradeSchemeId(e.target.value)} style={{ minWidth: 220 }}>
+            <option value="">— ยังไม่เลือก —</option>
+            {gradeSchemes.map((g) => (
+              <option key={g.id} value={g.id}>{g.code} {g.name_th}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="หน่วยกิตขั้นต่ำ">
+          <input type="number" value={minTotalCredits} onChange={(e) => setMinTotalCredits(e.target.value)} style={{ maxWidth: 100 }} />
+        </Field>
+        <Field label="GPAX ขั้นต่ำ">
+          <input type="number" step="0.01" value={minGpax} onChange={(e) => setMinGpax(e.target.value)} style={{ maxWidth: 90 }} />
+        </Field>
+        <Field label="จำนวนภาคเรียนปกติ">
+          <input type="number" value={normalDurationTerms} onChange={(e) => setNormalDurationTerms(e.target.value)} style={{ maxWidth: 90 }} />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!curriculumId) throw new Error('เลือกหลักสูตรก่อน');
+              if (!editionBe || !fromYear || !minTotalCredits) {
+                throw new Error('กรอกฉบับ ปีที่เริ่มใช้ และหน่วยกิตขั้นต่ำ');
+              }
+              return api.post('/curriculum/versions', {
+                curriculumId,
+                editionBe: Number(editionBe),
+                effectiveFromYearBe: Number(fromYear),
+                ...(gradeSchemeId ? { gradeSchemeId } : {}),
+                minTotalCredits: Number(minTotalCredits),
+                ...(minGpax ? { minGpax: Number(minGpax) } : {}),
+                normalDurationTerms: Number(normalDurationTerms),
+              });
+            }}
+            onDone={() => { setEditionBe(''); setFromYear(''); setMinTotalCredits(''); onDone(); }}
+          >
+            ออกฉบับแรก
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ProgramTree({ rows }: { rows: ProgramRow[] }) {
+  return (
+    <TableCard title="โครงสร้างสาขาวิชา">
+      <table>
+        <thead>
+          <tr>
+            <th>หมวดสาขา</th>
+            <th>สาขาวิชา</th>
+            <th style={{ width: 90 }}>ระดับ</th>
+            <th>สาขางาน</th>
+            <th>หลักสูตร</th>
+            <th className="num" style={{ width: 90 }}>ฉบับ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.program_id}-${r.track_id ?? 'none'}-${r.curriculum_id ?? i}`}>
+              <td>{r.type_code} {r.type_name}</td>
+              <td>{r.program_code} {r.program_name}</td>
+              <td><Badge kind="default">{QUALIFICATION_LEVEL[r.program_level] ?? r.program_level}</Badge></td>
+              <td>{r.track_name ? `${r.track_code} ${r.track_name}` : <span className="hint">— ยังไม่มีสาขางาน —</span>}</td>
+              <td>{r.curriculum_name ?? (r.track_id && <span className="hint">— ยังไม่มีหลักสูตร —</span>)}</td>
+              <td className="num">
+                {r.curriculum_id ? (
+                  Number(r.versions) === 0
+                    ? <Badge kind="warn">ยังไม่มีฉบับ</Badge>
+                    : r.versions
+                ) : ''}
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--ink-soft)' }}>ยังไม่มีสาขาวิชาในระบบ — เริ่มจากเพิ่มหมวดสาขาด้านล่าง</td></tr>
+          )}
+        </tbody>
+      </table>
+    </TableCard>
+  );
+}
+
 export function CurriculumScreen() {
+  const programs = useAsync(() => api.get<ProgramRow[]>('/curriculum/programs'), []);
+  const gradeSchemes = useAsync(() => api.get<GradeScheme[]>('/curriculum/grade-schemes'), []);
   const versions = useAsync(() => api.get<Version[]>('/curriculum/versions'), []);
   const [versionId, setVersionId] = useState('');
   const [q, setQ] = useState('');
+
+  const rows = programs.data ?? [];
+  const programTypes = uniqueBy(rows, (r) => r.program_type_id);
+  const allPrograms = uniqueBy(rows, (r) => r.program_id);
+  const tracksOnly = uniqueBy(rows.filter((r) => r.track_id), (r) => r.track_id);
+  const curriculaOnly = uniqueBy(rows.filter((r) => r.curriculum_id), (r) => r.curriculum_id);
+
+  const reloadTree = () => programs.reload();
 
   const structure = useAsync(
     () =>
@@ -223,6 +588,17 @@ export function CurriculumScreen() {
   return (
     <>
       <PageHead title="โครงสร้างหลักสูตร" />
+
+      <ProgramTree rows={rows} />
+      <AddProgramTypeForm onDone={reloadTree} />
+      <AddProgramForm programTypes={programTypes} onDone={reloadTree} />
+      <AddProgramTrackForm programs={allPrograms} onDone={reloadTree} />
+      <AddCurriculumForm tracks={tracksOnly} onDone={reloadTree} />
+      <AddVersionForm
+        curricula={curriculaOnly}
+        gradeSchemes={gradeSchemes.data ?? []}
+        onDone={() => { reloadTree(); versions.reload(); }}
+      />
 
       <TableCard title="ฉบับหลักสูตร">
         <AsyncView state={versions} empty="ยังไม่มีหลักสูตรในระบบ">

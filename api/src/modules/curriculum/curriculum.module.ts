@@ -152,6 +152,71 @@ class CategoryDto {
   @IsOptional() @IsInt() sortOrder?: number;
 }
 
+const QUALIFICATION_LEVEL = ['PVC', 'PVS', 'TVB'] as const;
+const CLASS_SHIFT = ['morning', 'afternoon', 'evening', 'weekend'] as const;
+
+/** หมวดสาขา — ระดับบนสุดของต้นไม้ เช่น อุตสาหกรรม พาณิชยกรรม */
+class ProgramTypeDto {
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsInt() @Min(0) sortOrder?: number;
+}
+
+/** สาขาวิชา — ผูกระดับการศึกษา (ปวช./ปวส./ทวิภาคีบัณฑิต) ไว้ที่ชั้นนี้ */
+class ProgramDto {
+  @IsUuid() programTypeId: string;
+  @IsIn(QUALIFICATION_LEVEL as unknown as string[]) level: string;
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsString() @MaxLength(200) careerGroupTh?: string;
+}
+
+/** สาขางาน — แขนงย่อยภายในสาขาวิชาหนึ่ง เช่น ยานยนต์ ตัวถังและสี */
+class ProgramTrackDto {
+  @IsUuid() programId: string;
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+}
+
+/**
+ * หลักสูตรของสาขางานหนึ่ง — ยังไม่มีฉบับ (curriculum_version) ในตัวเอง
+ *
+ * แยกจาก program_track เพราะแขนงเดียวกันเปิดได้หลายกะ (เช้า/บ่าย/เสาร์-อาทิตย์)
+ * โดยแต่ละกะนับเป็นคนละหลักสูตร — `program_track_id` ซ้ำกันได้ระหว่างแถว
+ */
+class CreateCurriculumDto {
+  @IsUuid() programTrackId: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsIn(CLASS_SHIFT as unknown as string[]) shift?: string;
+  @IsOptional() @IsBoolean() isContinuing?: boolean;
+}
+
+/**
+ * ฉบับแรกของหลักสูตรที่เพิ่งสร้าง — INSERT ตรง ไม่ใช่ clone
+ *
+ * `versions/:id/clone` (ของเดิม) ต้องมีฉบับต้นทางอยู่ก่อนเสมอ — หลักสูตร
+ * ที่เพิ่งสร้างจาก POST /curricula ยังไม่มีฉบับไหนให้โคลน เส้นทางนี้จึงเป็น
+ * ทางเดียวที่ทำให้หลักสูตรใหม่มีฉบับแรกได้ หมวดวิชา/รายวิชา ใส่ทีหลังผ่าน
+ * versions/:id/categories และ versions/:id/courses ที่มีอยู่แล้ว
+ */
+class CreateVersionDto {
+  @IsUuid() curriculumId: string;
+  @IsInt() @Min(2500) @Max(2700) editionBe: number;
+  @IsInt() @Min(2500) @Max(2700) effectiveFromYearBe: number;
+  @IsOptional() @IsInt() @Min(2500) @Max(2700) effectiveToYearBe?: number;
+  @IsOptional() @IsUuid() gradeSchemeId?: string;
+  @IsNumber() @Min(0) @Max(999) minTotalCredits: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(4) minGpax?: number;
+  @IsOptional() @IsInt() @Min(0) minPracticumHours?: number;
+  @IsOptional() @IsBoolean() requiresProfStandard?: boolean;
+  @IsOptional() @IsBoolean() requiresAllActivity?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(20) normalDurationTerms?: number;
+}
+
 @Injectable()
 export class CurriculumService {
   constructor(private readonly db: DbService) {}
@@ -159,19 +224,93 @@ export class CurriculumService {
   /** ต้นไม้ของโปรแกรม → แขนง → หลักสูตร → ฉบับ */
   async listPrograms() {
     return this.db.query(
-      `select pt.code as type_code, pt.name_th as type_name,
+      `select pt.id as program_type_id, pt.code as type_code, pt.name_th as type_name,
               pr.id as program_id, pr.code as program_code, pr.name_th as program_name,
+              pr.level as program_level,
               tr.id as track_id, tr.code as track_code, tr.name_th as track_name,
-              cu.id as curriculum_id,
+              cu.id as curriculum_id, cu.name_th as curriculum_name, cu.shift as curriculum_shift,
               count(cv.id) as versions
          from program_type pt
          join program       pr on pr.program_type_id = pt.id
          left join program_track tr on tr.program_id = pr.id
          left join curriculum    cu on cu.program_track_id = tr.id
          left join curriculum_version cv on cv.curriculum_id = cu.id
-        group by pt.code, pt.name_th, pr.id, pr.code, pr.name_th,
-                 tr.id, tr.code, tr.name_th, cu.id
+        group by pt.id, pt.code, pt.name_th, pr.id, pr.code, pr.name_th, pr.level,
+                 tr.id, tr.code, tr.name_th, cu.id, cu.name_th, cu.shift
         order by pt.code, pr.code, tr.code`,
+    );
+  }
+
+  async createProgramType(dto: ProgramTypeDto) {
+    return this.db.queryOne(
+      `insert into program_type (institution_id, code, name_th, name_en, sort_order)
+       values (current_institution_id(), $1, $2, $3, coalesce($4, 0))
+       returning id, code, name_th, name_en, sort_order`,
+      [dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null, dto.sortOrder ?? null],
+    );
+  }
+
+  async createProgram(dto: ProgramDto) {
+    return this.db.queryOne(
+      `insert into program
+         (institution_id, program_type_id, level, code, name_th, name_en, career_group_th)
+       values (current_institution_id(), $1, $2::qualification_level, $3, $4, $5, $6)
+       returning id, program_type_id, level, code, name_th`,
+      [
+        dto.programTypeId, dto.level, dto.code.trim(), dto.nameTh.trim(),
+        dto.nameEn?.trim() ?? null, dto.careerGroupTh?.trim() ?? null,
+      ],
+    );
+  }
+
+  async createProgramTrack(dto: ProgramTrackDto) {
+    return this.db.queryOne(
+      `insert into program_track (program_id, code, name_th, name_en)
+       values ($1, $2, $3, $4)
+       returning id, program_id, code, name_th`,
+      [dto.programId, dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null],
+    );
+  }
+
+  /** หลักสูตรเปล่า — ยังไม่มีฉบับ ต้องออกฉบับแรกด้วย createVersion ต่อ */
+  async createCurriculum(dto: CreateCurriculumDto) {
+    return this.db.queryOne(
+      `insert into curriculum
+         (institution_id, program_track_id, name_th, name_en, shift, is_continuing)
+       values (current_institution_id(), $1, $2, $3, coalesce($4::class_shift, 'morning'), coalesce($5, false))
+       returning id, program_track_id, name_th, shift`,
+      [
+        dto.programTrackId, dto.nameTh.trim(), dto.nameEn?.trim() ?? null,
+        dto.shift ?? null, dto.isContinuing ?? null,
+      ],
+    );
+  }
+
+  /** ฉบับแรกของหลักสูตรที่เพิ่งสร้าง — ดู CreateVersionDto ว่าทำไมแยกจาก clone */
+  async createVersion(dto: CreateVersionDto) {
+    return this.db.queryOne(
+      `insert into curriculum_version
+         (curriculum_id, edition_be, effective_from_year_be, effective_to_year_be,
+          grade_scheme_id, min_total_credits, min_gpax, min_practicum_hours,
+          requires_prof_standard, requires_all_activity, normal_duration_terms, status)
+       values ($1, $2, $3, $4, $5, $6, coalesce($7, 2.00), $8,
+               coalesce($9, true), coalesce($10, true), coalesce($11, 6), 'draft')
+       returning id, curriculum_id, edition_be, status`,
+      [
+        dto.curriculumId, dto.editionBe, dto.effectiveFromYearBe, dto.effectiveToYearBe ?? null,
+        dto.gradeSchemeId ?? null, dto.minTotalCredits, dto.minGpax ?? null,
+        dto.minPracticumHours ?? null, dto.requiresProfStandard ?? null,
+        dto.requiresAllActivity ?? null, dto.normalDurationTerms ?? null,
+      ],
+    );
+  }
+
+  /** ระเบียบการวัดและประเมินผลที่มีอยู่ — ใช้เลือกตอนออกฉบับหลักสูตรใหม่ */
+  async gradeSchemes() {
+    return this.db.query(
+      `select id, code, name_th, level, effective_from_year_be
+         from grade_scheme
+        order by effective_from_year_be desc, code`,
     );
   }
 
@@ -622,6 +761,41 @@ class CurriculumController {
   @Get('programs')
   programs() {
     return this.svc.listPrograms();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('program-types')
+  createProgramType(@Body() dto: ProgramTypeDto) {
+    return this.svc.createProgramType(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('programs')
+  createProgram(@Body() dto: ProgramDto) {
+    return this.svc.createProgram(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('program-tracks')
+  createProgramTrack(@Body() dto: ProgramTrackDto) {
+    return this.svc.createProgramTrack(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('curricula')
+  createCurriculum(@Body() dto: CreateCurriculumDto) {
+    return this.svc.createCurriculum(dto);
+  }
+
+  @Get('grade-schemes')
+  gradeSchemes() {
+    return this.svc.gradeSchemes();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('versions')
+  createVersion(@Body() dto: CreateVersionDto) {
+    return this.svc.createVersion(dto);
   }
 
   @Get('versions')

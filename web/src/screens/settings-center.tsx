@@ -7,9 +7,9 @@ const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
   {key:'term-type',title:'หมวดภาคเรียน',desc:'เปิดปีการศึกษา/ภาคเรียนใหม่ และเดินสถานะภาคเรียนตามลำดับ',path:'/academic-year',state:'ready'},
   {key:'tuition',title:'ค่าเรียน',desc:'ค่าธรรมเนียม ใบแจ้งหนี้ และตารางการชำระ',path:'/finance',state:'partial'},
   {key:'grade-level',title:'ระดับชั้น',desc:'ชั้นปีและการจัดนักศึกษาเข้ากลุ่มเรียน',path:'/academic-year',state:'ready'},
-  {key:'class-types',title:'ประเภท/สาขา/ชั้นเรียน/ห้องเรียน',desc:'สาขาวิชา กลุ่มเรียน และห้องสำหรับจัดตาราง',path:'/timetable',state:'partial'},
+  {key:'class-types',title:'ประเภท/สาขา/ชั้นเรียน/ห้องเรียน',desc:'สาขาวิชา กลุ่มเรียน และห้องสำหรับจัดตาราง',path:'/curriculum',state:'ready'},
   {key:'program',title:'หลักสูตร',desc:'กำหนดหลักสูตร รุ่น และหน่วยกิตสะสม',path:'/curriculum',state:'ready'},
-  {key:'education-level',title:'ระดับการศึกษา',desc:'ปวช. ปวส. และระดับที่สถานศึกษาเปิดสอน',path:'/curriculum',state:'partial'},
+  {key:'education-level',title:'ระดับการศึกษา',desc:'ปวช. ปวส. และระดับที่สถานศึกษาเปิดสอน',path:'/curriculum',state:'ready'},
  ]},
  {title:'เครื่องมือ',subtitle:'ข้อมูลระบบ สื่อ และรหัสสำหรับใช้งาน',items:[
   {key:'system-info',title:'System Informations',desc:'ข้อมูลเวอร์ชัน สถานะบริการ และสภาพแวดล้อมระบบ',state:'planned'},
