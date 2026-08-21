@@ -145,6 +145,4 @@ create policy national_exam_result_delete on national_exam_result
   as restrictive for delete
   using (current_app_role() = any (array['registrar','academic','director','admin']));
 
-grant select, insert, update, delete on national_exam_result to app_runtime;
-
 commit;

@@ -3,7 +3,7 @@
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
 -- migration ล่าสุด  0072
--- ลายนิ้วมือต้นทาง  9539b91a421b7786
+-- ลายนิ้วมือต้นทาง  d89dc6b56775475a
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -21367,8 +21367,6 @@ create policy club_member_delete on club_member
   as restrictive for delete
   using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
 
-grant select, insert, update, delete on club, club_member to app_runtime;
-
 commit;
 
 
@@ -21523,8 +21521,6 @@ create policy national_exam_result_delete on national_exam_result
   as restrictive for delete
   using (current_app_role() = any (array['registrar','academic','director','admin']));
 
-grant select, insert, update, delete on national_exam_result to app_runtime;
-
 commit;
 
 
@@ -21610,8 +21606,6 @@ create policy graduation_survey_update on graduation_survey_response
 create policy graduation_survey_delete on graduation_survey_response
   as restrictive for delete
   using (current_app_role() = any (array['registrar','student_affairs','academic','director','admin']));
-
-grant select, insert, update, delete on graduation_survey_response to app_runtime;
 
 commit;
 

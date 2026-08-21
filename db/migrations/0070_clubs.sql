@@ -104,6 +104,4 @@ create policy club_member_delete on club_member
   as restrictive for delete
   using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
 
-grant select, insert, update, delete on club, club_member to app_runtime;
-
 commit;

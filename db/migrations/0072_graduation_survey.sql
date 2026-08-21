@@ -77,6 +77,4 @@ create policy graduation_survey_delete on graduation_survey_response
   as restrictive for delete
   using (current_app_role() = any (array['registrar','student_affairs','academic','director','admin']));
 
-grant select, insert, update, delete on graduation_survey_response to app_runtime;
-
 commit;
