@@ -747,10 +747,19 @@ async function main() {
 
     // ใช้รหัสของช่วงก่อนหน้าโดยตั้งใจ — ทดสอบว่ายอมรับนาฬิกาที่เดินช้าหนึ่งช่วง
     // และทำให้ AUTH-27 ใช้รหัสของช่วงปัจจุบันได้ (ต้องใหม่กว่าเสมอ)
-    const c = await api(base, (midway.body as any).challengeToken)('/auth/mfa/confirm', {
-      method: 'POST',
-      body: JSON.stringify({ code: totpCode(mfaSecret!, currentStep() - 1) }),
-    });
+    //
+    // คำนวณรหัสใหม่ลองอีกครั้งถ้าเจอ 401 — เผื่อช่วง 30 วินาทีขยับข้ามพอดี
+    // ระหว่างคำนวณรหัสฝั่งนี้กับตรวจฝั่งเซิร์ฟเวอร์ (WINDOW ของ verifyTotp
+    // ย้อนหลังได้แค่ช่วงเดียว ไม่มีระยะเผื่อไปข้างหน้าเลย — เจอจริงบน CI
+    // run 32501576301) รหัสที่คำนวณใหม่หลังพลาดครั้งแรกเลื่อนตามช่วงที่
+    // ขยับไปแล้วเสมอ จึงยังทิ้งช่วงปัจจุบัน (ใหม่) ว่างไว้ให้ AUTH-27 เหมือนเดิม
+    const confirmMfa = () =>
+      api(base, (midway.body as any).challengeToken)('/auth/mfa/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ code: totpCode(mfaSecret!, currentStep() - 1) }),
+      });
+    let c = await confirmMfa();
+    if (c.status === 401) c = await confirmMfa();
     expect(c.status === 201, `ได้ ${c.status}: ${JSON.stringify(c.body)}`);
     recoveryCodes = (c.body as any).recoveryCodes;
     expect(recoveryCodes?.length === 8, `ควรได้รหัสกู้คืน 8 ใบ ได้ ${recoveryCodes?.length}`);
