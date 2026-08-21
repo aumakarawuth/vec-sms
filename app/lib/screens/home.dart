@@ -280,8 +280,8 @@ class _OverviewCard extends StatelessWidget {
                     icon: Icons.notifications_none_rounded,
                     value: 'ประกาศ',
                     label: '2 รายการใหม่',
-                    bg: const Color(0xFFE8F2FF),
-                    color: const Color(0xFF5984E8))),
+                    bg: Color(0xFFE8F2FF),
+                    color: Color(0xFF5984E8))),
           ]),
         ]),
       );

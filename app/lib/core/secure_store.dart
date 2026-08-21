@@ -89,8 +89,9 @@ class DeviceIdentity {
   static String label() {
     if (kIsWeb) return 'เว็บเบราว์เซอร์';
     try {
-      if (Platform.isAndroid)
+      if (Platform.isAndroid) {
         return 'Android ${Platform.operatingSystemVersion}';
+      }
       if (Platform.isIOS) return 'iOS ${Platform.operatingSystemVersion}';
       return Platform.operatingSystem;
     } catch (_) {

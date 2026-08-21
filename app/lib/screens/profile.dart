@@ -29,11 +29,11 @@ class ProfileScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(22)),
             child: Row(children: [
               Stack(clipBehavior: Clip.none, children: [
-                CircleAvatar(
+                const CircleAvatar(
                     radius: 48,
                     backgroundColor: Colors.white,
                     backgroundImage:
-                        const AssetImage('assets/images/student-avatar.png')),
+                        AssetImage('assets/images/student-avatar.png')),
                 Positioned(
                     right: -2,
                     bottom: 2,
@@ -87,19 +87,19 @@ class ProfileScreen extends StatelessWidget {
         const Text('ข้อมูลส่วนตัว',
             style: TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 7),
-        _Group(children: [
-          const _Menu(Icons.person_outline, 'ข้อมูลส่วนตัว'),
-          const _Menu(Icons.home_outlined, 'ที่อยู่'),
-          const _Menu(Icons.people_outline, 'ข้อมูลผู้ปกครอง'),
-          const _Menu(Icons.phone_outlined, 'ติดต่อฉุกเฉิน')
+        const _Group(children: [
+          _Menu(Icons.person_outline, 'ข้อมูลส่วนตัว'),
+          _Menu(Icons.home_outlined, 'ที่อยู่'),
+          _Menu(Icons.people_outline, 'ข้อมูลผู้ปกครอง'),
+          _Menu(Icons.phone_outlined, 'ติดต่อฉุกเฉิน')
         ]),
         const SizedBox(height: 16),
         const Text('ความปลอดภัย',
             style: TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 7),
-        _Group(children: [
-          const _Menu(Icons.lock_outline, 'เปลี่ยนรหัสผ่าน'),
-          const _Menu(Icons.shield_outlined, 'ตั้งค่าความปลอดภัย')
+        const _Group(children: [
+          _Menu(Icons.lock_outline, 'เปลี่ยนรหัสผ่าน'),
+          _Menu(Icons.shield_outlined, 'ตั้งค่าความปลอดภัย')
         ]),
         if (showStudentTools) ...[
           const SizedBox(height: 16),
@@ -118,9 +118,9 @@ class ProfileScreen extends StatelessWidget {
         const SizedBox(height: 16),
         const Text('ช่วยเหลือ', style: TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 7),
-        _Group(children: [
-          const _Menu(Icons.help_outline, 'คำถามที่พบบ่อย'),
-          const _Menu(Icons.support_agent_outlined, 'ติดต่อเรา')
+        const _Group(children: [
+          _Menu(Icons.help_outline, 'คำถามที่พบบ่อย'),
+          _Menu(Icons.support_agent_outlined, 'ติดต่อเรา')
         ]),
       ]);
   static void _open(BuildContext context, Widget page) =>

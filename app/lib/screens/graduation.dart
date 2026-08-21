@@ -143,7 +143,7 @@ class _RealRule extends StatelessWidget {
         ? 'ผ่าน'
         : (rule.isCountdown
             ? 'ค้าง ${rule.achieved.toInt()}'
-            : '${rule.achieved.toStringAsFixed(rule.achieved % 1 == 0 ? 0 : 2)}');
+            : rule.achieved.toStringAsFixed(rule.achieved % 1 == 0 ? 0 : 2));
     return Column(children: [
       _RuleCard(
           icon: rule.satisfied
