@@ -23,7 +23,7 @@ const GROUPS=[
   item('class-schedule','ลงตารางสอนแต่ละชั้นเรียน','จัดรายวิชา ห้อง และเวลาให้แต่ละกลุ่ม','/timetable','ready'),
   item('remedial','เรียนเสริม/เรียนปรับเกรด','เปิดรอบแก้ผลและลงทะเบียนผู้มีสิทธิ์','/academic-year','ready'),
   item('retest','สอบซ่อม/ปรับเกรด','บันทึกผลการสอบซ่อมและปรับผลการเรียน','/academic-year','ready'),
-  item('exam-schedule','ตารางสอบ','หน้าต้นแบบจัดวัน เวลา ห้อง และกรรมการคุมสอบ',undefined,'planned'),
+  item('exam-schedule','ตารางสอบ','จัดวัน เวลา ห้อง และกรรมการคุมสอบ พร้อมตรวจการชนก่อนบันทึก','/exam-schedule','ready'),
  ]},
 ];
 const STATUS={ready:{label:'พร้อมใช้งาน',kind:'ok'},partial:{label:'ใช้งานได้บางส่วน',kind:'warn'},planned:{label:'หน้าต้นแบบ',kind:'info'}} as const;

@@ -19,6 +19,7 @@ import { ClubsScreen } from './screens/clubs';
 import { CurriculumScreen } from './screens/curriculum';
 import { DocumentsScreen } from './screens/documents';
 import { DualScreen } from './screens/dual';
+import { ExamScheduleScreen } from './screens/exam-schedule';
 import { FinanceScreen } from './screens/finance';
 import { GradebookScreen } from './screens/gradebook';
 import { GraduationScreen } from './screens/graduation';
@@ -55,6 +56,7 @@ const NAV_ICON: Record<string, string> = {
   '/students': '◉', '/registration': '✓', '/documents': '▤', '/graduation': '◇',
   '/admissions': '+', '/import': '↥', '/government-exports': '↗', '/finance': '฿',
   '/curriculum': '▦', '/timetable': '◷', '/academic-year': '◫', '/dual': '⌂',
+  '/exam-schedule': '▥',
   '/gradebook': '★', '/attendance': '✓', '/change-requests': '↺', '/risk': '!',
   '/behavior': '♢', '/letters': '✉', '/leaves': '◌', '/hr': '♙', '/jobs': '⚙',
 };
@@ -110,6 +112,7 @@ const NAV: NavGroup[] = [
       },
       { path: '/gradebook', label: 'สมุดคะแนน', roles: ['teacher', 'academic', 'director', 'admin'] },
       { path: '/attendance', label: 'เช็คชื่อรายคาบ', roles: ['teacher', 'registrar', 'academic', 'admin'] },
+      { path: '/exam-schedule', label: 'ตารางสอบ', roles: ['teacher', 'registrar', 'academic', 'director', 'admin'] },
       {
         path: '/change-requests',
         label: 'คำร้องขอแก้เกรด',
@@ -244,6 +247,7 @@ function Routes() {
   if (head === 'letters') return <LettersScreen />;
   if (head === 'behavior') return <BehaviorScreen />;
   if (head === 'dual') return <DualScreen />;
+  if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'statistics') return <StatisticsScreen />;
   if (head === 'clubs') return <ClubsScreen />;
   if (head === 'onet') return <OnetScreen />;

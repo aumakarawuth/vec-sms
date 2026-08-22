@@ -34,6 +34,7 @@ import { GovernmentExportsModule } from './modules/government-exports/government
 import { ReportsModule } from './modules/reports/reports.module';
 import { ClubsModule } from './modules/clubs/clubs.module';
 import { OnetModule } from './modules/onet/onet.module';
+import { ExamScheduleModule } from './modules/exam-schedule/exam-schedule.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { OnetModule } from './modules/onet/onet.module';
     ReportsModule,
     ClubsModule,
     OnetModule,
+    ExamScheduleModule,
     JobsModule,
   ],
   providers: [

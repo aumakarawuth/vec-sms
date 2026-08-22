@@ -61,6 +61,24 @@ const F = {
   // ห้องเป็นข้อมูลจริงตั้งแต่ 0034 ไม่ใช่ข้อความอิสระ
   room: '30000000-0000-0000-0000-0000000000e1',
   roomLecture: '30000000-0000-0000-0000-0000000000e2',
+  // ── ตารางสอบ — ชุดฟิกซ์เจอร์แยกทั้งหมด ไม่แตะ F.section/F.student เลย ──
+  //
+  // ครั้งแรกที่เขียนพลาดใช้ F.section/F.student ร่วมกับข้อมูลใหม่ แล้วทำให้
+  // API-07 (คาดว่า F.student ยังไม่เคยลง F.section มาก่อน) · API-09/API-12
+  // (คาดจำนวนคนในกลุ่มเรียน/รายวิชาที่เห็นเป็นตัวเลขตายตัว) ล้มทั้งชุด เพราะ
+  // ไฟล์นี้ทดสอบแบบมีสถานะร่วมกันตลอดทั้งไฟล์ ไม่ได้แยก transaction ต่อเทสต์
+  // เหมือนเทสต์ระดับฐานข้อมูล — ฟิกซ์เจอร์ใหม่จึงต้องเป็นวิชา/กลุ่มเรียน/
+  // นักศึกษาของตัวเองล้วน ๆ ไม่ยืมของที่เทสต์อื่นนับเลขไว้แล้ว
+  personTeacherExamA: '10000000-0000-0000-0000-0000000000f1',
+  staffExamA: '10000000-0000-0000-0000-0000000000f2',
+  personTeacherExamB: '10000000-0000-0000-0000-0000000000f3',
+  staffExamB: '10000000-0000-0000-0000-0000000000f4',
+  courseExamA: '99999999-0000-0000-0000-0000000000f1',
+  courseExamB: '99999999-0000-0000-0000-0000000000f2',
+  sectionExamA: '20000000-0000-0000-0000-0000000000f1',
+  sectionExamB: '20000000-0000-0000-0000-0000000000f2',
+  personExamStudent: '10000000-0000-0000-0000-0000000000f5',
+  studentExamOverlap: '10000000-0000-0000-0000-0000000000f6',
 };
 
 let passed = 0;
@@ -332,6 +350,58 @@ async function seedFixtures() {
     [F.personTeacher, INST],
   );
 
+  // ── ตารางสอบ — วิชา/ครู/กลุ่มเรียน/นักศึกษาของตัวเองล้วน ๆ (ดูเหตุผลที่ F object) ──
+  await admin.query(
+    `insert into person (id, institution_id, first_name_th, last_name_th) values
+       ($1, $3, 'ครู', 'สอบเอ'),
+       ($2, $3, 'ครู', 'สอบบี')
+     on conflict (id) do nothing`,
+    [F.personTeacherExamA, F.personTeacherExamB, INST],
+  );
+  await admin.query(
+    `insert into staff (id, institution_id, person_id, staff_code, is_teacher) values
+       ($1, $3, $4, 'T-EXAM-A', true),
+       ($2, $3, $5, 'T-EXAM-B', true)
+     on conflict (id) do nothing`,
+    [F.staffExamA, F.staffExamB, INST, F.personTeacherExamA, F.personTeacherExamB],
+  );
+  await admin.query(
+    `insert into course (id, institution_id, edition_be, code, name_th, credits, theory_hours, practice_hours) values
+       ($1, $3, 2567, 'EXAM-CRS-A', 'วิชาทดสอบตารางสอบ เอ', 2, 2, 0),
+       ($2, $3, 2567, 'EXAM-CRS-B', 'วิชาทดสอบตารางสอบ บี', 2, 2, 0)
+     on conflict (id) do nothing`,
+    [F.courseExamA, F.courseExamB, INST],
+  );
+  await admin.query(
+    `insert into class_section
+       (id, institution_id, term_id, course_id, section_no, teacher_id, attendance_policy_id, planned_periods) values
+       ($1, $5, $6, $3, 'EXAM-A', $7, $8, 2),
+       ($2, $5, $6, $4, 'EXAM-B', $9, $8, 2)
+     on conflict (id) do nothing`,
+    [F.sectionExamA, F.sectionExamB, F.courseExamA, F.courseExamB, INST, TERM1, F.staffExamA, POLICY, F.staffExamB],
+  );
+  await admin.query(
+    `insert into person (id, institution_id, first_name_th, last_name_th) values
+       ($1, $2, 'นักศึกษา', 'สอบซ้อนสองวิชา')
+     on conflict (id) do nothing`,
+    [F.personExamStudent, INST],
+  );
+  await admin.query(
+    `insert into student (id, institution_id, person_id, student_code, admitted_year_be) values
+       ($1, $2, $3, '69EXAMOVERLAP', 2569)
+     on conflict (id) do nothing`,
+    [F.studentExamOverlap, INST, F.personExamStudent],
+  );
+  // ลงทั้งสองกลุ่มโดยตั้งใจ — ใช้พิสูจน์ว่าตารางสอบของสองวิชานี้ชนกันไม่ได้
+  // (คนเดียวกันสอบสองวิชาพร้อมกันไม่ได้จริง)
+  await admin.query(
+    `insert into enrollment (student_id, class_section_id, term_id, registered_by) values
+       ($1, $2, $4, $5),
+       ($1, $3, $4, $5)
+     on conflict do nothing`,
+    [F.studentExamOverlap, F.sectionExamA, F.sectionExamB, TERM1, F.personTeacherExamA],
+  );
+
   await admin.query('commit');
 
   // สร้างคาบเรียนจากตารางสอน แล้วดึงคาบแรกมาใช้ทดสอบการเช็คชื่อ
@@ -399,9 +469,13 @@ async function main() {
   const tFinance = await token(app, base, F.personTeacher, 'finance');
   const tOtherInst = await token(app, base, F.personAdmin2, 'registrar', INST2);
   const tDirector = await token(app, base, F.personTeacher, 'director');
+  const tTeacherExamB = await token(app, base, F.personTeacherExamB, 'teacher');
+  const tExamStudent = await token(app, base, F.personExamStudent, 'student');
 
   const registrar = api(base, tRegistrar);
   const teacher = api(base, tTeacher);
+  const teacherExamB = api(base, tTeacherExamB);
+  const examStudent = api(base, tExamStudent);
   const student = api(base, tStudent);
   const finance = api(base, tFinance);
   const other = api(base, tOtherInst);
@@ -4184,6 +4258,104 @@ async function main() {
       }),
     });
     expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  console.log('');
+  console.log('══ ตารางสอบ (0075) ══');
+
+  let examA = '';
+  let examB = '';
+
+  await check('API-198 ครูเปิดตารางสอบเองไม่ได้', async () => {
+    const r = await teacher('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamA, kind: 'final', examDate: '2026-09-15',
+        periodFrom: 1, periodTo: 2, roomId: F.room,
+      }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-199 งานทะเบียนเปิดตารางสอบได้', async () => {
+    const r = await registrar('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamA, kind: 'final', examDate: '2026-09-15',
+        periodFrom: 1, periodTo: 2, roomId: F.room,
+      }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    examA = r.body.id;
+  });
+
+  await check('API-200 ห้องสอบชนกันถูกปฏิเสธพร้อมบอกเหตุผล', async () => {
+    const r = await registrar('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamB, kind: 'final', examDate: '2026-09-15',
+        periodFrom: 1, periodTo: 2, roomId: F.room,
+      }),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+    expect(Array.isArray(r.body.conflicts) && r.body.conflicts.some((m: string) => m.includes('ห้อง')),
+      `ควรมีข้อความเรื่องห้องชนกัน ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-201 คนละห้องแต่มีนักศึกษาลงทั้งสองวิชาก็ยังถูกปฏิเสธ', async () => {
+    const r = await registrar('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamB, kind: 'final', examDate: '2026-09-15',
+        periodFrom: 1, periodTo: 2, roomId: F.roomLecture,
+      }),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+    expect(Array.isArray(r.body.conflicts) && r.body.conflicts.some((m: string) => m.includes('ลงทะเบียน')),
+      `ควรมีข้อความเรื่องนักศึกษาลงทั้งสองวิชา ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-202 ช่วงเวลาที่ว่างจริงเปิดตารางสอบได้', async () => {
+    const r = await registrar('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamB, kind: 'final', examDate: '2026-09-15',
+        periodFrom: 6, periodTo: 7, roomId: F.roomLecture,
+      }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    examB = r.body.id;
+  });
+
+  await check('API-203 มอบหมายกรรมการคุมสอบได้', async () => {
+    const r = await registrar(`/exam-schedule/${examA}/proctors`, {
+      method: 'POST',
+      body: JSON.stringify({ staffId: F.staffExamB }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-204 ครูเห็นตารางสอบของวิชาที่ตัวเองสอนและที่ตัวเองต้องคุม', async () => {
+    const r = await teacherExamB(`/exam-schedule?termId=${TERM1}`);
+    expect(r.status === 200, `อ่านไม่ได้ ${r.status}`);
+    const ids = r.body.map((x: { id: string }) => x.id);
+    expect(ids.includes(examA), 'ครู B ควรเห็นสอบ A เพราะต้องไปคุม');
+    expect(ids.includes(examB), 'ครู B ควรเห็นสอบ B เพราะเป็นครูผู้สอน');
+    return `เห็น ${ids.length} รายการ`;
+  });
+
+  await check('API-205 นักศึกษาที่ลงทั้งสองวิชาเห็นตารางสอบทั้งสองวิชา', async () => {
+    const r = await examStudent(`/exam-schedule?termId=${TERM1}`);
+    expect(r.status === 200, `อ่านไม่ได้ ${r.status}`);
+    const ids = r.body.map((x: { id: string }) => x.id);
+    expect(ids.includes(examA) && ids.includes(examB), `ควรเห็นทั้งสองวิชา ได้ ${JSON.stringify(ids)}`);
+  });
+
+  await check('API-206 ลบตารางสอบได้ และลบซ้ำได้ 404', async () => {
+    const r = await registrar(`/exam-schedule/${examB}`, { method: 'DELETE' });
+    expect(r.status === 200, `ลบไม่ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    const again = await registrar(`/exam-schedule/${examB}`, { method: 'DELETE' });
+    expect(again.status === 404, `ลบซ้ำควรได้ 404 ได้ ${again.status}`);
   });
 
   await app.close();

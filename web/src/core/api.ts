@@ -33,12 +33,24 @@ export class ApiError extends Error {
   }
 }
 
-/** ข้อความผิดพลาดจาก Nest มาได้ทั้งสตริงเดี่ยวและอาร์เรย์ (ValidationPipe) */
+/**
+ * ข้อความผิดพลาดจาก Nest มาได้ทั้งสตริงเดี่ยวและอาร์เรย์ (ValidationPipe)
+ *
+ * ─── ทำไมต้องต่อ `conflicts` เข้าไปด้วย ───
+ * เส้นทางที่ตรวจการชนก่อนบันทึก (เช่น ย้ายคาบสอน, จัดตารางสอบ) ตอบกลับเป็น
+ * `{message: "...ชนกับรายการต่อไปนี้", conflicts: string[]}` — ถ้าอ่านแค่
+ * `message` ผู้ใช้จะเห็นแค่ "ชนกัน" โดยไม่รู้ว่าชนกับอะไร ทั้งที่ API ส่ง
+ * รายละเอียดมาให้ครบแล้ว (เจอตอนกดปุ่มจริงในหน้าจัดตารางสอบ ไม่ใช่ตอนอ่านโค้ด)
+ */
 function readMessage(body: unknown, status: number): string {
   if (typeof body === 'object' && body !== null && 'message' in body) {
     const m = (body as { message: unknown }).message;
-    if (typeof m === 'string') return m;
-    if (Array.isArray(m)) return m.join(' · ');
+    const conflicts = (body as { conflicts?: unknown }).conflicts;
+    const detail = Array.isArray(conflicts) && conflicts.every((c) => typeof c === 'string')
+      ? ' — ' + conflicts.join(' · ')
+      : '';
+    if (typeof m === 'string') return m + detail;
+    if (Array.isArray(m)) return m.join(' · ') + detail;
   }
   if (status === 401) return 'เซสชันหมดอายุหรือไม่มีสิทธิ์ — เข้าสู่ระบบใหม่';
   if (status === 403) return 'บทบาทของคุณไม่มีสิทธิ์ทำรายการนี้';
