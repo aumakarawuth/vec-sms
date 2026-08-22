@@ -4358,6 +4358,148 @@ async function main() {
     expect(again.status === 404, `ลบซ้ำควรได้ 404 ได้ ${again.status}`);
   });
 
+  await check('API-207 ครูแก้กำหนดสอบเองไม่ได้', async () => {
+    const r = await teacher(`/exam-schedule/${examA}`, {
+      method: 'POST',
+      body: JSON.stringify({ periodFrom: 3, periodTo: 4 }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-208 งานทะเบียนเลื่อนกำหนดสอบได้ โดยไม่ต้องส่งทุกช่อง', async () => {
+    const r = await registrar(`/exam-schedule/${examA}`, {
+      method: 'POST',
+      body: JSON.stringify({ examDate: '2026-09-16' }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(String(r.body.exam_date).startsWith('2026-09-16'), `วันที่ควรเปลี่ยน ได้ ${JSON.stringify(r.body)}`);
+    expect(Number(r.body.period_from) === 1 && Number(r.body.period_to) === 2,
+      `ไม่ได้ส่งคาบมา คาบไม่ควรเปลี่ยน ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-209 เลื่อนกำหนดสอบไปชนห้องที่มีสอบอื่นอยู่แล้วถูกปฏิเสธ', async () => {
+    const other = await registrar('/exam-schedule', {
+      method: 'POST',
+      body: JSON.stringify({
+        classSectionId: F.sectionExamB, kind: 'midterm', examDate: '2026-09-20',
+        periodFrom: 5, periodTo: 6, roomId: F.roomLecture,
+      }),
+    });
+    expect(other.status === 201, `เตรียมข้อมูลไม่สำเร็จ: ${JSON.stringify(other.body)}`);
+
+    const r = await registrar(`/exam-schedule/${examA}`, {
+      method: 'POST',
+      body: JSON.stringify({ examDate: '2026-09-20', periodFrom: 5, periodTo: 6, roomId: F.roomLecture }),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+    expect(Array.isArray(r.body.conflicts) && r.body.conflicts.some((m: string) => m.includes('ห้อง')),
+      `ควรมีข้อความเรื่องห้องชนกัน ได้ ${JSON.stringify(r.body)}`);
+
+    // ปฏิเสธแล้วต้องไม่แก้อะไรเลย — กำหนดเดิมจาก API-208 ต้องยังอยู่
+    const list = await registrar(`/exam-schedule?termId=${TERM1}`);
+    const still = list.body.find((x: { id: string }) => x.id === examA);
+    expect(String(still.exam_date).startsWith('2026-09-16'), 'ถูกปฏิเสธแล้วกำหนดเดิมต้องไม่เปลี่ยน');
+  });
+
+  await check('API-210 ถอดห้องสอบออกได้ด้วยการส่ง roomId เป็น null ตรง ๆ', async () => {
+    const r = await registrar(`/exam-schedule/${examA}`, {
+      method: 'POST',
+      body: JSON.stringify({ examDate: '2026-09-15', periodFrom: 1, periodTo: 2, roomId: null }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.room_id === null, `ส่ง roomId เป็น null ต้องถอดห้องออกได้จริง ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  console.log('');
+  console.log('══ ข้อจำกัดเวลาสอนของครู (0046) ══');
+
+  let availabilityId = '';
+
+  await check('API-211 งานทะเบียนเพิ่มข้อจำกัดเวลาสอนของครูได้', async () => {
+    const r = await registrar('/timetable/availability', {
+      method: 'POST',
+      body: JSON.stringify({
+        staffId: F.staffExamA, dayOfWeek: 2, periodFrom: 1, periodTo: 2,
+        kind: 'unavailable', reason: 'สอนที่วิทยาเขตอื่น',
+      }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.kind === 'unavailable', `ค่าที่ส่งไปควรถูกบันทึกตรงตัว ได้ ${JSON.stringify(r.body)}`);
+    availabilityId = r.body.id;
+  });
+
+  await check('API-212 ครูกรอกข้อจำกัดเวลาสอนของตัวเองไม่ได้', async () => {
+    // ตั้งใจกั้นไว้ที่งานทะเบียน/วิชาการ — ถ้าครูกรอกเองได้ ตารางสอนจะกลาย
+    // เป็นเรื่องต่อรองกันเอง และคนที่กรอกก่อนได้คาบที่ดีที่สุดเสมอ
+    const r = await teacher('/timetable/availability', {
+      method: 'POST',
+      body: JSON.stringify({
+        staffId: F.staffExamA, dayOfWeek: 3, periodFrom: 1, periodTo: 2, kind: 'unavailable',
+      }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-213 อ่านข้อจำกัดของครูคนหนึ่งได้ครบ', async () => {
+    const r = await registrar(`/timetable/availability?staffId=${F.staffExamA}`);
+    expect(r.status === 200, `ได้ ${r.status}`);
+    expect(r.body.some((a: any) => a.id === availabilityId), 'ต้องเห็นรายการที่เพิ่งเพิ่ม');
+  });
+
+  await check('API-214 ลบข้อจำกัดได้ และลบซ้ำถูกปฏิเสธ', async () => {
+    const r = await registrar(`/timetable/availability/${availabilityId}/remove`, { method: 'POST' });
+    expect(r.status === 201, `ลบไม่ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    const again = await registrar(`/timetable/availability/${availabilityId}/remove`, { method: 'POST' });
+    expect(again.status === 403, `ลบซ้ำควรถูกปฏิเสธ ได้ ${again.status}`);
+  });
+
+  console.log('');
+  console.log('══ คัดลอกค่าเทอมข้ามปีการศึกษา (0031) ══');
+
+  await check('API-215 คัดลอกค่าเทอมไปปีที่ยังไม่มีอยู่ถูกปฏิเสธ', async () => {
+    const r = await registrar('/rollover/fee-schedules', {
+      method: 'POST',
+      body: JSON.stringify({ fromYearBe: 2569, toYearBe: 2599 }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+    expect(/ไม่พบปีการศึกษา/.test(JSON.stringify(r.body)),
+      `ต้องบอกว่าไม่พบปีการศึกษาต้นทางหรือปลายทาง ไม่ใช่ error ดิบ ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-216 ครูคัดลอกค่าเทอมของทั้งวิทยาลัยไม่ได้', async () => {
+    const r = await teacher('/rollover/fee-schedules', {
+      method: 'POST',
+      body: JSON.stringify({ fromYearBe: 2569, toYearBe: 2570 }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-217 งานทะเบียนคัดลอกค่าเทอมไปปีใหม่ได้ แบบยังไม่เปิดใช้ และกดซ้ำได้โดยไม่ซ้อน', async () => {
+    const newYear = await registrar('/academic/years', {
+      method: 'POST',
+      body: JSON.stringify({ yearBe: 2570, startsOn: '2570-05-01', endsOn: '2571-03-31' }),
+    });
+    expect(newYear.status === 201, `เตรียมปีการศึกษาใหม่ไม่สำเร็จ: ${JSON.stringify(newYear.body)}`);
+
+    const r = await registrar('/rollover/fee-schedules', {
+      method: 'POST',
+      body: JSON.stringify({ fromYearBe: 2569, toYearBe: 2570 }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(typeof r.body.linesCopied === 'number', `ต้องคืนจำนวนรายการที่คัดลอก ได้ ${JSON.stringify(r.body)}`);
+    expect(r.body.active === false,
+      'ต้องเริ่มเป็นยังไม่เปิดใช้เสมอ — งานการเงินต้องตรวจตัวเลขก่อนเปิดเอง');
+
+    // กดซ้ำต้องไม่คัดลอกซ้อน เหมือนสมุดคะแนน (API-58) — มิฉะนั้นค่าเทอมจะซ้อนกันทุกครั้งที่กด
+    const again = await registrar('/rollover/fee-schedules', {
+      method: 'POST',
+      body: JSON.stringify({ fromYearBe: 2569, toYearBe: 2570 }),
+    });
+    expect(again.status === 201 && again.body.linesCopied === 0,
+      `กดซ้ำต้องไม่คัดลอกเพิ่ม ได้ ${JSON.stringify(again.body)}`);
+    return `คัดลอก ${r.body.linesCopied} รายการ · กดซ้ำได้ 0`;
+  });
+
   await app.close();
 
   console.log('');

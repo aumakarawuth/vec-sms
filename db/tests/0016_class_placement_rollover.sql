@@ -168,15 +168,24 @@ end $$;
 
 -- ── TEST 147 ───────────────────────────────────────────────────────
 -- คัดลอกรายการชำระเงินตามชั้นปี และต้องยังไม่เปิดใช้
+--
+-- ต้องสวมบทบาท app_runtime/registrar จริงด้วย `set local role` — แค่ตั้ง
+-- app.institution_id/app.actor_id เฉย ๆ (แบบเดิม) รันด้วยสิทธิ์ superuser
+-- ที่ข้าม RLS ทั้งหมด เทสต์จึงผ่านมาตลอดโดยไม่เคยเจอว่า insert สองคำสั่ง
+-- ที่ chain กันด้วย WITH ชนนโยบาย tenant_isolation ของ fee_schedule_line
+-- จริง (เจอตอนต่อหน้าจอเข้ากับปุ่มจริงครั้งแรก — ปิดใน 0077)
+begin;
+set local role app_runtime;
+set local app.institution_id = '11111111-1111-1111-1111-111111111111';
+set local app.actor_id = 'aaaa0000-0000-0000-0000-000000000001';
+set local app.role = 'registrar';
+
 do $$
 declare
   v_lines  integer;
   v_active integer;
   v_again  integer;
 begin
-  perform set_config('app.institution_id', '11111111-1111-1111-1111-111111111111', true);
-  perform set_config('app.actor_id', 'aaaa0000-0000-0000-0000-000000000001', true);
-
   v_lines := rollover_fee_schedules(2569::smallint, 2570::smallint);
 
   select count(*) into v_active
@@ -187,14 +196,19 @@ begin
     raise exception 'TEST 147 ล้มเหลว: ค่าเทอมปีใหม่เปิดใช้ทันทีโดยที่งานการเงินยังไม่ได้ตรวจตัวเลข';
   end if;
 
+  if v_lines = 0 then
+    raise exception 'TEST 147 ล้มเหลว: ไม่คัดลอกอะไรเลย — เทสต์นี้ผ่านได้โดยไม่ได้พิสูจน์อะไรจริง';
+  end if;
+
   -- กดซ้ำต้องไม่คัดลอกซ้อน มิฉะนั้นค่าเทอมจะกลายเป็นสองเท่า
   v_again := rollover_fee_schedules(2569::smallint, 2570::smallint);
   if v_again <> 0 then
     raise exception 'TEST 147 ล้มเหลว: กดซ้ำแล้วคัดลอกเพิ่มอีก % บรรทัด ค่าเทอมจะซ้อนกัน', v_again;
   end if;
 
-  raise notice 'TEST 147 ผ่าน — คัดลอก % บรรทัด ยังไม่เปิดใช้ และกดซ้ำไม่ซ้อน', v_lines;
+  raise notice 'TEST 147 ผ่าน — คัดลอก % บรรทัด ยังไม่เปิดใช้ และกดซ้ำไม่ซ้อน (รันผ่าน app_runtime/registrar จริง)', v_lines;
 end $$;
+commit;
 
 -- ── TEST 148 ───────────────────────────────────────────────────────
 -- วิทยาลัยอื่นต้องไม่เห็นชั้นปีของเรา

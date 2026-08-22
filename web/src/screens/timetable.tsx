@@ -72,6 +72,154 @@ interface StaffRow {
   full_name: string;
 }
 
+interface Availability {
+  id: string;
+  day_of_week: number;
+  period_from: number;
+  period_to: number;
+  kind: string;
+  reason: string | null;
+  term_id: string | null;
+  term_ordinal: number | null;
+}
+
+const AVAILABILITY_KIND: Record<string, string> = { unavailable: 'ห้ามวาง (ติดจริง)', prefer_not: 'ขอเลี่ยง (ถ้าได้)' };
+
+/**
+ * ข้อจำกัดเวลาสอนของครู
+ *
+ * ตัวจัดตารางอัตโนมัติอ่านตารางนี้อยู่แล้ว (badge "เลี่ยงคำขอครู" ในผลแนะนำ
+ * คาบด้านล่าง) แต่ไม่เคยมีที่ให้กรอกเข้ามาเลย — กั้นไว้ที่งานทะเบียน/วิชาการ
+ * โดยตั้งใจ ไม่ให้ครูกรอกเอง มิฉะนั้นตารางสอนจะกลายเป็นเรื่องต่อรองกันเอง
+ * และคนที่กรอกก่อนได้คาบที่ดีที่สุดเสมอ (ดูคอมเมนต์ที่ API)
+ */
+function TeacherAvailabilityCard({ staff, termId }: { staff: StaffRow[]; termId: string }) {
+  const [staffId, setStaffId] = useState('');
+  const avail = useAsync(
+    () => (staffId ? api.get<Availability[]>(`/timetable/availability?staffId=${staffId}`) : Promise.resolve([])),
+    [staffId],
+  );
+  const [dayOfWeek, setDayOfWeek] = useState('1');
+  const [periodFrom, setPeriodFrom] = useState('1');
+  const [periodTo, setPeriodTo] = useState('2');
+  const [kind, setKind] = useState('unavailable');
+  const [reason, setReason] = useState('');
+  const [limitToTerm, setLimitToTerm] = useState(false);
+
+  return (
+    <Card title="ข้อจำกัดเวลาสอนของครู">
+      <label className="field" style={{ maxWidth: 320 }}>
+        <span>ผู้สอน</span>
+        <select value={staffId} onChange={(e) => setStaffId(e.target.value)}>
+          <option value="">— เลือกผู้สอน —</option>
+          {staff.map((s) => (
+            <option key={s.id} value={s.id}>{s.full_name} ({s.staff_code})</option>
+          ))}
+        </select>
+      </label>
+
+      {staffId && (
+        <>
+          <div className="row" style={{ marginTop: 10 }}>
+            <Field label="วัน">
+              <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)} style={{ maxWidth: 130 }}>
+                {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                  <option key={d} value={d}>{DAY[d]}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="คาบเริ่ม">
+              <input type="number" min={1} max={20} value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={{ maxWidth: 80 }} />
+            </Field>
+            <Field label="คาบสิ้นสุด">
+              <input type="number" min={1} max={20} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={{ maxWidth: 80 }} />
+            </Field>
+            <Field label="ประเภท">
+              <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ maxWidth: 150 }}>
+                <option value="unavailable">ห้ามวาง (ติดจริง)</option>
+                <option value="prefer_not">ขอเลี่ยง (ถ้าได้)</option>
+              </select>
+            </Field>
+            <label className="field" style={{ flex: 2 }}>
+              <span>เหตุผล (ถ้ามี)</span>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="เช่น สอนที่วิทยาเขตอื่น" />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 22, whiteSpace: 'nowrap' }}>
+              <input
+                type="checkbox" checked={limitToTerm}
+                onChange={(e) => setLimitToTerm(e.target.checked)}
+                disabled={!termId}
+              />
+              เฉพาะภาคเรียนที่เลือกอยู่
+            </label>
+            <div className="shrink">
+              <ActionButton
+                className="primary"
+                onRun={() =>
+                  api.post('/timetable/availability', {
+                    staffId,
+                    dayOfWeek: Number(dayOfWeek),
+                    periodFrom: Number(periodFrom),
+                    periodTo: Number(periodTo),
+                    kind,
+                    ...(reason.trim() ? { reason: reason.trim() } : {}),
+                    ...(limitToTerm && termId ? { termId } : {}),
+                  })
+                }
+                onDone={() => { setReason(''); avail.reload(); }}
+              >
+                เพิ่มข้อจำกัด
+              </ActionButton>
+            </div>
+          </div>
+
+          <AsyncView state={avail} empty="ครูคนนี้ยังไม่มีข้อจำกัดเวลาสอน">
+            {(rows) => (
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 110 }}>วัน</th>
+                    <th style={{ width: 100 }}>คาบ</th>
+                    <th style={{ width: 130 }}>ประเภท</th>
+                    <th>เหตุผล</th>
+                    <th style={{ width: 150 }}>ขอบเขต</th>
+                    <th style={{ width: 70 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((a) => (
+                    <tr key={a.id}>
+                      <td>{DAY[a.day_of_week]}</td>
+                      <td>{a.period_from}–{a.period_to}</td>
+                      <td>
+                        <Badge kind={a.kind === 'unavailable' ? 'danger' : 'warn'}>
+                          {AVAILABILITY_KIND[a.kind] ?? a.kind}
+                        </Badge>
+                      </td>
+                      <td style={{ whiteSpace: 'normal' }}>{a.reason ?? '—'}</td>
+                      <td>{a.term_ordinal ? `เฉพาะภาคเรียนที่ ${a.term_ordinal}` : 'ทุกภาคเรียน'}</td>
+                      <td>
+                        <ActionButton
+                          className="ghost"
+                          confirm="ลบข้อจำกัดนี้ ยืนยันหรือไม่"
+                          onRun={() => api.post(`/timetable/availability/${a.id}/remove`)}
+                          onDone={() => avail.reload()}
+                        >
+                          ลบ
+                        </ActionButton>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </AsyncView>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function TransferRow({ slot, rooms, onDone }: { slot: Timeslot; rooms: Room[]; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [dayOfWeek, setDayOfWeek] = useState(String(slot.day_of_week));
@@ -291,6 +439,8 @@ export function TimetableScreen() {
           </div>
         }
       />
+
+      <TeacherAvailabilityCard staff={staff.data?.items ?? []} termId={termId} />
 
       <Card title="จัดตารางอัตโนมัติทั้งภาคเรียน">
         <div className="row">

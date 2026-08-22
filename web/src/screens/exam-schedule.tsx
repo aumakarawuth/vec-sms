@@ -52,6 +52,15 @@ interface ExamSession {
   proctors: Proctor[];
 }
 
+/** ฟิลด์แก้ไขได้ของ POST /exam-schedule/:id — roomId: null ถอดห้องออกได้จริง ต่างจากไม่ส่งมาเลย */
+interface UpdateExamPayload {
+  examDate: string;
+  periodFrom: number;
+  periodTo: number;
+  roomId: string | null;
+  note?: string;
+}
+
 const KIND_LABEL: Record<string, string> = { midterm: 'กลางภาค', final: 'ปลายภาค' };
 
 function CreateExamForm({
@@ -63,6 +72,7 @@ function CreateExamForm({
   const [periodFrom, setPeriodFrom] = useState('1');
   const [periodTo, setPeriodTo] = useState('2');
   const [roomId, setRoomId] = useState('');
+  const [note, setNote] = useState('');
 
   return (
     <Card title="จัดตารางสอบ">
@@ -102,6 +112,10 @@ function CreateExamForm({
             ))}
           </select>
         </label>
+        <label className="field" style={{ flex: 2 }}>
+          <span>หมายเหตุ (ถ้ามี)</span>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น นำบัตรนักศึกษามาด้วย" />
+        </label>
         <div className="shrink">
           <ActionButton
             className="primary"
@@ -112,9 +126,10 @@ function CreateExamForm({
                 classSectionId, kind, examDate,
                 periodFrom: Number(periodFrom), periodTo: Number(periodTo),
                 ...(roomId ? { roomId } : {}),
+                ...(note.trim() ? { note: note.trim() } : {}),
               });
             }}
-            onDone={() => { setClassSectionId(''); setExamDate(''); onDone(); }}
+            onDone={() => { setClassSectionId(''); setExamDate(''); setNote(''); onDone(); }}
           >
             จัดตารางสอบ
           </ActionButton>
@@ -166,6 +181,114 @@ function ProctorList({
   );
 }
 
+function ExamEditRow({
+  session, rooms, onDone, onCancel,
+}: { session: ExamSession; rooms: Room[]; onDone: () => void; onCancel: () => void }) {
+  const [examDate, setExamDate] = useState(session.exam_date.slice(0, 10));
+  const [periodFrom, setPeriodFrom] = useState(String(session.period_from));
+  const [periodTo, setPeriodTo] = useState(String(session.period_to));
+  const [roomId, setRoomId] = useState(session.room_id ?? '');
+  const [note, setNote] = useState(session.note ?? '');
+
+  return (
+    <tr>
+      <td colSpan={7}>
+        <div className="row">
+          <Field label="วันที่สอบ">
+            <input type="date" value={examDate} onChange={(e) => setExamDate(e.target.value)} />
+          </Field>
+          <Field label="คาบเริ่ม">
+            <input type="number" min={1} max={20} value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={{ maxWidth: 80 }} />
+          </Field>
+          <Field label="คาบสิ้นสุด">
+            <input type="number" min={1} max={20} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={{ maxWidth: 80 }} />
+          </Field>
+          <label className="field">
+            <span>ห้องสอบ</span>
+            <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+              <option value="">— ไม่ระบุห้อง —</option>
+              {rooms.map((r) => (
+                <option key={r.id} value={r.id}>{r.code} {r.name_th}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field" style={{ flex: 2 }}>
+            <span>หมายเหตุ</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+          <div className="shrink">
+            <ActionButton
+              className="primary"
+              onRun={() => {
+                if (!examDate) throw new Error('เลือกวันที่สอบ');
+                const payload: UpdateExamPayload = {
+                  examDate,
+                  periodFrom: Number(periodFrom),
+                  periodTo: Number(periodTo),
+                  // ส่ง null ตรง ๆ เมื่อเลือก "ไม่ระบุห้อง" — ต่างจากไม่ส่งฟิลด์นี้เลย
+                  // ซึ่งฝั่ง API ตีความว่า "ไม่แตะห้องเดิม" (ดูคอมเมนต์ที่ service)
+                  roomId: roomId || null,
+                  ...(note.trim() ? { note: note.trim() } : {}),
+                };
+                return api.post(`/exam-schedule/${session.id}`, payload);
+              }}
+              onDone={onDone}
+            >
+              บันทึกการแก้ไข
+            </ActionButton>
+          </div>
+          <div className="shrink">
+            <button className="ghost" onClick={onCancel}>ยกเลิกการแก้ไข</button>
+          </div>
+        </div>
+        <div className="hint">ตรวจการชนห้อง/กรรมการคุมสอบ/นักศึกษาใหม่ทั้งหมดก่อนบันทึกเสมอ</div>
+      </td>
+    </tr>
+  );
+}
+
+function ExamRow({
+  session, rooms, staff, onDone,
+}: { session: ExamSession; rooms: Room[]; staff: StaffRow[]; onDone: () => void }) {
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return (
+      <ExamEditRow
+        session={session}
+        rooms={rooms}
+        onCancel={() => setEditing(false)}
+        onDone={() => { setEditing(false); onDone(); }}
+      />
+    );
+  }
+
+  return (
+    <tr>
+      <td>{thaiDate(session.exam_date)}</td>
+      <td>{session.period_from}–{session.period_to}</td>
+      <td><Badge kind="default">{KIND_LABEL[session.kind] ?? session.kind}</Badge></td>
+      <td className="mono">
+        {session.course_code} <span className="hint">กลุ่ม {session.section_no}</span>
+        {session.note && <div className="hint">{session.note}</div>}
+      </td>
+      <td>{session.room_code ? `${session.room_code} ${session.room_name}` : <span className="hint">— ไม่ระบุห้อง —</span>}</td>
+      <td><ProctorList session={session} staff={staff} onDone={onDone} /></td>
+      <td>
+        <button className="ghost" onClick={() => setEditing(true)}>แก้ไข</button>{' '}
+        <ActionButton
+          className="ghost"
+          confirm={`ยกเลิกตารางสอบวิชา ${session.course_code} วันที่ ${thaiDate(session.exam_date)} ยืนยันหรือไม่`}
+          onRun={() => api.del(`/exam-schedule/${session.id}`)}
+          onDone={onDone}
+        >
+          ยกเลิก
+        </ActionButton>
+      </td>
+    </tr>
+  );
+}
+
 export function ExamScheduleScreen() {
   const { terms, termId, term, setTerm } = useTermPicker();
   const sections = useAsync(() => (termId ? fetchSections(termId) : Promise.resolve([])), [termId]);
@@ -212,24 +335,13 @@ export function ExamScheduleScreen() {
                 </thead>
                 <tbody>
                   {rows.map((x) => (
-                    <tr key={x.id}>
-                      <td>{thaiDate(x.exam_date)}</td>
-                      <td>{x.period_from}–{x.period_to}</td>
-                      <td><Badge kind="default">{KIND_LABEL[x.kind] ?? x.kind}</Badge></td>
-                      <td className="mono">{x.course_code} <span className="hint">กลุ่ม {x.section_no}</span></td>
-                      <td>{x.room_code ? `${x.room_code} ${x.room_name}` : <span className="hint">— ไม่ระบุห้อง —</span>}</td>
-                      <td><ProctorList session={x} staff={staff.data?.items ?? []} onDone={() => exams.reload()} /></td>
-                      <td>
-                        <ActionButton
-                          className="ghost"
-                          confirm={`ยกเลิกตารางสอบวิชา ${x.course_code} วันที่ ${thaiDate(x.exam_date)} ยืนยันหรือไม่`}
-                          onRun={() => api.del(`/exam-schedule/${x.id}`)}
-                          onDone={() => exams.reload()}
-                        >
-                          ยกเลิก
-                        </ActionButton>
-                      </td>
-                    </tr>
+                    <ExamRow
+                      key={x.id}
+                      session={x}
+                      rooms={rooms.data ?? []}
+                      staff={staff.data?.items ?? []}
+                      onDone={() => exams.reload()}
+                    />
                   ))}
                 </tbody>
               </table>

@@ -42,7 +42,8 @@ class UpdateExamSessionDto {
   @IsOptional() @IsISO8601() examDate?: string;
   @IsOptional() @IsInt() @Min(1) @Max(20) periodFrom?: number;
   @IsOptional() @IsInt() @Min(1) @Max(20) periodTo?: number;
-  @IsOptional() @IsUuid() roomId?: string;
+  /** null = ถอดห้องออก · undefined = ไม่แตะห้องเดิม (ดูคอมเมนต์ใน update()) */
+  @IsOptional() @IsUuid() roomId?: string | null;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
@@ -152,7 +153,13 @@ export class ExamScheduleService {
       [id],
     );
 
-    if (dto.examDate || dto.periodFrom || dto.periodTo || dto.roomId !== undefined) {
+    // ต้องแยก "ไม่ได้ส่ง roomId มา" (undefined — ไม่แตะห้องเดิม) ออกจาก
+    // "ส่ง roomId เป็น null ตั้งใจ" (ถอดห้องออก) เพราะ coalesce($5, room_id)
+    // เพียงอย่างเดียวมองทั้งสองกรณีเป็น null เหมือนกัน แก้กำหนดสอบที่เคยมีห้อง
+    // ให้กลายเป็น "ยังไม่ระบุห้อง" จึงทำไม่ได้เลยจนกว่าจะแยกด้วย $7 นี้
+    const roomProvided = dto.roomId !== undefined;
+
+    if (dto.examDate || dto.periodFrom || dto.periodTo || roomProvided) {
       const conflicts = await this.conflicts(
         current.class_section_id, examDate, periodFrom, periodTo,
         dto.roomId ?? null, proctors.map((p) => p.staff_id), id,
@@ -165,12 +172,15 @@ export class ExamScheduleService {
          exam_date   = coalesce($2::date, exam_date),
          period_from = coalesce($3::smallint, period_from),
          period_to   = coalesce($4::smallint, period_to),
-         room_id     = coalesce($5, room_id),
+         room_id     = case when $7 then $5 else room_id end,
          note        = coalesce($6, note),
          updated_at  = now()
        where id = $1
        returning id, exam_date, period_from, period_to, room_id`,
-      [id, dto.examDate ?? null, dto.periodFrom ?? null, dto.periodTo ?? null, dto.roomId ?? null, dto.note?.trim() ?? null],
+      [
+        id, dto.examDate ?? null, dto.periodFrom ?? null, dto.periodTo ?? null,
+        dto.roomId ?? null, dto.note?.trim() ?? null, roomProvided,
+      ],
     );
     if (!row) throw new NotFoundException('ไม่พบตารางสอบนี้ หรือไม่มีสิทธิ์แก้ไข');
     return row;

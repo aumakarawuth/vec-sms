@@ -13,7 +13,7 @@
  */
 import { useState } from 'react';
 import { api, qs } from '../core/api';
-import type { Term } from '../core/catalog';
+import { termLabel, type Term } from '../core/catalog';
 import { TERM_STATUS, thaiDate, thaiDateTime } from '../core/fmt';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { useTermPicker } from '../ui/term-picker';
@@ -764,6 +764,77 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
   );
 }
 
+interface GradebookCopyResult {
+  sections: number;
+  copied: number;
+  itemsCopied: number;
+  needsAttention: { section: string; note: string | null }[];
+}
+
+/**
+ * คัดลอกโครงสร้างสมุดคะแนนข้ามภาคเรียน
+ *
+ * ก่อนหน้านี้ `POST /rollover/gradebooks` มีแล้วและมีเทสต์ (API-58) แต่ไม่มี
+ * ปุ่มให้กดเลย — ครูต้องสร้างรายการคะแนนใหม่มือทุกภาคเรียน กดซ้ำได้เสมอ
+ * เพราะฝั่ง API ข้ามห้องที่คัดลอกไปแล้วโดยไม่คัดลอกซ้อน (มิฉะนั้นน้ำหนัก
+ * คะแนนรวมจะเกินร้อย)
+ */
+function CopyGradebooksCard({ terms }: { terms: Term[] }) {
+  const [fromTermId, setFromTermId] = useState('');
+  const [toTermId, setToTermId] = useState('');
+  const [result, setResult] = useState<GradebookCopyResult | null>(null);
+
+  return (
+    <Card title="คัดลอกโครงสร้างสมุดคะแนนข้ามภาคเรียน">
+      <div className="row">
+        <label className="field">
+          <span>จากภาคเรียน</span>
+          <select value={fromTermId} onChange={(e) => setFromTermId(e.target.value)}>
+            <option value="">— เลือกภาคเรียนต้นทาง —</option>
+            {terms.map((t) => (
+              <option key={t.id} value={t.id}>{termLabel(t)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>ไปภาคเรียน</span>
+          <select value={toTermId} onChange={(e) => setToTermId(e.target.value)}>
+            <option value="">— เลือกภาคเรียนปลายทาง —</option>
+            {terms.map((t) => (
+              <option key={t.id} value={t.id}>{termLabel(t)}</option>
+            ))}
+          </select>
+        </label>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!fromTermId || !toTermId) throw new Error('เลือกภาคเรียนทั้งสองฝั่งก่อน');
+              if (fromTermId === toTermId) throw new Error('ต้นทางกับปลายทางต้องเป็นคนละภาคเรียน');
+              return api.post<GradebookCopyResult>('/rollover/gradebooks', { fromTermId, toTermId });
+            }}
+            onDone={(r) => setResult(r as GradebookCopyResult)}
+          >
+            คัดลอกโครงสร้างสมุดคะแนน
+          </ActionButton>
+        </div>
+      </div>
+      <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+        คัดลอกเฉพาะกลุ่มเรียนที่จับคู่รายวิชาเดียวกันได้ระหว่างสองภาคเรียน — กดซ้ำได้เสมอ ไม่คัดลอกซ้อนให้น้ำหนักคะแนนเกินร้อย
+      </div>
+
+      {result && (
+        <Notice kind={result.needsAttention.length === 0 ? 'ok' : 'warn'}>
+          จับคู่ห้องได้ {result.sections} ห้อง · คัดลอกแล้ว {result.copied} ห้อง ({result.itemsCopied} รายการ)
+          {result.needsAttention.length > 0 && (
+            <> — ต้องไปตั้งเอง {result.needsAttention.length} ห้อง: {result.needsAttention.map((x) => `${x.section}${x.note ? ` (${x.note})` : ''}`).join(', ')}</>
+          )}
+        </Notice>
+      )}
+    </Card>
+  );
+}
+
 export function AcademicYearScreen() {
   const { terms } = useTermPicker();
   const rollovers = useAsync(() => api.get<RolloverLog[]>('/rollover'), []);
@@ -778,6 +849,7 @@ export function AcademicYearScreen() {
   const [toYear, setToYear] = useState('2570');
   const [ayId, setAyId] = useState('');
   const [rolloverResult, setRolloverResult] = useState<unknown>(null);
+  const [feeScheduleResult, setFeeScheduleResult] = useState<{ linesCopied: number; note: string } | null>(null);
   const [sessionId, setSessionId] = useState('');
 
   const years = [...new Set((terms.data ?? []).map((t) => t.academic_year_id))];
@@ -844,6 +916,8 @@ export function AcademicYearScreen() {
         rooms={rooms.data ?? []}
         onDone={() => {}}
       />
+
+      <CopyGradebooksCard terms={terms.data ?? []} />
 
       <Card title="เลื่อนชั้นปีการศึกษา">
         <div className="row">
@@ -915,6 +989,33 @@ export function AcademicYearScreen() {
           )}
         </AsyncView>
       </TableCard>
+
+      <Card title="คัดลอกค่าเทอมข้ามปีการศึกษา">
+        <div className="row">
+          <div style={{ color: 'var(--ink-soft)', fontSize: 12, flex: 1 }}>
+            ใช้ช่วงปีการศึกษาต้นทาง/ปลายทางเดียวกับด้านบน ({fromYear} → {toYear}) —
+            คัดลอกเป็นแบบยังไม่เปิดใช้ งานการเงินต้องตรวจตัวเลขแล้วเปิดเองที่หน้าค่าเทอม
+          </div>
+          <div className="shrink">
+            <ActionButton
+              onRun={() =>
+                api.post<{ linesCopied: number; active: boolean; note: string }>('/rollover/fee-schedules', {
+                  fromYearBe: Number(fromYear),
+                  toYearBe: Number(toYear),
+                })
+              }
+              onDone={(r) => setFeeScheduleResult(r as { linesCopied: number; note: string })}
+            >
+              คัดลอกค่าเทอม
+            </ActionButton>
+          </div>
+        </div>
+        {feeScheduleResult && (
+          <Notice kind={feeScheduleResult.linesCopied > 0 ? 'ok' : 'warn'}>
+            คัดลอกแล้ว {feeScheduleResult.linesCopied} รายการ — {feeScheduleResult.note}
+          </Notice>
+        )}
+      </Card>
 
       <Card title="การจัดห้องเรียนของปีการศึกษา">
         <div className="row">
