@@ -14,6 +14,39 @@ begin
   raise notice 'เตรียมฐาน — ปีการศึกษา 2599 ภาคเรียนที่ 1 (id ลงท้าย ...0001) สถานะเริ่มต้น planning';
 end $$;
 
+-- ผลการเรียนหนึ่งรายการในภาคเรียนนี้ — เพื่อพิสูจน์ใน TEST 335 ว่าปิดภาคเรียน
+-- แล้ว term_summary ได้ค่าจริงจากข้อมูลจริง ไม่ใช่แค่ไม่ error โดยไม่มีอะไรให้คำนวณ
+do $$
+declare
+  v_section     uuid := '99990000-0000-0000-0000-000000000001';
+  v_enroll      uuid := '99990000-0000-0000-0000-0000000000e1';
+  v_grade_id    uuid;
+  v_grade_point numeric;
+begin
+  select id, grade_point into v_grade_id, v_grade_point
+    from grade_symbol where counts_in_gpa order by grade_point desc nulls last limit 1;
+
+  insert into class_section
+    (id, institution_id, term_id, course_id, curriculum_version_id, section_no,
+     teacher_id, capacity, attendance_policy_id, planned_periods)
+  select v_section, cs.institution_id, '99999999-0000-0000-0000-000000000001',
+         cs.course_id, cs.curriculum_version_id, '99/99',
+         cs.teacher_id, 30, cs.attendance_policy_id, 2
+    from class_section cs where cs.id = 'bbbb0000-0000-0000-0000-000000000001'
+  on conflict (id) do nothing;
+
+  insert into enrollment (id, student_id, class_section_id, term_id, status, counts_toward_gpa)
+  values (v_enroll, 'aaaa0000-0000-0000-0000-000000000011', v_section,
+          '99999999-0000-0000-0000-000000000001', 'enrolled', true)
+  on conflict (id) do nothing;
+
+  insert into enrollment_result (enrollment_id, grade_symbol_id, grade_point, credits_earned)
+  select v_enroll, v_grade_id, v_grade_point, co.credits
+    from class_section cs join course co on co.id = cs.course_id
+   where cs.id = v_section
+  on conflict (enrollment_id, revision) do nothing;
+end $$;
+
 -- ── TEST 314 ───────────────────────────────────────────────────────
 -- ข้ามขั้นตอนไม่ได้ — planning ไป open ตรง ๆ ต้องถูกปฏิเสธ
 do $$
@@ -78,6 +111,30 @@ begin
     when raise_exception then
       raise notice 'TEST 317 ผ่าน — ถอยจาก registration กลับ planning ได้ครั้งเดียว แล้วยังข้ามขั้นต่อไม่ได้';
   end;
+end $$;
+
+-- ── TEST 335 ───────────────────────────────────────────────────────
+-- ปิดภาคเรียน (TEST 315) ต้องคำนวณ term_summary ให้เองเสมอ — ห้ามพลาด
+-- เพราะ evaluate_graduation() อ่าน gpax จากตารางนี้ตรง ๆ ถ้าไม่มีแถวเลย
+-- นักศึกษาจะไม่ผ่านเกณฑ์ GPA ไม่ว่าจะเรียนดีแค่ไหน (ปิดใน 0078)
+do $$
+declare
+  v_gpa            numeric;
+  v_credits_earned numeric;
+begin
+  select gpa, credits_earned into v_gpa, v_credits_earned
+    from term_summary
+   where student_id = 'aaaa0000-0000-0000-0000-000000000011'
+     and term_id = '99999999-0000-0000-0000-000000000001';
+
+  if v_gpa is null then
+    raise exception 'TEST 335 ล้มเหลว: ปิดภาคเรียนแล้วแต่ term_summary ไม่มีข้อมูล — advance_term_status(''closed'') ไม่ได้เรียก compute_term_summary() ให้';
+  end if;
+  if v_credits_earned <= 0 then
+    raise exception 'TEST 335 ล้มเหลว: ควรได้หน่วยกิตจากรายวิชาที่ลงไว้ ได้ %', v_credits_earned;
+  end if;
+
+  raise notice 'TEST 335 ผ่าน — ปิดภาคเรียนแล้ว term_summary มีข้อมูลจริงโดยอัตโนมัติ (gpa %)', v_gpa;
 end $$;
 
 \echo ''

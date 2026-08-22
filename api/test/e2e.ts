@@ -4500,6 +4500,120 @@ async function main() {
     return `คัดลอก ${r.body.linesCopied} รายการ · กดซ้ำได้ 0`;
   });
 
+  console.log('');
+  console.log('══ คำนวณสรุปผลภาคเรียน (0078) ══');
+
+  await check('API-218 ครูคำนวณสรุปผลภาคเรียนเองไม่ได้', async () => {
+    const r = await teacher(`/gradebook/terms/${TERM1}/summary`, { method: 'POST' });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-219 งานทะเบียนคำนวณสรุปผลภาคเรียนได้ พร้อมรายชื่อที่มีผลจริง', async () => {
+    const r = await registrar(`/gradebook/terms/${TERM1}/summary`, { method: 'POST' });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(typeof r.body.students === 'number' && r.body.students > 0,
+      `ควรคำนวณให้อย่างน้อยหนึ่งคน (มีผลการเรียนสะสมจากเทสต์ก่อนหน้า) ได้ ${JSON.stringify(r.body)}`);
+    return `คำนวณให้ ${r.body.students} คน`;
+  });
+
+  console.log('');
+  console.log('══ ยืนยัน/ข้ามรายการกระทบยอด (0079) ══');
+
+  // เตรียมรายการทดสอบผ่าน SQL ตรง — 0079 แก้แค่ขั้นยืนยัน ไม่ใช่ตัวให้คะแนน
+  // ซึ่ง API-16/17 คุมอยู่แล้ว จึงไม่ต้องประกอบเงื่อนไขคะแนนที่แม่นยำผ่าน API ซ้ำ
+  let pendingBtSuggested = '';
+  let pendingBtUnmatched = '';
+  let pendingBtStudent = '';
+  {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    const inv = await db.query(
+      `select id, student_id from invoice where institution_id = $1 and status in ('issued','partially_paid') limit 1`,
+      [INST],
+    );
+    if (inv.rows.length === 0) {
+      throw new Error('ต้องมีใบแจ้งหนี้ค้างอยู่อย่างน้อยหนึ่งใบให้ทดสอบ API-220 ถึง 223');
+    }
+    pendingBtStudent = inv.rows[0].student_id;
+
+    const r1 = await db.query(
+      `insert into bank_transaction
+         (institution_id, posted_at, amount, counterparty, bank_ref, state, matched_invoice_id, confidence, match_reason)
+       values ($1, now(), 999.00, 'ทดสอบ กระทบยอด หนึ่ง', 'E2E-BANK-1', 'suggested', $2, 60, 'ทดสอบ')
+       returning id`,
+      [INST, inv.rows[0].id],
+    );
+    pendingBtSuggested = r1.rows[0].id;
+
+    const r2 = await db.query(
+      `insert into bank_transaction (institution_id, posted_at, amount, counterparty, state)
+       values ($1, now(), 111.00, 'ทดสอบ กระทบยอด สอง', 'unmatched')
+       returning id`,
+      [INST],
+    );
+    pendingBtUnmatched = r2.rows[0].id;
+    await db.end();
+  }
+
+  await check('API-220 ครูยืนยันรายการกระทบยอดเองไม่ได้', async () => {
+    const r = await teacher(`/finance/reconcile/${pendingBtSuggested}/confirm`, { method: 'POST' });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-221 การเงินยืนยันข้อเสนอเดิมได้ — ได้ใบเสร็จจริงเหมือนรับชำระปกติ', async () => {
+    const r = await finance(`/finance/reconcile/${pendingBtSuggested}/confirm`, { method: 'POST' });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(!!r.body.paymentId, 'ต้องได้ paymentId กลับมา');
+    expect(!!r.body.receipt?.doc_no,
+      `ยืนยันแล้วต้องออกใบเสร็จให้ ไม่มีทางลัดข้ามได้ ได้ ${JSON.stringify(r.body)}`);
+
+    const again = await finance(`/finance/reconcile/${pendingBtSuggested}/confirm`, { method: 'POST' });
+    expect(again.status >= 400, `ยืนยันซ้ำควรถูกปฏิเสธ ได้ ${again.status}`);
+    return `ใบเสร็จเลขที่ ${r.body.receipt.doc_no}`;
+  });
+
+  await check('API-222 รายการที่ไม่มีข้อเสนอ ต้องระบุนักศึกษาเองถึงยืนยันได้', async () => {
+    const noStudent = await finance(`/finance/reconcile/${pendingBtUnmatched}/confirm`, { method: 'POST' });
+    expect(noStudent.status >= 400, `ไม่ระบุนักศึกษาควรถูกปฏิเสธ ได้ ${noStudent.status}`);
+
+    const r = await finance(`/finance/reconcile/${pendingBtUnmatched}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ studentId: pendingBtStudent }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-223 ยืนยันแล้วจำชื่อผู้โอนไว้ใช้จับคู่อัตโนมัติครั้งถัดไป', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    const hint = await db.query(
+      `select student_id, hit_count from reconciliation_hint
+        where institution_id = $1 and counterparty = 'ทดสอบ กระทบยอด หนึ่ง'`,
+      [INST],
+    );
+    await db.end();
+    expect(hint.rows.length === 1, 'ควรมี hint บันทึกไว้หนึ่งแถว — ไม่เคยมีมาก่อน 0079');
+    expect(hint.rows[0].student_id === pendingBtStudent, 'hint ต้องผูกกับนักศึกษาที่ยืนยันไป');
+  });
+
+  await check('API-224 ข้ามรายการที่ไม่ใช่ค่าเทอมได้ และข้ามซ้ำถูกปฏิเสธ', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    const r3 = await db.query(
+      `insert into bank_transaction (institution_id, posted_at, amount, state)
+       values ($1, now(), 5.00, 'unmatched') returning id`,
+      [INST],
+    );
+    await db.end();
+    const btId = r3.rows[0].id;
+
+    const r = await finance(`/finance/reconcile/${btId}/ignore`, { method: 'POST' });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const again = await finance(`/finance/reconcile/${btId}/ignore`, { method: 'POST' });
+    expect(again.status >= 400, `ข้ามซ้ำควรถูกปฏิเสธ ได้ ${again.status}`);
+  });
+
   await app.close();
 
   console.log('');

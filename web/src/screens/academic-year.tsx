@@ -896,6 +896,14 @@ export function AcademicYearScreen() {
                             {n === 'planning' ? '↺ ถอยกลับวางแผน' : `→ ${TERM_STATUS[n] ?? n}`}
                           </ActionButton>
                         ))}
+                        {t.status === 'closed' && (
+                          <ActionButton
+                            className="ghost"
+                            onRun={() => api.post<{ students: number }>(`/gradebook/terms/${t.id}/summary`)}
+                          >
+                            คำนวณ GPA/GPAX ใหม่
+                          </ActionButton>
+                        )}
                       </td>
                     </tr>
                   );

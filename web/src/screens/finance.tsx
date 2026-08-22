@@ -80,10 +80,183 @@ interface Balance {
   days_overdue: number | null;
 }
 
+interface PendingMatch {
+  id: string;
+  posted_at: string;
+  amount: string | number;
+  counterparty: string | null;
+  ref1: string | null;
+  ref2: string | null;
+  state: string;
+  confidence: number | null;
+  match_reason: string | null;
+  invoice_id: string | null;
+  invoice_no: string | null;
+  student_code: string | null;
+  student_name: string | null;
+}
+
+interface ReconcileResult {
+  autoMatched: number;
+  suggested: number;
+  unmatched: number;
+}
+
+/**
+ * แปลงปี พ.ศ. ที่พิมพ์มาให้เป็น ค.ศ. ก่อนส่งเข้า API เสมอ
+ *
+ * ─── ทำไมต้องแปลงเอง ไม่ปล่อยให้พิมพ์ตามที่เห็น ───
+ * `@IsISO8601()` ฝั่ง API ตรวจแค่รูปแบบตัวเลข ไม่ตรวจว่าปีสมเหตุสมผล —
+ * "2569-08-20" ผ่านการตรวจและถูกบันทึกเป็นวันที่จริงในปี ค.ศ. 2569 (อีกกว่า
+ * 500 ปีข้างหน้า) โดยไม่มี error ใด ๆ เลย ทั้งที่ทุกที่อื่นในระบบพิมพ์ปี พ.ศ.
+ * เป็นเรื่องปกติ (หลักสไตล์ท้าย CLAUDE.md) — เจอเองตอนกดทดสอบปุ่มนี้จริง
+ * ไม่ใช่ตอนอ่านโค้ด ปีที่พิมพ์เกิน 2400 แปลว่าเป็น พ.ศ. แน่นอน (ระบบนี้ยังไม่มี
+ * วันไหนต้องเดินถึงปี ค.ศ. 2400)
+ */
+function toGregorianIso(raw: string): string {
+  const m = raw.match(/^(\d{4})(-\d{2}-\d{2}.*)$/);
+  if (!m) return raw;
+  const year = Number(m[1]);
+  return year > 2400 ? `${year - 543}${m[2]}` : raw;
+}
+
+/**
+ * แปลงข้อความที่วางจากสเปรดชีตเป็นรายการเดินบัญชี — หนึ่งบรรทัดต่อหนึ่งรายการ
+ * คั่นด้วยจุลภาค: วันที่ (พ.ศ. หรือ ค.ศ. ก็ได้ YYYY-MM-DD), จำนวนเงิน,
+ * ชื่อผู้โอน, เลขอ้างอิงธนาคาร, ref1 (รหัสนักศึกษาถ้ามี), ref2
+ */
+function parseBankRows(text: string) {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [postedAt, amount, counterparty, bankRef, ref1, ref2] = line.split(',').map((s) => s.trim());
+      if (!postedAt || !amount) throw new Error(`บรรทัดข้อมูลไม่ครบ: ${line}`);
+      return {
+        postedAt: toGregorianIso(postedAt),
+        amount: Number(amount),
+        ...(counterparty ? { counterparty } : {}),
+        ...(bankRef ? { bankRef } : {}),
+        ...(ref1 ? { ref1 } : {}),
+        ...(ref2 ? { ref2 } : {}),
+      };
+    });
+}
+
+function BankImportCard({ onDone }: { onDone: () => void }) {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState<ReconcileResult | null>(null);
+
+  return (
+    <Card title="นำเข้ารายการเดินบัญชีธนาคาร">
+      <label className="field">
+        <span>วางข้อมูลจากสเปรดชีต — บรรทัดละหนึ่งรายการ (วันที่พิมพ์ปี พ.ศ. หรือ ค.ศ. ก็ได้)</span>
+        <textarea
+          rows={4}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={'2569-08-20,4200,น.ส. สมหญิง ศรีสุข,BK-00123,69201010101\n2569-08-20,13.50,ไม่ทราบผู้โอน,BK-00124'}
+          style={{ fontFamily: 'monospace', fontSize: 12.5 }}
+        />
+      </label>
+      <div className="row" style={{ marginTop: 8 }}>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              const transactions = parseBankRows(text);
+              if (transactions.length === 0) throw new Error('ยังไม่มีข้อมูลให้นำเข้า');
+              return api.post<{ imported: number; skipped: number }>('/finance/bank-transactions', { transactions });
+            }}
+            onDone={() => setText('')}
+          >
+            นำเข้ารายการ
+          </ActionButton>
+        </div>
+        <div className="shrink">
+          <ActionButton
+            onRun={() => api.post<ReconcileResult>('/finance/reconcile')}
+            onDone={(r) => {
+              setResult(r as ReconcileResult);
+              onDone();
+            }}
+          >
+            กระทบยอดอัตโนมัติ
+          </ActionButton>
+        </div>
+        <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+          จับคู่เองเฉพาะที่มั่นใจสูง (เลขอ้างอิงตรง หรือรหัสนักศึกษา+ยอดตรงกับงวดที่ค้าง)
+          ที่เหลือขึ้นเป็นรายการรอด้านล่างให้ยืนยันเอง
+        </div>
+      </div>
+      {result && (
+        <Notice kind="info">
+          จับคู่เอง {result.autoMatched} รายการ · รอเจ้าหน้าที่ยืนยัน {result.suggested} รายการ ·
+          ยังไม่พบข้อมูลพอ {result.unmatched} รายการ
+        </Notice>
+      )}
+    </Card>
+  );
+}
+
+function PendingMatchRow({
+  row, students, onDone,
+}: { row: PendingMatch; students: StudentRow[]; onDone: () => void }) {
+  const [studentId, setStudentId] = useState('');
+  const hasSuggestion = !!row.student_name;
+
+  return (
+    <tr>
+      <td>{thaiDate(row.posted_at)}</td>
+      <td className="num">{money(row.amount)}</td>
+      <td>{row.counterparty ?? '—'}</td>
+      <td>
+        {hasSuggestion ? (
+          <>
+            {row.student_code} {row.student_name}
+            <div className="hint">
+              {row.confidence != null ? `${row.confidence} คะแนน — ` : ''}{row.match_reason ?? 'ยอดตรงกับใบแจ้งหนี้'}
+            </div>
+          </>
+        ) : (
+          <select value={studentId} onChange={(e) => setStudentId(e.target.value)} style={{ maxWidth: 220 }}>
+            <option value="">— ไม่พบข้อมูลพอ เลือกนักศึกษาเอง —</option>
+            {students.map((s) => (
+              <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
+            ))}
+          </select>
+        )}
+      </td>
+      <td style={{ width: 200 }}>
+        <ActionButton
+          className="primary"
+          onRun={() => {
+            if (!hasSuggestion && !studentId) throw new Error('เลือกนักศึกษาก่อน — ไม่มีข้อเสนอให้ยอมรับ');
+            return api.post(`/finance/reconcile/${row.id}/confirm`, studentId ? { studentId } : {});
+          }}
+          onDone={onDone}
+        >
+          ยืนยัน
+        </ActionButton>{' '}
+        <ActionButton
+          className="ghost"
+          confirm="รายการนี้ไม่ใช่ค่าเทอม ยืนยันหรือไม่ — เก็บไว้ในประวัติแต่จะไม่ขึ้นให้ตัดสินใจอีก"
+          onRun={() => api.post(`/finance/reconcile/${row.id}/ignore`)}
+          onDone={onDone}
+        >
+          ไม่ใช่ค่าเทอม
+        </ActionButton>
+      </td>
+    </tr>
+  );
+}
+
 export function FinanceScreen() {
   const { terms, termId, setTerm } = useTermPicker();
   const aging = useAsync(() => api.get<AgingRow[]>('/finance/ar-aging'), []);
   const students = useAsync(() => api.get<StudentRow[]>('/students?limit=200'), []);
+  const pending = useAsync(() => api.get<PendingMatch[]>('/finance/reconcile/pending'), []);
 
   const [studentId, setStudentId] = useState('');
   const [installments, setInstallments] = useState('2');
@@ -149,6 +322,36 @@ export function FinanceScreen() {
                     <td className="num">{r.students}</td>
                     <td className="num">{money(r.amount)}</td>
                   </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncView>
+      </TableCard>
+
+      <BankImportCard onDone={() => pending.reload()} />
+
+      <TableCard title="รายการรอกระทบยอด">
+        <AsyncView state={pending} empty="ไม่มีรายการค้างให้ตัดสินใจ">
+          {(rows) => (
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 110 }}>วันที่</th>
+                  <th className="num" style={{ width: 110 }}>จำนวนเงิน</th>
+                  <th style={{ width: 160 }}>ผู้โอน</th>
+                  <th>ข้อเสนอ</th>
+                  <th style={{ width: 200 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <PendingMatchRow
+                    key={r.id}
+                    row={r}
+                    students={students.data ?? []}
+                    onDone={() => pending.reload()}
+                  />
                 ))}
               </tbody>
             </table>

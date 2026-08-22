@@ -62,6 +62,11 @@ class ImportBankDto {
   transactions: BankTxnDto[];
 }
 
+/** ไม่ระบุ studentId = ยอมรับข้อเสนอเดิมของรายการนี้ */
+class ConfirmMatchDto {
+  @IsOptional() @IsUuid() studentId?: string;
+}
+
 @Injectable()
 export class FinanceService {
   constructor(private readonly db: DbService) {}
@@ -193,7 +198,7 @@ export class FinanceService {
     return this.db.query(
       `select bt.id, bt.posted_at, bt.amount, bt.counterparty, bt.ref1, bt.ref2,
               bt.state, bt.confidence, bt.match_reason,
-              i.invoice_no, s.student_code,
+              i.id as invoice_id, i.invoice_no, s.student_code,
               p.first_name_th || ' ' || p.last_name_th as student_name
          from bank_transaction bt
          left join invoice i on i.id = bt.matched_invoice_id
@@ -203,6 +208,38 @@ export class FinanceService {
         order by bt.posted_at desc
         limit 200`,
     );
+  }
+
+  /**
+   * เจ้าหน้าที่ยืนยันข้อเสนอ (หรือระบุใบแจ้งหนี้เองถ้าข้อเสนอผิดหรือยังไม่มี)
+   *
+   * รับเงินจริงและออกใบเสร็จผ่าน post_payment() เหมือนรับชำระปกติทุกประการ —
+   * ไม่มีทางลัดที่ข้ามใบเสร็จไปได้ (0068)
+   */
+  async confirmMatch(id: string, studentId?: string) {
+    return this.db.tx(async (c) => {
+      const pay = await c.query<{ id: string }>(
+        `select confirm_bank_match($1, $2) as id`,
+        [id, studentId ?? null],
+      );
+      const paymentId = pay.rows[0].id;
+
+      const receipt = await c.query<{ id: string; doc_no: string }>(
+        `select id, doc_no from issued_document
+          where kind = 'receipt' and payload ->> 'payment_id' = $1
+            and voided_at is null
+          limit 1`,
+        [paymentId],
+      );
+
+      return { paymentId, receipt: receipt.rows[0] ?? null };
+    });
+  }
+
+  /** ทำเครื่องหมายว่ารายการนี้ไม่ใช่ค่าเทอม — ไม่ลบทิ้ง เพื่อตรวจสอบย้อนหลังได้ */
+  async ignoreMatch(id: string) {
+    await this.db.query(`select ignore_bank_match($1)`, [id]);
+    return { ignored: id };
   }
 
   /** ตั้งเป็นงานประจำวัน งานทะเบียนไม่ต้องรู้จักใบแจ้งหนี้เลย */
@@ -321,6 +358,18 @@ class FinanceController {
   @Get('reconcile/pending')
   pending() {
     return this.svc.pendingMatches();
+  }
+
+  @Audit('bank_transaction', 'id')
+  @Post('reconcile/:id/confirm')
+  confirmMatch(@Param('id', ParseUuidPipe) id: string, @Body() dto: ConfirmMatchDto) {
+    return this.svc.confirmMatch(id, dto.studentId);
+  }
+
+  @Audit('bank_transaction', 'id')
+  @Post('reconcile/:id/ignore')
+  ignoreMatch(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.ignoreMatch(id);
   }
 
   @Post('holds/refresh')
