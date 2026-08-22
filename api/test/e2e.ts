@@ -469,6 +469,7 @@ async function main() {
   const tFinance = await token(app, base, F.personTeacher, 'finance');
   const tOtherInst = await token(app, base, F.personAdmin2, 'registrar', INST2);
   const tDirector = await token(app, base, F.personTeacher, 'director');
+  const tAdmin = await token(app, base, F.personTeacher, 'admin');
   const tTeacherExamB = await token(app, base, F.personTeacherExamB, 'teacher');
   const tExamStudent = await token(app, base, F.personExamStudent, 'student');
 
@@ -480,6 +481,7 @@ async function main() {
   const finance = api(base, tFinance);
   const other = api(base, tOtherInst);
   const director = api(base, tDirector);
+  const admin = api(base, tAdmin);
 
   console.log('');
   console.log('══ ความปลอดภัยและบริบท ══');
@@ -4612,6 +4614,70 @@ async function main() {
 
     const again = await finance(`/finance/reconcile/${btId}/ignore`, { method: 'POST' });
     expect(again.status >= 400, `ข้ามซ้ำควรถูกปฏิเสธ ได้ ${again.status}`);
+  });
+
+  console.log('');
+  console.log('══ มอบ/ถอนบทบาทพนักงาน (0022 — เพิ่งมีทางเรียกจริงจากหน้าจอ) ══');
+
+  let grantedRoleId = '';
+
+  await check('API-225 งานทะเบียนมอบบทบาทเองไม่ได้ — เฉพาะผู้ดูแลระบบและผู้อำนวยการ', async () => {
+    const r = await registrar(`/staff/${F.staffExamA}/roles`, {
+      method: 'POST',
+      body: JSON.stringify({ role: 'student_affairs' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-226 ผู้ดูแลระบบมอบบทบาทได้ และเห็นในระเบียนของคนนั้นทันที', async () => {
+    const r = await admin(`/staff/${F.staffExamA}/roles`, {
+      method: 'POST',
+      body: JSON.stringify({ role: 'student_affairs', reason: 'ทดสอบ API-226' }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    grantedRoleId = r.body.id;
+
+    const detail = await admin(`/staff/${F.staffExamA}`);
+    expect(detail.status === 200, `อ่านระเบียนไม่ได้ ${detail.status}`);
+    const row = detail.body.roles.find((x: { id: string }) => x.id === grantedRoleId);
+    expect(row && row.active_now === true, `บทบาทที่เพิ่งมอบต้องขึ้นว่าใช้งานอยู่ ได้ ${JSON.stringify(row)}`);
+  });
+
+  await check('API-227 มอบบทบาทเดียวกันซ้อนช่วงเวลาเดิมไม่ได้ — exclusion constraint กันไว้', async () => {
+    const r = await admin(`/staff/${F.staffExamA}/roles`, {
+      method: 'POST',
+      body: JSON.stringify({ role: 'student_affairs' }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+  });
+
+  await check('API-228 ถอนบทบาทโดยไม่ระบุเหตุผลไม่ได้', async () => {
+    const r = await director(`/staff/roles/${grantedRoleId}/revoke`, {
+      method: 'PATCH',
+      body: JSON.stringify({}),
+    });
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  await check('API-229 ผู้อำนวยการถอนบทบาทได้ มีผลทันที', async () => {
+    const r = await director(`/staff/roles/${grantedRoleId}/revoke`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason: 'ทดสอบ API-229' }),
+    });
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(!!r.body.revoked_at, 'ต้องมีเวลาที่ถอน');
+
+    const detail = await admin(`/staff/${F.staffExamA}`);
+    const row = detail.body.roles.find((x: { id: string }) => x.id === grantedRoleId);
+    expect(row && row.active_now === false, `ถอนแล้วต้องไม่ active_now อีก ได้ ${JSON.stringify(row)}`);
+  });
+
+  await check('API-230 ถอนซ้ำบทบาทที่ถอนไปแล้วถูกปฏิเสธ', async () => {
+    const r = await director(`/staff/roles/${grantedRoleId}/revoke`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason: 'ลองถอนซ้ำ' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
   });
 
   await app.close();
