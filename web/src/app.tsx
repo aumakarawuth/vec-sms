@@ -53,12 +53,7 @@ const NAV_ICON: Record<string, string> = {
   '/timetable-center': '◷',
   '/settings-center': '⚙',
   '/behavior-center': '♢',
-  '/students': '◉', '/registration': '✓', '/documents': '▤', '/graduation': '◇',
-  '/admissions': '+', '/import': '↥', '/government-exports': '↗', '/finance': '฿',
-  '/curriculum': '▦', '/timetable': '◷', '/academic-year': '◫', '/dual': '⌂',
-  '/exam-schedule': '▥',
-  '/gradebook': '★', '/attendance': '✓', '/change-requests': '↺', '/risk': '!',
-  '/behavior': '♢', '/letters': '✉', '/leaves': '◌', '/hr': '♙', '/jobs': '⚙',
+  '/finance': '฿',
 };
 
 interface NavGroup {
@@ -67,8 +62,15 @@ interface NavGroup {
 }
 
 const ALL: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin', 'teacher'];
-const OFFICE: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
+/**
+ * เมนูซ้ายเหลือแค่ทางเข้า "ศูนย์งาน" ทั้งห้า + การเงิน — ทุกหน้าจอจริงยังอยู่
+ * ที่เดิม (`Routes()` ด้านล่างไม่ได้แตะ) แค่ทางเข้าเปลี่ยนจาก "มีสองทางไปที่
+ * เดียวกัน" (ลิงก์ตรงในเมนูซ้าย ซ้ำกับการ์ดในหน้าศูนย์งาน) เหลือทางเดียว
+ * ผ่านการ์ดในแต่ละศูนย์งาน — ยกเว้นการเงินที่ไม่มีศูนย์งานของตัวเอง และ
+ * ไม่มีศูนย์งานไหนที่บทบาท finance มองเห็นเลย (เช็คสิทธิ์ทีละศูนย์แล้ว)
+ * จึงต้องมีทางเข้าตรงไว้ มิฉะนั้นงานการเงินจะเข้าระบบไม่ได้เลย
+ */
 const NAV: NavGroup[] = [
   {
     title: 'เมนูหลัก',
@@ -81,81 +83,10 @@ const NAV: NavGroup[] = [
     ],
   },
   {
-    title: 'งานทะเบียน',
-    items: [
-      { path: '/students', label: 'ระเบียนนักศึกษา', roles: ALL },
-      { path: '/registration', label: 'ลงทะเบียนเรียน', roles: OFFICE },
-      { path: '/documents', label: 'ออกเอกสาร', roles: OFFICE },
-      { path: '/graduation', label: 'สำเร็จการศึกษา', roles: OFFICE },
-      { path: '/admissions', label: 'งานรับสมัคร', roles: OFFICE },
-      { path: '/import', label: 'นำเข้าข้อมูล', roles: OFFICE },
-      { path: '/government-exports', label: 'ส่งออกข้อมูลหน่วยงานรัฐ', roles: OFFICE },
-    ],
-  },
-  {
     title: 'การเงิน',
     items: [
       { path: '/finance', label: 'ใบแจ้งหนี้และรับชำระ', roles: ['finance', 'director', 'admin'] },
     ],
-  },
-  {
-    title: 'งานวัดผล',
-    items: [
-      { path: '/curriculum', label: 'โครงสร้างหลักสูตร', roles: OFFICE },
-      { path: '/timetable', label: 'ตารางสอน', roles: OFFICE },
-      { path: '/academic-year', label: 'งานวิชาการรายปี', roles: OFFICE },
-      {
-        path: '/dual',
-        label: 'ทวิภาคีและสถานประกอบการ',
-        // ครูนิเทศเป็นคนรับรองชั่วโมง จึงต้องเข้าถึงได้แม้ไม่ใช่บทบาทระดับวิทยาลัย
-        roles: ['teacher', 'academic', 'registrar', 'director', 'admin'],
-      },
-      { path: '/gradebook', label: 'สมุดคะแนน', roles: ['teacher', 'academic', 'director', 'admin'] },
-      { path: '/attendance', label: 'เช็คชื่อรายคาบ', roles: ['teacher', 'registrar', 'academic', 'admin'] },
-      { path: '/exam-schedule', label: 'ตารางสอบ', roles: ['teacher', 'registrar', 'academic', 'director', 'admin'] },
-      {
-        path: '/change-requests',
-        label: 'คำร้องขอแก้เกรด',
-        roles: ['teacher', 'academic', 'registrar', 'director', 'admin'],
-      },
-    ],
-  },
-  {
-    title: 'ดูแลนักศึกษา',
-    items: [
-      {
-        path: '/risk',
-        label: 'เฝ้าระวังและติดตาม',
-        roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
-      },
-      {
-        path: '/behavior',
-        label: 'พฤติกรรมและการดูแล',
-        roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'],
-      },
-      {
-        path: '/letters',
-        label: 'หนังสือถึงผู้ปกครอง',
-        roles: ['student_affairs', 'registrar', 'academic', 'director', 'admin'],
-      },
-      {
-        path: '/leaves',
-        label: 'การลาของนักศึกษา',
-        // ครูที่ปรึกษาเห็นของเด็กในที่ปรึกษาตัวเอง แต่อนุมัติไม่ได้ —
-        // หน้าจอซ่อนปุ่มให้ ส่วนสิทธิ์จริงอยู่ที่ @Roles และ RLS
-        roles: ['teacher', 'student_affairs', 'registrar', 'director', 'admin'],
-      },
-    ],
-  },
-  {
-    title: 'งานบุคคล',
-    items: [
-      { path: '/hr', label: 'บุคลากรและการลา', roles: ['registrar', 'director', 'admin'] },
-    ],
-  },
-  {
-    title: 'ระบบ',
-    items: [{ path: '/jobs', label: 'งานตามกำหนดเวลา', roles: ['admin', 'director'] }],
   },
 ];
 
