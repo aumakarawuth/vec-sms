@@ -5,34 +5,39 @@ type State = 'ready' | 'partial' | 'planned';
 type Item = { key: string; title: string; description: string; path?: string; state: State };
 type Group = { title: string; subtitle: string; items: Item[] };
 
-/**
- * แต่ละหน้าจอจริงมีการ์ดเดียวในทั้งศูนย์นี้ — เดิมเคยมีการ์ดซ้ำชี้ปลายทาง
- * เดียวกันคนละชื่อ (เช่น /gradebook มีการ์ดชื่อต่างกันหกใบ) ทำให้หาไม่เจอว่า
- * ควรกดใบไหน คำอธิบายของการ์ดที่เหลือจึงรวมงานย่อยที่เคยแยกใบไว้ทั้งหมด
- */
 const GROUPS: Group[] = [
-  { title: 'งานทะเบียน', subtitle: 'ข้อมูลนักศึกษา การลงทะเบียน และงานวัดผล', items: [
-    ['students','ระเบียนนักศึกษา','ค้นหาและตรวจสอบระเบียน สถานะลงทะเบียน และผลการเรียนของนักศึกษา','/students','ready'],
-    ['registration','ลงทะเบียนเรียน','ลงทะเบียนทั้งห้องหรือรายคน และดูรายชื่อที่ลงทะเบียนแล้วแยกตามวิชา','/registration','ready'],
-    ['gradebook','สมุดคะแนนและอนุมัติเกรด','บันทึกคะแนน ตรวจผล ส่งผล และอนุมัติเกรดตามลำดับงาน','/gradebook','ready'],
-    ['attendance','เช็คชื่อรายคาบ','เปิดคาบเรียนและบันทึกสถานะการเข้าเรียนรายคาบ','/attendance','ready'],
-    ['change-requests','คำร้องขอแก้เกรด','ยื่นและอนุมัติคำร้องขอแก้ไขผลการเรียนที่ล็อกแล้ว','/change-requests','ready'],
-    ['admissions','งานรับสมัคร','เปิดรอบรับสมัคร ตั้งโควตา รับใบสมัคร ตัดสินผล และขึ้นทะเบียนเป็นนักศึกษา','/admissions','ready'],
-    ['dual','ทวิภาคีและสถานประกอบการ','บันทึกสถานประกอบการ ชั่วโมงฝึกงาน และการรับรองชั่วโมง','/dual','ready'],
-    ['clubs','จัดการวิชาชุมนุม/ชมรม','บันทึกชื่อชมรม ผู้ดูแล และสมาชิกรายปีการศึกษา','/clubs','ready'],
-    ['onet','ผลสอบ O-NET','วางผลสอบจากตารางและดูสรุปคะแนนเฉลี่ยรายวิชา','/onet','ready'],
-  ].map(([key,title,description,path,state]) => ({key,title,description,path,state} as Item)) },
-  { title: 'รายงานและเอกสาร', subtitle: 'เอกสารทะเบียน รายงานผล และข้อมูลส่งออก', items: [
-    ['documents','ออกเอกสาร','พิมพ์ใบลงทะเบียน ใบ รบ./Transcript สมุดพก และใบรับรองสถานภาพ','/documents','ready'],
-    ['graduation','สำเร็จการศึกษา','ตรวจเกณฑ์จบ อนุมัติจบ และแบบสำรวจภาวะการมีงานทำ/ศึกษาต่อ','/graduation','ready'],
-    ['government-exports','ส่งออกข้อมูลหน่วยงานรัฐ','ออกเอกสารและส่งออกชุดข้อมูลให้หน่วยงานภาครัฐ','/government-exports','ready'],
-    ['statistics','ข้อมูลสถิติ','ภาพรวมนักศึกษา บุคลากร การเงิน และการเฝ้าระวังทั้งวิทยาลัย','/statistics','ready'],
-  ].map(([key,title,description,path,state]) => ({key,title,description,path,state} as Item)) },
-  { title: 'การตั้งค่า', subtitle: 'หลักสูตร ปีการศึกษา และการนำเข้าข้อมูล', items: [
-    ['curriculum','โครงสร้างหลักสูตร','สาขาวิชา รุ่นหลักสูตร หมวดวิชา รายวิชา และแผนการเรียน','/curriculum','ready'],
-    ['academic-year','งานวิชาการรายปี','เปิดปีการศึกษา/ภาคเรียน จัดนักศึกษาเข้าห้อง และเดินสถานะภาคเรียน','/academic-year','ready'],
-    ['import','นำเข้าข้อมูล','นำเข้าประวัติการเรียนเดิมและข้อมูลนักศึกษาเป็นชุดจากไฟล์ CSV','/import','ready'],
-  ].map(([key,title,description,path,state]) => ({key,title,description,path,state} as Item)) },
+  { title: 'ข้อมูลและการลงทะเบียน', subtitle: 'เริ่มจากข้อมูลนักศึกษา แล้วจัดห้องและลงทะเบียนรายวิชา', items: [
+    ['students','ระเบียนนักศึกษา','ค้นหา ดู และแก้ไขแฟ้มข้อมูลนักศึกษาในหน้าเดียว','/students','ready'],
+    ['registration','ข้อมูลลงทะเบียนและลงทะเบียนเรียน','ลงทะเบียนทั้งห้องหรือรายคน พร้อมตรวจรายชื่อและรายวิชา','/registration','ready'],
+    ['academic-year','จัดการปีการศึกษาและระดับชั้น','เปิดปีการศึกษา ตั้งภาคเรียน เลื่อนชั้น และติดตามผู้มีสิทธิ์','/academic-year','ready'],
+    ['classroom','จัดห้องเรียนและรีเลขที่','จัดห้องประจำชั้น กำหนดห้อง และจัดเลขที่ในห้องใหม่','/academic-year/classes','ready'],
+    ['admissions','รับสมัครและโควตา','เปิดรอบรับสมัคร กำหนดโควตา ตัดสินผล และขึ้นทะเบียนนักศึกษา','/admissions','ready'],
+    ['dual','ทวิภาคีและสถานประกอบการ','ดูแลสถานประกอบการ การฝึกงาน และชั่วโมงทวิภาคี','/dual','ready'],
+  ].map(([key,title,description,path,state]) => ({ key,title,description,path,state } as Item)) },
+  { title: 'ผลการเรียนและกิจกรรม', subtitle: 'บันทึกคะแนน เวลาเรียน กิจกรรม และติดตามความก้าวหน้าทางการเรียน', items: [
+    ['gradebook','ผลการเรียน · สมุดคะแนน · อนุมัติเกรด','บันทึกคะแนน ตรวจผล ส่งผล และอนุมัติเกรดตามลำดับงานเดียวกัน','/gradebook','ready'],
+    ['change-requests','คำร้องขอแก้เกรด','ยื่น ตรวจสอบ และอนุมัติการแก้ไขผลการเรียนที่ล็อกแล้ว','/change-requests','ready'],
+    ['attendance','เวลาเรียนและเช็คชื่อรายคาบ','เปิดคาบเรียน บันทึกการเข้าเรียน และติดตามเวลาเรียน','/attendance','ready'],
+    ['timetable','ตารางเรียนและตารางสอบ','จัดตารางเรียน จัดห้องสอบ และตรวจความขัดแย้งของตาราง','/timetable-center','ready'],
+    ['clubs','จัดการวิชาชุมนุม/ชมรม','ตั้งชมรม ผู้ดูแล และสมาชิกแยกตามปีการศึกษา','/clubs','ready'],
+    ['onet','ผลสอบ O-NET','บันทึกผลสอบและดูสรุปคะแนนเฉลี่ยรายวิชา','/onet','ready'],
+    ['graduation','ตรวจสอบข้อมูลจบการศึกษา','ตรวจเกณฑ์จบ อนุมัติจบ และติดตามการมีงานทำหรือศึกษาต่อ','/graduation','ready'],
+  ].map(([key,title,description,path,state]) => ({ key,title,description,path,state } as Item)) },
+  { title: 'รายงานและเอกสาร', subtitle: 'พิมพ์เอกสารทะเบียน ดูรายงาน และส่งข้อมูลให้หน่วยงานภายนอก', items: [
+    ['documents','เอกสารนักศึกษาและใบรับรอง','พิมพ์ใบลงทะเบียน ใบ รบ./Transcript สมุดพก และใบรับรอง','/documents','ready'],
+    ['letters','หนังสือและแบบฟอร์ม','จัดทำหนังสือถึงผู้ปกครองและเอกสารงานทะเบียน','/letters','ready'],
+    ['government-exports','รายงานและข้อมูลส่งออกภาครัฐ','ส่งออกข้อมูลนักเรียน ผลการเรียน และข้อมูลตามรูปแบบหน่วยงานรัฐ','/government-exports','ready'],
+    ['statistics','รายงานสถิติ','ดูภาพรวมผู้เรียน ผลการเรียน และตัวชี้วัดของวิทยาลัย','/statistics','ready'],
+    ['import','นำเข้าข้อมูลผลการเรียน','ตรวจไฟล์ก่อนนำเข้า และบันทึกผลการเรียนอย่างเป็นขั้นตอน','/import','ready'],
+  ].map(([key,title,description,path,state]) => ({ key,title,description,path,state } as Item)) },
+  { title: 'ตั้งค่างานทะเบียน', subtitle: 'กำหนดโครงสร้างก่อนเริ่มใช้งานในแต่ละปีการศึกษา', items: [
+    ['education-levels','ระดับชั้นและวุฒิการศึกษา','กำหนดระดับการศึกษา ชั้นปี และคำเรียกที่ใช้ในระบบ','/education-levels','ready'],
+    ['curriculum','หลักสูตร · สาขา · วิชาเรียน','จัดโครงสร้างหลักสูตร สาขา วิชา และแผนการเรียน','/curriculum/programs','ready'],
+    ['courses','ข้อมูลวิชา','จัดกลุ่มสาระ กลุ่มวิชา รายวิชา ระดับผลการเรียน และการประเมิน','/subject-data','ready'],
+    ['curriculum-versions','รูปแบบโครงสร้างหลักสูตร','จัดการฉบับหลักสูตรและโครงสร้างรายวิชาแต่ละฉบับ','/curriculum/versions','ready'],
+    ['term-categories','ช่วงเวลาและเงื่อนไขการเรียน','กำหนดช่วงลงทะเบียน สมุดคะแนน และวันสำคัญในภาคเรียน','/term-categories','ready'],
+    ['grade-levels','รูปแบบเกรดและการประเมิน','ตั้งช่วงคะแนน ตัวอักษรเกรด และเงื่อนไขผลการเรียน','/grade-levels','ready'],
+  ].map(([key,title,description,path,state]) => ({ key,title,description,path,state } as Item)) },
 ];
 
 const STATUS = { ready: { label: 'พร้อมใช้งาน', kind: 'ok' }, partial: { label: 'ใช้งานได้บางส่วน', kind: 'warn' }, planned: { label: 'หน้าต้นแบบ', kind: 'info' } } as const;
@@ -43,7 +48,7 @@ export function RegistryCenterScreen() {
   if (item && !item.path) return <Preview item={item} />;
   const all = GROUPS.flatMap((g) => g.items);
   return <>
-    <PageHead title="ศูนย์งานทะเบียน" sub="เมนูงานทะเบียน รายงาน และการตั้งค่าครบในจุดเดียว" />
+    <PageHead title="ศูนย์งานทะเบียน" sub="เมนูงานทะเบียน รายงาน และเอกสารครบในจุดเดียว" />
     <div className="registry-summary"><Stat title="ฟังก์ชันทั้งหมด" value={all.length} note="หนึ่งการ์ดต่อหนึ่งหน้าจอ" tone="primary"/><Stat title="พร้อมใช้งาน" value={all.filter(x=>x.state==='ready').length} note="เชื่อมหน้าจอแล้ว" tone="success"/><Stat title="กำลังเติมเต็ม" value={all.filter(x=>x.state!=='ready').length} note="บางส่วนและ Mockup" tone="warning"/></div>
     {GROUPS.map((group) => <section className="registry-section" key={group.title}><div className="registry-section-head"><div><span>{group.subtitle}</span><h3>{group.title}</h3></div><b>{group.items.length} เมนู</b></div><div className="operation-grid">{group.items.map((x) => { const s=STATUS[x.state]; return <a className="operation-card" href={href(x.path ?? `/registry?module=${x.key}`)} key={x.key}><div className={`operation-icon ${x.state}`}>{x.path?'↗':'◇'}</div><div><strong>{x.title}</strong><p>{x.description}</p><Badge kind={s.kind}>{s.label}</Badge></div><span className="operation-arrow">›</span></a>; })}</div></section>)}
   </>;

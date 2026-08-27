@@ -120,6 +120,16 @@ export class PgExceptionFilter implements ExceptionFilter {
           message: `อ้างถึงข้อมูลที่ไม่มีอยู่จริง (${e.constraint ?? 'foreign key'})`,
         };
 
+      // ลบ/แก้แถวแม่ไม่ได้เพราะยังมีแถวลูกผูกอยู่ (on delete restrict) — ต่างจาก
+      // 23503 ตรงที่นี่คือฝั่ง "แม่ถูกแตะ" ไม่ใช่ "ลูกอ้างของที่ไม่มีจริง"
+      // ไม่มีเคสนี้มาก่อนตัวกรองนี้จึงตกไปที่ 500 ทั่วไปซึ่งไม่บอกอะไรผู้ใช้เลย
+      // ทั้งที่หน้าจอเตือนไว้ล่วงหน้าแล้วว่า "ลบไม่ได้ถ้ายังมี... ผูกอยู่"
+      case '23001':
+        return {
+          status: HttpStatus.CONFLICT,
+          message: `ลบไม่ได้เพราะยังมีข้อมูลอื่นผูกอยู่ (${e.constraint ?? 'restrict'}) — ลบข้อมูลที่ผูกอยู่ก่อน`,
+        };
+
       case '23502':
         return {
           status: HttpStatus.BAD_REQUEST,

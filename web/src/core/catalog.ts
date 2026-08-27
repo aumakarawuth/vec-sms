@@ -6,6 +6,7 @@
  * อย่างเดียว ลิงก์ที่ส่งไปจะเปิดมาคนละภาคกับที่ตั้งใจ แล้วอีกฝ่ายจะเห็น
  * ตัวเลขคนละชุดโดยไม่รู้ตัว
  */
+import { useAsync } from '../ui/kit';
 import { api, qs } from './api';
 
 export interface Term {
@@ -18,8 +19,53 @@ export interface Term {
   add_drop_ends_on: string | null;
   withdraw_ends_on: string | null;
   grade_due_on: string | null;
+  category_id: string | null;
+  short_name: string | null;
+  sort_order: number;
+  is_normal: boolean;
+  registration_starts_on: string | null;
+  gradebook_starts_on: string | null;
+  payment_starts_on: string | null;
+  payment_ends_on: string | null;
+  audit_starts_on: string | null;
+  audit_ends_on: string | null;
   year_be: number;
   academic_year_id: string;
+}
+
+export interface TermCategory {
+  id: string;
+  title: string;
+  sort_order: number;
+}
+
+export interface Period {
+  id: string;
+  ordinal: number;
+  title: string;
+  short_name: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+}
+
+export const fetchPeriods = () => api.get<Period[]>('/academic/periods');
+
+/** "1–2" → "1–2 (08:30–10:30)" เมื่อมีข้อมูลเวลาให้ทั้งคาบแรกและคาบสุดท้าย */
+export function periodRangeLabel(periods: Period[], from: number, to: number): string {
+  const base = from === to ? `${from}` : `${from}–${to}`;
+  const p1 = periods.find((p) => p.ordinal === from);
+  const p2 = periods.find((p) => p.ordinal === to);
+  if (p1?.starts_at && p2?.ends_at) return `${base} (${p1.starts_at.slice(0, 5)}–${p2.ends_at.slice(0, 5)})`;
+  return base;
+}
+
+/**
+ * ใช้ตรงในหน้าจอที่ต้องแสดงเลขคาบเป็นเวลาจริง (จัดตารางสอน/ตารางสอบ)
+ * โดยไม่ต้องส่ง props คาบเรียนไล่ผ่านทุกคอมโพเนนต์ย่อย
+ */
+export function usePeriodLabel() {
+  const periods = useAsync(fetchPeriods, []);
+  return (from: number, to: number) => periodRangeLabel(periods.data ?? [], from, to);
 }
 
 export interface Section {

@@ -13,8 +13,20 @@
  */
 import { useState } from 'react';
 import { api, qs } from '../core/api';
+import { parseCsv } from '../core/csv';
 import { thaiDateTime } from '../core/fmt';
-import { AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { mapGenericExcelRows } from '../core/generic-import-template';
+import { mapGradeImportRow } from '../core/grade-import-template';
+import { useScope } from '../core/scope';
+import { isBlankSisaCsvRow, mapSisaCsvRow } from '../core/student-import-sisa-csv-template';
+import { isBlankStudentRow, mapStudentImportRow, STUDENT_IMPORT_DATA_START_ROW } from '../core/student-import-template';
+import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { readXlsxFirstSheet } from '../core/xlsx';
+
+interface Problem {
+  row_no: number;
+  errors: string[];
+}
 
 interface Batch {
   id: string;
@@ -26,12 +38,14 @@ interface Batch {
   error_rows: number;
   created_at?: string;
   applied_at?: string | null;
+  problems?: Problem[];
 }
 
 const KIND: Record<string, string> = {
   student: 'นักศึกษา',
   staff: 'บุคลากร',
   academic_history: 'ประวัติการเรียนเดิม',
+  grade: 'ผลการเรียน',
 };
 
 const STATUS: Record<string, { label: string; kind: 'default' | 'warn' | 'ok' | 'danger' }> = {
@@ -51,51 +65,119 @@ const TEMPLATE: Record<string, string> = {
     'student_code,source_th,term_label,course_code,course_name_th,credits,grade_symbol,grade_point,transfer_kind,mapped_course_code,note',
 };
 
+type ImportRow = { rowNo: number; payload: Record<string, string> };
+
 export function ImportScreen() {
+  const scope = useScope();
+  const admittedYearBe = scope.year ? String(scope.year.year_be) : '';
   const [kind, setKind] = useState('student');
   const [sourceName, setSourceName] = useState('');
-  const [csv, setCsv] = useState('');
+  const [excelRows, setExcelRows] = useState<ImportRow[]>([]);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [errorRowsTotal, setErrorRowsTotal] = useState(0);
+  const [skippedGradeRows, setSkippedGradeRows] = useState(0);
+  const [lastFileUsedScopeYear, setLastFileUsedScopeYear] = useState(false);
 
   const batches = useAsync(() => api.get<Batch[]>(`/import${qs({ kind })}`), [kind]);
 
-  /**
-   * แปลง CSV เป็นแถว — ตัดช่องว่างและข้ามบรรทัดว่าง
-   * ค่าที่เป็นสตริงว่างจะไม่ถูกส่งไปเลย เพราะฐานข้อมูลแยก "ไม่กรอก"
-   * ออกจาก "กรอกเป็นค่าว่าง" ในหลายคอลัมน์
-   */
-  function parse(): { rowNo: number; payload: Record<string, string> }[] {
-    const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return [];
-    const head = lines[0]!.split(',').map((h) => h.trim());
-    return lines.slice(1).map((line, i) => {
-      const cells = line.split(',');
-      const payload: Record<string, string> = {};
-      head.forEach((h, j) => {
-        const v = (cells[j] ?? '').trim();
-        if (v !== '') payload[h] = v;
-      });
-      return { rowNo: i + 1, payload };
-    });
+  const rows = excelRows;
+  const fileDisabled = fileBusy;
+  // นักศึกษารับได้สองแบบ อ่านนามสกุลไฟล์เพื่อเลือกตัวแมปให้เองแทนการให้เลือกเมนูซ้ำ
+  const isCsvKind = kind === 'grade';
+
+  async function handleExcelFile(file: File) {
+    setFileBusy(true);
+    setFileError(null);
+    setMsg(null);
+    setError(null);
+    setProblems([]); setErrorRowsTotal(0); setSkippedGradeRows(0); setLastFileUsedScopeYear(false);
+    try {
+      let mapped: ImportRow[];
+      if (kind === 'student' && /\.csv$/i.test(file.name)) {
+        const rows = parseCsv(await file.text());
+        const dataRows = rows.slice(1).filter((r) => !isBlankSisaCsvRow(r));
+        if (dataRows.length === 0) {
+          throw new Error('ไม่พบแถวข้อมูลในไฟล์ (แถวแรกต้องเป็นหัวตาราง แล้วข้อมูลเริ่มแถวที่ 2)');
+        }
+        mapped = dataRows.map((r, i) => ({ rowNo: i + 1, payload: mapSisaCsvRow(r) }));
+      } else if (kind === 'grade') {
+        const rows = parseCsv(await file.text());
+        const skipped0 = rows.length > 0 ? rows.length - 1 : 0;
+        let skippedUngraded = 0;
+        mapped = [];
+        for (const r of rows.slice(1)) {
+          const payload = mapGradeImportRow(r);
+          if (payload) {
+            mapped.push({ rowNo: mapped.length + 1, payload });
+          } else {
+            skippedUngraded += 1;
+          }
+        }
+        if (mapped.length === 0) {
+          throw new Error(
+            skipped0 === 0
+              ? 'ไม่พบแถวข้อมูลในไฟล์ (แถวแรกต้องเป็นหัวตาราง แล้วข้อมูลเริ่มแถวที่ 2)'
+              : 'ทุกแถวยังไม่มีผลการเรียน (คอลัมน์ "ผลการเรียน" เป็น "-" หรือไม่มีคะแนน) ไม่มีอะไรให้นำเข้า',
+          );
+        }
+        setSkippedGradeRows(skippedUngraded);
+      } else if (kind === 'student') {
+        if (!admittedYearBe) {
+          throw new Error(
+            'ไฟล์แม่แบบ .xlsx ไม่มีคอลัมน์ปีที่เข้าศึกษา — เลือกปีการศึกษาที่เมนูด้านบนก่อน แล้วค่อยเลือกไฟล์ใหม่อีกครั้ง',
+          );
+        }
+        const sheet = await readXlsxFirstSheet(file);
+        const dataRows = sheet.slice(STUDENT_IMPORT_DATA_START_ROW).filter((r) => !isBlankStudentRow(r ?? []));
+        if (dataRows.length === 0) {
+          throw new Error('ไม่พบแถวข้อมูลในไฟล์ (ต้องเริ่มที่แถวที่ 3 ตามแม่แบบ)');
+        }
+        mapped = dataRows.map((r, i) => ({
+          rowNo: i + 1,
+          payload: mapStudentImportRow(r ?? [], admittedYearBe),
+        }));
+        setLastFileUsedScopeYear(true);
+      } else {
+        const sheet = await readXlsxFirstSheet(file);
+        mapped = mapGenericExcelRows(sheet);
+        if (mapped.length === 0) {
+          throw new Error(
+            'ไม่พบแถวข้อมูล — แถวแรกของชีตต้องเป็นหัวตาราง (ดูตัวอย่างชื่อคอลัมน์ด้านล่าง) แล้วข้อมูลเริ่มแถวที่ 2',
+          );
+        }
+      }
+      setExcelRows(mapped);
+      setSourceName(file.name);
+    } catch (e) {
+      setExcelRows([]);
+      setFileError(e instanceof Error ? e.message : 'อ่านไฟล์ไม่สำเร็จ');
+    } finally {
+      setFileBusy(false);
+    }
   }
 
-  const rows = parse();
-
-  async function run(apply: boolean) {
+  async function run(apply: boolean, rowsOverride?: ImportRow[]) {
+    const rowsToSend = rowsOverride ?? rows;
     setBusy(true);
     setError(null);
     setMsg(null);
+    setProblems([]); setErrorRowsTotal(0);
     try {
       const batch = await api.post<{ id: string }>('/import', {
         kind,
-        sourceName: sourceName.trim() || 'วางจากตาราง',
-        rows,
+        sourceName: sourceName.trim() || 'ไฟล์ที่อัปโหลด',
+        rows: rowsToSend,
       });
       const v = await api.post<Batch>(`/import/${batch.id}/validate`);
       if (v.error_rows > 0) {
         setError(`ตรวจแล้วพบแถวผิด ${v.error_rows} จาก ${v.total_rows} แถว — ยังไม่นำเข้า`);
+        setProblems(v.problems ?? []);
+        setErrorRowsTotal(v.error_rows);
         batches.reload();
         return;
       }
@@ -106,13 +188,26 @@ export function ImportScreen() {
       }
       const a = await api.post<{ imported: number }>(`/import/${batch.id}/apply`);
       setMsg(`นำเข้าแล้ว ${a.imported} รายการ`);
-      setCsv('');
+      setExcelRows([]);
       batches.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'นำเข้าไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * ตัดแถวที่มีปัญหาออกแล้วนำเข้าแถวที่เหลือทันทีในคลิกเดียว — ไม่ต้องกด
+   * "ตรวจแล้วนำเข้าจริง" ซ้ำอีกรอบ เพราะรายชื่อแถวที่ถูกตัดออกก็โชว์อยู่
+   * ในตารางด้านล่างอยู่แล้วก่อนกดปุ่มนี้ ไม่มีอะไรถูกซ่อนจากผู้ใช้
+   */
+  async function skipProblemRows() {
+    const bad = new Set(problems.map((p) => p.row_no));
+    const remaining = excelRows.filter((r) => !bad.has(r.rowNo));
+    setExcelRows(remaining);
+    setError(null);
+    await run(true, remaining);
   }
 
   return (
@@ -122,34 +217,88 @@ export function ImportScreen() {
       <Card title="วางข้อมูลจากตาราง">
         <div className="row">
           <Field label="ชนิดข้อมูล">
-            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <select
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value);
+                setExcelRows([]);
+                setFileError(null);
+                setProblems([]); setErrorRowsTotal(0); setSkippedGradeRows(0); setLastFileUsedScopeYear(false);
+                setError(null);
+              }}
+            >
               <option value="student">นักศึกษา</option>
               <option value="staff">บุคลากร</option>
               <option value="academic_history">ประวัติการเรียนเดิม</option>
+              <option value="grade">ผลการเรียน</option>
             </select>
-          </Field>
-          <Field label="ชื่อไฟล์ต้นทาง">
-            <input
-              value={sourceName}
-              onChange={(e) => setSourceName(e.target.value)}
-              placeholder="เช่น นักศึกษาใหม่-2569.xlsx"
-            />
           </Field>
         </div>
 
-        <label className="field">
-          <span>
-            ข้อมูลแบบ CSV — บรรทัดแรกเป็นหัวตาราง (คัดลอกจาก Excel แล้ววางได้ ถ้าคั่นด้วยจุลภาค)
-          </span>
-          <textarea
-            value={csv}
-            onChange={(e) => setCsv(e.target.value)}
-            rows={10}
-            spellCheck={false}
-            style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12 }}
-            placeholder={TEMPLATE[kind]}
-          />
-        </label>
+        <Card
+          title={
+            kind === 'grade'
+              ? 'อัปโหลดไฟล์ .csv ผลการเรียน (finalgrades.csv)'
+              : kind === 'student'
+                ? 'อัปโหลดไฟล์นักศึกษา (.xlsx ตามแม่แบบ หรือ .csv จากระบบทะเบียนกลาง)'
+                : 'อัปโหลดไฟล์ Excel — แถวแรกเป็นหัวตาราง'
+          }
+        >
+          <Field label={kind === 'student' ? 'ไฟล์ .xlsx หรือ .csv' : isCsvKind ? 'ไฟล์ .csv' : 'ไฟล์ .xlsx'}>
+            <input
+              type="file"
+              accept={kind === 'student' ? '.xlsx,.csv' : isCsvKind ? '.csv' : '.xlsx'}
+              disabled={fileDisabled}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) void handleExcelFile(f);
+              }}
+            />
+          </Field>
+
+          {kind === 'student' && (
+            <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+              เลือกไฟล์ตามระบบชนิดใดก็ได้ ระบบดูจากนามสกุลไฟล์เอง — ไฟล์ .xlsx (แม่แบบ
+              ImportFull_VocationalEducation.xlsx) ไม่มีคอลัมน์ปีที่เข้าศึกษา ต้องเลือกปีการศึกษาที่เมนู
+              ด้านบนก่อน ส่วนไฟล์ .csv จากระบบทะเบียนกลางมีคอลัมน์นี้อยู่แล้วในไฟล์ ไม่ต้องเลือกปีก่อน
+              {admittedYearBe ? '' : ' (ยังไม่ได้เลือกปีการศึกษา — จำเป็นเฉพาะไฟล์ .xlsx เท่านั้น)'}
+            </div>
+          )}
+
+          {kind === 'grade' && (
+            <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+              หัวตาราง: ภาคเรียน,ปี,รหัส,รหัสวิชา,ชื่อวิชา,คะแนน,ผลการเรียน,หน่วยกิต — ข้ามแถวที่ยังไม่มี
+              ผลการเรียน ("-") หรือไม่มีคะแนนตัวเลขให้อัตโนมัติ นำเข้าเป็นคะแนนในสมุดคะแนนของแต่ละ
+              กลุ่มเรียน แล้วยังต้องกด "ส่งเกรด" และผ่านสายอนุมัติตามปกติที่หน้าสมุดคะแนน
+            </div>
+          )}
+
+          {kind !== 'student' && kind !== 'grade' && (
+            <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
+              แถวแรกของชีตต้องเป็นชื่อคอลัมน์ตรงตามนี้ (คัดลอกไปวางเป็นหัวตารางในไฟล์ Excel ได้เลย)
+              <br />
+              <code style={{ fontSize: 11 }}>{TEMPLATE[kind]}</code>
+            </div>
+          )}
+
+          {fileBusy && <Notice kind="info">กำลังอ่านไฟล์…</Notice>}
+          {fileError && <Notice kind="error">{fileError}</Notice>}
+          {excelRows.length > 0 && (
+            <Notice kind="ok">
+              อ่านไฟล์ได้ {excelRows.length} แถว
+              {lastFileUsedScopeYear && ` (ปีที่เข้าศึกษา ${admittedYearBe})`}
+              {kind === 'grade' && skippedGradeRows > 0 && ` (ข้ามแถวที่ยังไม่มีผลการเรียนไป ${skippedGradeRows} แถว)`} —
+              ตรวจสอบด้านล่างแล้วกดนำเข้า
+              {kind === 'student' &&
+                ' (คอลัมน์ประเภทวิชา/สาขาวิชา/หลักสูตร/ระดับชั้น/ห้องในไฟล์ไม่ได้ผูกอัตโนมัติ ' +
+                  'ต้องไปจัดที่หน้า "ลงทะเบียนเรียน" อีกที — ดูเหตุผลในหมายเหตุของแม่แบบ)'}{' '}
+              <button className="link" onClick={() => { setExcelRows([]); setProblems([]); setErrorRowsTotal(0); setSkippedGradeRows(0); setLastFileUsedScopeYear(false); setError(null); }}>
+                ล้างไฟล์ที่อ่านไว้
+              </button>
+            </Notice>
+          )}
+        </Card>
 
         <div className="row">
           <div className="shrink">
@@ -173,6 +322,37 @@ export function ImportScreen() {
 
         {error && <Notice kind="error">{error}</Notice>}
         {msg && <Notice kind="ok">{msg}</Notice>}
+
+        {problems.length > 0 && (
+          <Card title={`แถวที่มีปัญหา (${problems.length}${errorRowsTotal > problems.length ? ` จาก ${errorRowsTotal}` : ''})`}>
+            <div className="row">
+              <button className="primary" disabled={busy} onClick={() => void skipProblemRows()}>
+                {busy ? 'กำลังทำ…' : `ข้ามแถวที่มีปัญหา แล้วนำเข้าเฉพาะแถวที่เหลือ (${rows.length - problems.length} แถว)`}
+              </button>
+            </div>
+            {errorRowsTotal > problems.length && (
+              <p className="hint">
+                แสดงได้สูงสุด {problems.length} แถวต่อรอบ — ถ้าตัดรอบนี้แล้วยังไม่ผ่าน ให้กดข้ามซ้ำอีกรอบเพื่อไล่แถวที่เหลือ
+              </p>
+            )}
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 70 }}>แถวที่</th>
+                  <th>ปัญหา</th>
+                </tr>
+              </thead>
+              <tbody>
+                {problems.map((p) => (
+                  <tr key={p.row_no}>
+                    <td className="num">{p.row_no}</td>
+                    <td>{p.errors.join(' · ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        )}
 
         {kind === 'staff' && (
           <Notice kind="info">
@@ -207,6 +387,7 @@ export function ImportScreen() {
                   <th className="num" style={{ width: 90 }}>ผิด</th>
                   <th style={{ width: 170 }}>สถานะ</th>
                   <th style={{ width: 170 }}>เมื่อ</th>
+                  <th style={{ width: 70 }} />
                 </tr>
               </thead>
               <tbody>
@@ -229,6 +410,18 @@ export function ImportScreen() {
                         <Badge kind={st?.kind ?? 'default'}>{st?.label ?? b.status}</Badge>
                       </td>
                       <td>{thaiDateTime(b.applied_at ?? b.created_at ?? null)}</td>
+                      <td>
+                        {b.status !== 'applied' && (
+                          <ActionButton
+                            className="ghost danger"
+                            confirm={`ลบรอบนำเข้า "${b.source_name}" นี้ใช่หรือไม่ — ยังไม่ได้นำเข้าจริง ลบแล้วเรียกคืนไม่ได้`}
+                            onRun={() => api.del(`/import/${b.id}`)}
+                            onDone={() => batches.reload()}
+                          >
+                            ลบ
+                          </ActionButton>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

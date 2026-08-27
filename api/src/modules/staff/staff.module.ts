@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { IsIn, IsISO8601, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsISO8601, IsOptional, IsString } from 'class-validator';
 import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { RequestContext } from '../../common/context/request-context';
@@ -47,6 +47,17 @@ class RevokeRoleDto {
    * ใช้กับกรณีที่รู้อยู่แล้วว่าวาระจบเมื่อไร เช่นรักษาการถึงสิ้นเดือน
    */
   @IsOptional() @IsISO8601() effectiveTo?: string;
+}
+
+/** ข้อมูลที่ฝ่ายบุคคลแก้ได้โดยไม่แตะประวัติสิทธิ์ของบุคลากร */
+class UpdateStaffProfileDto {
+  @IsOptional() @IsString() phone?: string | null;
+  @IsOptional() @IsString() email?: string | null;
+  @IsOptional() @IsIn(['civil_servant', 'permanent', 'contract', 'part_time', 'industry_expert']) employmentKind?: string;
+  @IsOptional() @IsBoolean() isTeacher?: boolean;
+  @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsString() licenseNo?: string | null;
+  @IsOptional() @IsISO8601() licenseExpires?: string | null;
 }
 
 class AuditQueryDto {
@@ -147,6 +158,43 @@ export class StaffService {
       ).rows;
 
       return { ...staff, roles, sections };
+    });
+  }
+
+  /** แก้เฉพาะข้อมูลการติดต่อ/การจ้าง/ใบอนุญาต ไม่ใช้เส้นทางนี้มอบสิทธิ์ระบบ */
+  async updateProfile(staffId: string, dto: UpdateStaffProfileDto) {
+    return this.db.tx(async (c) => {
+      const personSets: string[] = [];
+      const personValues: unknown[] = [staffId];
+      const addPerson = (column: string, value: unknown) => {
+        personValues.push(value);
+        personSets.push(`${column} = $${personValues.length}`);
+      };
+      if (dto.phone !== undefined) addPerson('phone', dto.phone || null);
+      if (dto.email !== undefined) addPerson('email', dto.email || null);
+      if (personSets.length) {
+        await c.query(
+          `update person p set ${personSets.join(', ')}
+             from staff st where st.id = $1 and p.id = st.person_id`,
+          personValues,
+        );
+      }
+
+      const staffSets: string[] = [];
+      const staffValues: unknown[] = [staffId];
+      const addStaff = (column: string, value: unknown) => {
+        staffValues.push(value);
+        staffSets.push(`${column} = $${staffValues.length}`);
+      };
+      if (dto.employmentKind !== undefined) addStaff('employment_kind', dto.employmentKind);
+      if (dto.isTeacher !== undefined) addStaff('is_teacher', dto.isTeacher);
+      if (dto.active !== undefined) addStaff('active', dto.active);
+      if (dto.licenseNo !== undefined) addStaff('license_no', dto.licenseNo || null);
+      if (dto.licenseExpires !== undefined) addStaff('license_expires', dto.licenseExpires || null);
+      if (staffSets.length) {
+        await c.query(`update staff set ${staffSets.join(', ')} where id = $1`, staffValues);
+      }
+      return { updated: true };
     });
   }
 
@@ -286,6 +334,12 @@ class StaffController {
   @Get(':id')
   detail(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.detail(id);
+  }
+
+  @Audit('staff_profile')
+  @Patch(':id/profile')
+  updateProfile(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateStaffProfileDto) {
+    return this.svc.updateProfile(id, dto);
   }
 
   /**

@@ -261,5 +261,103 @@ begin
   raise notice 'TEST 30 ผ่าน — รายงานอายุหนี้ทำงาน มี % ช่วงอายุที่มียอดค้าง', v;
 end $$;
 
+-- ── TEST 336 ───────────────────────────────────────────────────────
+-- ส่วนลดที่เจาะจงรายการ (0080) ต้องลดเฉพาะรายการนั้น ไม่ใช่ทุกบรรทัด
+-- เท่ากันหมด — นักศึกษา 012 มีส่วนลดพี่น้อง 10% แบบไม่เจาะจง (จาก TEST 24)
+-- อยู่แล้ว เพิ่มส่วนลดที่เจาะจงเฉพาะค่าวัสดุฝึกอีก 50% ยอดที่ถูกต้องคือ
+-- ค่าวัสดุฝึกลด 60% (10%+50% รวมกัน) ส่วนรายการอื่นลดแค่ 10% เดิม
+do $$
+declare v_inv uuid; r record;
+begin
+  insert into student_funding
+    (student_id, funding_source_id, academic_year_id, fee_item_id,
+     percent_off, approved_by, approved_at, document_no)
+  values ('aaaa0000-0000-0000-0000-000000000012', 'f0000000-0000-0000-0000-000000000001',
+          '22222222-2222-2222-2222-222222222222', 'd0000000-0000-0000-0000-000000000002',
+          50.00, 'aaaa0000-0000-0000-0000-000000000022', now(), 'ทน.2569/0008');
+
+  -- ภาคเรียนที่สอง — ยังไม่เคยออกใบแจ้งหนี้ให้นักศึกษาคนนี้มาก่อน
+  v_inv := issue_invoice('aaaa0000-0000-0000-0000-000000000012',
+                         '33333333-3333-3333-3333-333333333332', 1);
+
+  select amount, discount into r from invoice_line
+  where invoice_id = v_inv and fee_item_id = 'd0000000-0000-0000-0000-000000000001'; -- ค่าเล่าเรียน
+  if r.discount <> 900.00 then
+    raise exception 'TEST 336: ค่าเล่าเรียนควรลดแค่ 10%% (900) เพราะไม่เจาะจงถึงมัน ได้ %', r.discount;
+  end if;
+
+  select amount, discount into r from invoice_line
+  where invoice_id = v_inv and fee_item_id = 'd0000000-0000-0000-0000-000000000002'; -- ค่าวัสดุฝึก
+  if r.discount <> 1500.00 then
+    raise exception 'TEST 336: ค่าวัสดุฝึกควรลด 60%% (1,500 จาก 2,500) ทั้งแบบรวมและแบบเจาะจง ได้ %', r.discount;
+  end if;
+
+  select amount, discount into r from invoice_line
+  where invoice_id = v_inv and fee_item_id = 'd0000000-0000-0000-0000-000000000003'; -- ค่ากิจกรรม
+  if r.discount <> 80.00 then
+    raise exception 'TEST 336: ค่ากิจกรรมควรลดแค่ 10%% (80) เพราะไม่เจาะจงถึงมัน ได้ %', r.discount;
+  end if;
+
+  raise notice 'TEST 336 ผ่าน — ส่วนลดเจาะจงค่าวัสดุฝึกไม่ล้นไปลดค่าเล่าเรียน/ค่ากิจกรรมด้วย';
+end $$;
+
+-- ── TEST 337 ───────────────────────────────────────────────────────
+-- โครงสร้างค่าเทอมแบบ "รวม" (level/study_year ว่าง, 0080) — เลือกใช้ก็
+-- ต่อเมื่อไม่มีโครงสร้างที่เจาะจงกว่าตรงกันเท่านั้น (สาขา > ชั้นปี > ระดับ)
+do $$
+declare v_specific uuid; v_combined uuid; v_picked uuid;
+begin
+  insert into fee_schedule (id, institution_id, academic_year_id, level, study_year, announcement_no)
+  values
+    ('e0000000-0000-0000-0000-000000000090', '11111111-1111-1111-1111-111111111111',
+     '22222222-2222-2222-2222-222222222222', 'PVC', 4, 'ทดสอบ TEST 337 — เจาะจง')
+  returning id into v_specific;
+
+  insert into fee_schedule (id, institution_id, academic_year_id, level, study_year, announcement_no)
+  values
+    ('e0000000-0000-0000-0000-000000000091', '11111111-1111-1111-1111-111111111111',
+     '22222222-2222-2222-2222-222222222222', null, null, 'ทดสอบ TEST 337 — รวมทุกระดับทุกชั้นปี')
+  returning id into v_combined;
+
+  -- มีทั้งแบบเจาะจง (PVC ชั้นปี 4) และแบบรวม พร้อมกัน — ต้องเลือกแบบเจาะจง
+  select fs.id into v_picked
+  from fee_schedule fs
+  where fs.institution_id = '11111111-1111-1111-1111-111111111111'
+    and fs.academic_year_id = '22222222-2222-2222-2222-222222222222'
+    and (fs.level = 'PVC' or fs.level is null)
+    and (fs.study_year = 4 or fs.study_year is null)
+    and fs.active
+    and (fs.program_id is null)
+    and fs.id in (v_specific, v_combined)
+  order by (fs.program_id is not null) desc, (fs.study_year is not null) desc, (fs.level is not null) desc
+  limit 1;
+
+  if v_picked <> v_specific then
+    raise exception 'TEST 337: มีแบบเจาะจงอยู่แล้วต้องเลือกแบบเจาะจง ไม่ใช่แบบรวม ได้ %', v_picked;
+  end if;
+
+  -- ลบแบบเจาะจงทิ้ง เหลือแต่แบบรวม — ต้องร่วงมาเลือกแบบรวมแทน
+  delete from fee_schedule where id = v_specific;
+
+  select fs.id into v_picked
+  from fee_schedule fs
+  where fs.institution_id = '11111111-1111-1111-1111-111111111111'
+    and fs.academic_year_id = '22222222-2222-2222-2222-222222222222'
+    and (fs.level = 'PVC' or fs.level is null)
+    and (fs.study_year = 4 or fs.study_year is null)
+    and fs.active
+    and (fs.program_id is null)
+    and fs.id = v_combined
+  order by (fs.program_id is not null) desc, (fs.study_year is not null) desc, (fs.level is not null) desc
+  limit 1;
+
+  if v_picked <> v_combined then
+    raise exception 'TEST 337: ไม่มีแบบเจาะจงเหลือแล้วต้องร่วงไปใช้แบบรวม ได้ %', v_picked;
+  end if;
+
+  delete from fee_schedule where id = v_combined;
+  raise notice 'TEST 337 ผ่าน — เลือกโครงสร้างที่เจาะจงก่อนเสมอ ร่วงไปใช้แบบรวมเฉพาะเมื่อไม่มีแบบเจาะจงจริง ๆ';
+end $$;
+
 \echo ''
 \echo '════ ทดสอบการเงินครบทุกข้อ ════'

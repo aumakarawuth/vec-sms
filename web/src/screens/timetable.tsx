@@ -13,7 +13,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
-import { fetchSections, type Section } from '../core/catalog';
+import { fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -95,6 +95,7 @@ const AVAILABILITY_KIND: Record<string, string> = { unavailable: 'ห้าม�
  */
 function TeacherAvailabilityCard({ staff, termId }: { staff: StaffRow[]; termId: string }) {
   const [staffId, setStaffId] = useState('');
+  const periodLabel = usePeriodLabel();
   const avail = useAsync(
     () => (staffId ? api.get<Availability[]>(`/timetable/availability?staffId=${staffId}`) : Promise.resolve([])),
     [staffId],
@@ -190,7 +191,7 @@ function TeacherAvailabilityCard({ staff, termId }: { staff: StaffRow[]; termId:
                   {rows.map((a) => (
                     <tr key={a.id}>
                       <td>{DAY[a.day_of_week]}</td>
-                      <td>{a.period_from}–{a.period_to}</td>
+                      <td>{periodLabel(a.period_from, a.period_to)}</td>
                       <td>
                         <Badge kind={a.kind === 'unavailable' ? 'danger' : 'warn'}>
                           {AVAILABILITY_KIND[a.kind] ?? a.kind}
@@ -222,6 +223,7 @@ function TeacherAvailabilityCard({ staff, termId }: { staff: StaffRow[]; termId:
 
 function TransferRow({ slot, rooms, onDone }: { slot: Timeslot; rooms: Room[]; onDone: () => void }) {
   const [open, setOpen] = useState(false);
+  const periodLabel = usePeriodLabel();
   const [dayOfWeek, setDayOfWeek] = useState(String(slot.day_of_week));
   const [periodFrom, setPeriodFrom] = useState(String(slot.period_from));
   const [periodTo, setPeriodTo] = useState(String(slot.period_to));
@@ -231,7 +233,7 @@ function TransferRow({ slot, rooms, onDone }: { slot: Timeslot; rooms: Room[]; o
     <>
       <tr>
         <td>{DAY[slot.day_of_week]}</td>
-        <td>{slot.period_from}–{slot.period_to}</td>
+        <td>{periodLabel(slot.period_from, slot.period_to)}</td>
         <td>{slot.room_code ? `${slot.room_code} ${slot.room_name}` : '— ไม่ระบุห้อง —'}</td>
         <td>
           <button className="ghost" onClick={() => setOpen(!open)}>{open ? 'ปิด' : 'ย้าย'}</button>{' '}
@@ -392,6 +394,7 @@ function TransferSectionForm({
 
 export function TimetableScreen() {
   const { terms, termId, setTerm } = useTermPicker();
+  const periodLabel = usePeriodLabel();
   const rooms = useAsync(() => api.get<Room[]>('/timetable/rooms'), []);
   const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
   const sections = useAsync(
@@ -549,7 +552,7 @@ export function TimetableScreen() {
                   <tr key={i}>
                     <td>{DAY[s.day_of_week]}</td>
                     <td>
-                      {s.period_from}–{s.period_to}
+                      {periodLabel(s.period_from, s.period_to)}
                     </td>
                     <td>
                       {s.avoids ? (
@@ -612,7 +615,7 @@ export function TimetableScreen() {
                       <td>{c.label}</td>
                       <td>{DAY[c.day_of_week]}</td>
                       <td>
-                        {c.period_from}–{c.period_to}
+                        {periodLabel(c.period_from, c.period_to)}
                       </td>
                       <td style={{ whiteSpace: 'normal' }}>{c.message_th ?? c.kind ?? '—'}</td>
                     </tr>

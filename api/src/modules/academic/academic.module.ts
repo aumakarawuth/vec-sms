@@ -2,12 +2,14 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Injectable,
   Module,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -15,12 +17,14 @@ import {
   ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsIn,
   IsISO8601,
   IsInt,
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -93,6 +97,32 @@ class PlaceStudentsDto {
   @IsArray() @ArrayNotEmpty() @ArrayMaxSize(500) @IsUuidArray() studentIds: string[];
   @IsInt() @Min(1) @Max(6) studyYear: number;
   @IsOptional() @IsString() groupCode?: string;
+}
+
+/** เรียงเลขที่ใหม่ภายในห้องเดียว โดยใช้รหัสนักศึกษาเป็นลำดับที่ตรวจสอบย้อนกลับได้ */
+class RenumberClassNumbersDto {
+  @IsUuid() academicYearId: string;
+  @IsInt() @Min(1) @Max(6) studyYear: number;
+  @IsString() @MaxLength(40) groupCode: string;
+}
+
+/** ห้องประจำชั้น ไม่ใช่ห้องกายภาพ (`room`) ที่ใช้จัดตารางสอน */
+class CreateClassGroupDto {
+  @IsUuid() academicYearId: string;
+  @IsIn(['PVC', 'PVS', 'TVB']) level: string;
+  @IsInt() @Min(1) @Max(6) studyYear: number;
+  @IsString() @MaxLength(40) code: string;
+  @IsOptional() @IsString() @MaxLength(80) cohort?: string;
+  @IsOptional() @IsString() @MaxLength(120) financeGroupTh?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(8) @IsUuidArray() advisorStaffIds?: string[];
+}
+
+class UpdateClassGroupDto {
+  @IsIn(['PVC', 'PVS', 'TVB']) level: string;
+  @IsInt() @Min(1) @Max(6) studyYear: number;
+  @IsString() @MaxLength(40) code: string;
+  @IsOptional() @IsString() @MaxLength(80) cohort?: string;
+  @IsOptional() @IsString() @MaxLength(120) financeGroupTh?: string;
 }
 
 @Injectable()
@@ -481,6 +511,66 @@ export class TimetableService {
     );
     return { total: rows.length, conflicts: rows };
   }
+
+  /**
+   * ภาระสอนรายบุคคลของหนึ่งภาคเรียน
+   *
+   * `planned_periods` เป็นจำนวนคาบทั้งภาคและเคยถูกหน้าจอนำไปแสดงเป็น
+   * "คาบ/สัปดาห์" ซึ่งผิดหน่วย ที่นี่จึงนับคาบต่อสัปดาห์จาก
+   * section_timeslot โดยตรง และแยกยอดทั้งภาคไว้อีกคอลัมน์หนึ่ง
+   * ครูที่ยังไม่ได้รับกลุ่มเรียนก็ต้องปรากฏ เพื่อให้ฝ่ายวิชาการเห็นคนที่
+   * ภาระเป็นศูนย์ ไม่ใช่เห็นเฉพาะคนที่ถูกมอบหมายแล้วเท่านั้น
+   */
+  async workload(termId: string) {
+    return this.db.query(
+      `with section_load as (
+         select cs.id, cs.teacher_id, cs.course_id, cs.planned_periods,
+                (select count(*) from enrollment e
+                  where e.class_section_id = cs.id and e.status = 'enrolled') as enrolled,
+                (select coalesce(sum(st.period_to - st.period_from + 1), 0)
+                   from section_timeslot st where st.class_section_id = cs.id) as weekly_periods
+           from class_section cs
+          where cs.term_id = $1
+       ), teacher_load as (
+         select teacher_id,
+                count(*) as section_count,
+                count(distinct course_id) as course_count,
+                sum(planned_periods) as planned_periods,
+                sum(enrolled) as students,
+                sum(weekly_periods) as weekly_periods,
+                count(*) filter (where weekly_periods = 0) as unscheduled_sections
+           from section_load
+          where teacher_id is not null
+          group by teacher_id
+       )
+       select s.id as staff_id, s.staff_code,
+              trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '') || ' ' ||
+                   coalesce(p.last_name_th, '')) as teacher_name,
+              d.name_th as department_name, sa.position_th,
+              coalesce(tl.section_count, 0) as section_count,
+              coalesce(tl.course_count, 0) as course_count,
+              coalesce(tl.weekly_periods, 0) as weekly_periods,
+              coalesce(tl.planned_periods, 0) as planned_periods,
+              coalesce(tl.students, 0) as students,
+              coalesce(tl.unscheduled_sections, 0) as unscheduled_sections
+         from staff s
+         join person p on p.id = s.person_id
+         join term t on t.id = $1
+         left join teacher_load tl on tl.teacher_id = s.id
+         left join lateral (
+           select a.department_id, a.position_th
+             from staff_assignment a
+            where a.staff_id = s.id and a.is_primary
+              and a.effective_from <= t.starts_on
+              and (a.effective_to is null or a.effective_to >= t.starts_on)
+            order by a.effective_from desc limit 1
+         ) sa on true
+         left join department d on d.id = sa.department_id
+        where s.active and s.is_teacher
+        order by coalesce(tl.weekly_periods, 0) desc, s.staff_code`,
+      [termId],
+    );
+  }
 }
 
 @Injectable()
@@ -596,7 +686,7 @@ export class RolloverService {
 
   async placements(academicYearId: string) {
     return this.db.query(
-      `select scp.study_year, scp.group_code, s.student_code,
+      `select scp.study_year, scp.group_code, s.student_code, s.class_number,
               trim(coalesce(p.prefix_th,'') || coalesce(p.first_name_th,'')
                    || ' ' || coalesce(p.last_name_th,'')) as full_name
          from student_class_placement scp
@@ -606,6 +696,31 @@ export class RolloverService {
         order by scp.study_year, scp.group_code nulls last, s.student_code`,
       [academicYearId],
     );
+  }
+
+  async renumberClassNumbers(dto: RenumberClassNumbersDto) {
+    return this.db.tx(async (c) => {
+      const total = (await c.query<{ count: string }>(
+        `select count(*)::text as count from student_class_placement
+          where academic_year_id = $1 and study_year = $2 and group_code = $3`,
+        [dto.academicYearId, dto.studyYear, dto.groupCode],
+      )).rows[0];
+      const count = Number(total?.count ?? 0);
+      if (count === 0) throw new BadRequestException('ไม่พบนักศึกษาในห้องที่เลือก');
+      if (count > 99) throw new BadRequestException('ห้องนี้มีมากกว่า 99 คน จึงกำหนดเลขที่ตามรูปแบบระบบไม่ได้');
+      await c.query(
+        `with numbered as (
+           select scp.student_id, row_number() over (order by s.student_code)::smallint as class_number
+             from student_class_placement scp
+             join student s on s.id = scp.student_id
+            where scp.academic_year_id = $1 and scp.study_year = $2 and scp.group_code = $3
+         )
+         update student s set class_number = n.class_number
+           from numbered n where n.student_id = s.id`,
+        [dto.academicYearId, dto.studyYear, dto.groupCode],
+      );
+      return { renumbered: count, order: 'student_code' };
+    });
   }
 }
 
@@ -719,6 +834,82 @@ class RolloverController {
   place(@Body() dto: PlaceStudentsDto) {
     return this.svc.placeStudents(dto);
   }
+
+  @Roles('registrar', 'academic', 'director', 'admin')
+  @Audit('student_class_placement')
+  @Post('placements/renumber')
+  renumber(@Body() dto: RenumberClassNumbersDto) {
+    return this.svc.renumberClassNumbers(dto);
+  }
+}
+
+@Injectable()
+class ClassGroupService {
+  constructor(private readonly db: DbService) {}
+
+  async list(academicYearId?: string) {
+    return this.db.query(
+      `select cg.id, cg.academic_year_id, cg.level, cg.study_year, cg.code, cg.cohort, cg.finance_group_th,
+              count(distinct scp.student_id)::int as students,
+              coalesce(json_agg(json_build_object('id', st.id, 'nameTh', trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '') || ' ' || coalesce(p.last_name_th, ''))) order by st.staff_code) filter (where st.id is not null), '[]') as advisors
+         from class_group cg
+         left join class_group_advisor cga on cga.class_group_id = cg.id
+         left join staff st on st.id = cga.staff_id
+         left join person p on p.id = st.person_id
+         left join student_class_placement scp on scp.academic_year_id = cg.academic_year_id and scp.study_year = cg.study_year and scp.group_code = cg.code
+        where cg.active and ($1::uuid is null or cg.academic_year_id = $1)
+        group by cg.id
+        order by cg.level, cg.study_year, cg.code`,
+      [academicYearId ?? null],
+    );
+  }
+
+  async create(dto: CreateClassGroupDto) {
+    return this.db.tx(async (c) => {
+      const group = await c.query<{ id: string }>(
+        `insert into class_group (institution_id, academic_year_id, level, study_year, code, cohort, finance_group_th)
+         values (current_institution_id(), $1, $2::qualification_level, $3, $4, $5, $6)
+         returning id`,
+        [dto.academicYearId, dto.level, dto.studyYear, dto.code.trim(), dto.cohort?.trim() ?? null, dto.financeGroupTh?.trim() ?? null],
+      );
+      for (const staffId of [...new Set(dto.advisorStaffIds ?? [])]) {
+        await c.query('insert into class_group_advisor (class_group_id, staff_id) values ($1, $2)', [group.rows[0].id, staffId]);
+      }
+      return { id: group.rows[0].id };
+    });
+  }
+
+  async update(id: string, dto: UpdateClassGroupDto) {
+    const row = await this.db.queryOne<{ id: string }>(
+      `update class_group set
+         level = $2::qualification_level, study_year = $3, code = $4,
+         cohort = $5, finance_group_th = $6
+       where id = $1
+       returning id`,
+      [id, dto.level, dto.studyYear, dto.code.trim(), dto.cohort?.trim() ?? null, dto.financeGroupTh?.trim() ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบห้องประจำชั้นนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async remove(id: string) {
+    const row = await this.db.queryOne<{ id: string }>(
+      `update class_group set active = false where id = $1 returning id`,
+      [id],
+    );
+    if (!row) throw new NotFoundException('ไม่พบห้องประจำชั้นนี้ หรือไม่มีสิทธิ์ลบ');
+    return { deleted: true };
+  }
+}
+
+@Roles('registrar', 'academic', 'director', 'admin')
+@Controller('class-groups')
+class ClassGroupController {
+  constructor(private readonly svc: ClassGroupService) {}
+  @Get() list(@Query('academicYearId') academicYearId?: string) { return this.svc.list(academicYearId); }
+  @Audit('class_group') @Post() create(@Body() dto: CreateClassGroupDto) { return this.svc.create(dto); }
+  @Audit('class_group', 'id') @Patch(':id') update(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateClassGroupDto) { return this.svc.update(id, dto); }
+  @Audit('class_group', 'id') @Delete(':id') remove(@Param('id', ParseUuidPipe) id: string) { return this.svc.remove(id); }
 }
 
 @Roles('registrar', 'academic', 'director', 'admin')
@@ -805,6 +996,11 @@ class TimetableController {
     return this.svc.conflicts(termId);
   }
 
+  @Get('terms/:termId/workload')
+  workload(@Param('termId', ParseUuidPipe) termId: string) {
+    return this.svc.workload(termId);
+  }
+
   /**
    * บันทึกห้องเรียน
    *
@@ -859,6 +1055,55 @@ class TermStatusDto {
   status: string;
 }
 
+class TermCategoryDto {
+  @IsString() @MaxLength(80) title: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+}
+
+/**
+ * แก้ไขช่องวันที่ย่อยและข้อมูลจัดกลุ่มของภาคเรียนที่มีอยู่แล้ว — แยกจาก
+ * CreateTermDto เพราะตอนสร้างภาคเรียนบังคับแค่ช่วงวันหลัก ส่วนช่องพวกนี้
+ * มักตั้งทีหลังตอนวางแผนงานทะเบียนของภาคเรียนนั้นละเอียดขึ้น
+ */
+class UpdateTermDto {
+  @IsOptional() @IsUuid() categoryId?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) shortName?: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsBoolean() isNormal?: boolean;
+  @IsOptional() @IsISO8601() registrationStartsOn?: string;
+  @IsOptional() @IsISO8601() gradebookStartsOn?: string;
+  @IsOptional() @IsISO8601() paymentStartsOn?: string;
+  @IsOptional() @IsISO8601() paymentEndsOn?: string;
+  @IsOptional() @IsISO8601() auditStartsOn?: string;
+  @IsOptional() @IsISO8601() auditEndsOn?: string;
+}
+
+// PostgreSQL คืนค่า time เป็น "HH:MM:SS" เสมอ แต่ <input type="time"> ส่งกลับ
+// มาเป็น "HH:MM" — ต้องรับทั้งสองแบบ มิฉะนั้นแก้ไขแถวเดิมโดยไม่เปลี่ยนเวลา
+// จะตกการตรวจสอบ เพราะค่าที่โหลดมาแสดงมีวินาทีติดมาด้วย
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+class PeriodDto {
+  @IsInt() @Min(1) @Max(20) ordinal: number;
+  @IsString() @MaxLength(40) title: string;
+  @IsOptional() @IsString() @MaxLength(20) shortName?: string;
+  @IsOptional() @Matches(TIME_PATTERN, { message: 'startsAt ต้องเป็นเวลารูปแบบ HH:MM' }) startsAt?: string;
+  @IsOptional() @Matches(TIME_PATTERN, { message: 'endsAt ต้องเป็นเวลารูปแบบ HH:MM' }) endsAt?: string;
+}
+
+class GradeLevelDto {
+  @IsIn(['PVC', 'PVS', 'TVB']) level: string;
+  @IsInt() @Min(1) @Max(6) studyYear: number;
+  @IsString() @MaxLength(40) title: string;
+  @IsOptional() @IsString() @MaxLength(20) shortName?: string;
+}
+
+class QualificationLevelLabelDto {
+  @IsIn(['PVC', 'PVS', 'TVB']) level: string;
+  @IsString() @MaxLength(40) title: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+}
+
 class CreateSectionDto {
   @IsUuid() termId: string;
   @IsUuid() courseId: string;
@@ -893,11 +1138,192 @@ export class CatalogService {
       `select t.id, t.ordinal, t.kind, t.status,
               t.starts_on, t.ends_on,
               t.add_drop_ends_on, t.withdraw_ends_on, t.grade_due_on,
+              t.category_id, t.short_name, t.sort_order, t.is_normal,
+              t.registration_starts_on, t.gradebook_starts_on,
+              t.payment_starts_on, t.payment_ends_on,
+              t.audit_starts_on, t.audit_ends_on,
               ay.year_be, ay.id as academic_year_id
          from term t
          join academic_year ay on ay.id = t.academic_year_id
         order by ay.year_be desc, t.ordinal`,
     );
+  }
+
+  /** หมวดภาคเรียน (รอบเช้า/รอบบ่าย/ทวิภาคี ฯลฯ) — ว่างได้ วิทยาลัยที่ไม่แยกรอบไม่ต้องสร้าง */
+  async termCategories() {
+    return this.db.query(
+      `select id, title, sort_order
+         from term_category
+        order by sort_order, title`,
+    );
+  }
+
+  async createTermCategory(dto: TermCategoryDto) {
+    return this.db.queryOne(
+      `insert into term_category (institution_id, title, sort_order)
+       values (current_institution_id(), $1, coalesce($2, 0))
+       returning id, title, sort_order`,
+      [dto.title, dto.sortOrder ?? null],
+    );
+  }
+
+  async updateTermCategory(id: string, dto: TermCategoryDto) {
+    const row = await this.db.queryOne(
+      `update term_category set title = $2, sort_order = coalesce($3, sort_order)
+        where id = $1
+       returning id, title, sort_order`,
+      [id, dto.title, dto.sortOrder ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบหมวดภาคเรียนนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async deleteTermCategory(id: string) {
+    const row = await this.db.queryOne(
+      `delete from term_category where id = $1 returning id`,
+      [id],
+    );
+    if (!row) throw new NotFoundException('ไม่พบหมวดภาคเรียนนี้ หรือไม่มีสิทธิ์ลบ');
+    return { deleted: true };
+  }
+
+  /**
+   * แก้ไขช่องวันที่ย่อยและการจัดกลุ่มของภาคเรียนที่มีอยู่แล้ว
+   *
+   * `category_id` เขียนทับตรง ๆ (ไม่ผ่าน coalesce เหมือนช่องอื่น) เพราะ
+   * "ไม่ระบุหมวด" เป็นค่าที่ผู้ใช้เลือกได้จริง — ถ้าใช้ coalesce แล้วส่ง
+   * null มาเพื่อล้างหมวด ค่าจะไม่ถูกล้างเลยเพราะ coalesce(null, เดิม) = เดิม
+   */
+  async updateTerm(id: string, dto: UpdateTermDto) {
+    const row = await this.db.queryOne(
+      `update term set
+         category_id             = $2,
+         short_name              = coalesce($3, short_name),
+         sort_order              = coalesce($4, sort_order),
+         is_normal               = coalesce($5, is_normal),
+         registration_starts_on  = coalesce($6, registration_starts_on),
+         gradebook_starts_on     = coalesce($7, gradebook_starts_on),
+         payment_starts_on       = coalesce($8, payment_starts_on),
+         payment_ends_on         = coalesce($9, payment_ends_on),
+         audit_starts_on         = coalesce($10, audit_starts_on),
+         audit_ends_on           = coalesce($11, audit_ends_on)
+       where id = $1
+       returning id, category_id, short_name, sort_order, is_normal,
+                 registration_starts_on, gradebook_starts_on,
+                 payment_starts_on, payment_ends_on,
+                 audit_starts_on, audit_ends_on`,
+      [
+        id, dto.categoryId ?? null, dto.shortName ?? null, dto.sortOrder ?? null,
+        dto.isNormal ?? null, dto.registrationStartsOn ?? null, dto.gradebookStartsOn ?? null,
+        dto.paymentStartsOn ?? null, dto.paymentEndsOn ?? null,
+        dto.auditStartsOn ?? null, dto.auditEndsOn ?? null,
+      ],
+    );
+    if (!row) throw new NotFoundException('ไม่พบภาคเรียนนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  /**
+   * คาบเรียน — ผูกเลขลำดับคาบ (ตัวเดียวกับที่ section_timeslot.period_from/
+   * period_to ใช้อยู่แล้ว) เข้ากับเวลานาฬิกาจริง เพื่อให้หน้าจัดตารางสอน
+   * และตารางสอบแสดงเวลาจริงแทนเลขเปล่า
+   */
+  async periods() {
+    return this.db.query(
+      `select id, ordinal, title, short_name, starts_at, ends_at
+         from period order by ordinal`,
+    );
+  }
+
+  async createPeriod(dto: PeriodDto) {
+    return this.db.queryOne(
+      `insert into period (institution_id, ordinal, title, short_name, starts_at, ends_at)
+       values (current_institution_id(), $1, $2, $3, $4, $5)
+       returning id, ordinal, title, short_name, starts_at, ends_at`,
+      [dto.ordinal, dto.title, dto.shortName ?? null, dto.startsAt ?? null, dto.endsAt ?? null],
+    );
+  }
+
+  async updatePeriod(id: string, dto: PeriodDto) {
+    const row = await this.db.queryOne(
+      `update period set
+         ordinal    = $2, title = $3, short_name = $4,
+         starts_at  = $5, ends_at = $6
+       where id = $1
+       returning id, ordinal, title, short_name, starts_at, ends_at`,
+      [id, dto.ordinal, dto.title, dto.shortName ?? null, dto.startsAt ?? null, dto.endsAt ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบคาบเรียนนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async deletePeriod(id: string) {
+    const row = await this.db.queryOne(`delete from period where id = $1 returning id`, [id]);
+    if (!row) throw new NotFoundException('ไม่พบคาบเรียนนี้ หรือไม่มีสิทธิ์ลบ');
+    return { deleted: true };
+  }
+
+  /** ป้ายชื่อชั้นปีในแต่ละระดับ (ปวช.1, ปวช.2, ...) — ตกแต่งการแสดงผล ไม่กระทบการเลื่อนชั้นปี */
+  async gradeLevels() {
+    return this.db.query(
+      `select id, level, study_year, title, short_name
+         from grade_level order by level, study_year`,
+    );
+  }
+
+  async createGradeLevel(dto: GradeLevelDto) {
+    return this.db.queryOne(
+      `insert into grade_level (institution_id, level, study_year, title, short_name)
+       values (current_institution_id(), $1::qualification_level, $2, $3, $4)
+       returning id, level, study_year, title, short_name`,
+      [dto.level, dto.studyYear, dto.title, dto.shortName ?? null],
+    );
+  }
+
+  async updateGradeLevel(id: string, dto: GradeLevelDto) {
+    const row = await this.db.queryOne(
+      `update grade_level set
+         level = $2::qualification_level, study_year = $3, title = $4, short_name = $5
+       where id = $1
+       returning id, level, study_year, title, short_name`,
+      [id, dto.level, dto.studyYear, dto.title, dto.shortName ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบระดับชั้นนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async deleteGradeLevel(id: string) {
+    const row = await this.db.queryOne(`delete from grade_level where id = $1 returning id`, [id]);
+    if (!row) throw new NotFoundException('ไม่พบระดับชั้นนี้ หรือไม่มีสิทธิ์ลบ');
+    return { deleted: true };
+  }
+
+  /** ป้ายชื่อระดับการศึกษา (ปวช./ปวส./ทล.บ.) — แทนที่ค่าที่เคยฮาร์ดโค้ดไว้ในหน้าจอ */
+  async qualificationLevelLabels() {
+    return this.db.query(
+      `select id, level, title, sort_order
+         from qualification_level_label order by sort_order, level`,
+    );
+  }
+
+  async upsertQualificationLevelLabel(dto: QualificationLevelLabelDto) {
+    return this.db.queryOne(
+      `insert into qualification_level_label (institution_id, level, title, sort_order)
+       values (current_institution_id(), $1::qualification_level, $2, coalesce($3, 0))
+       on conflict (institution_id, level) do update
+         set title = excluded.title, sort_order = excluded.sort_order
+       returning id, level, title, sort_order`,
+      [dto.level, dto.title, dto.sortOrder ?? null],
+    );
+  }
+
+  async deleteQualificationLevelLabel(id: string) {
+    const row = await this.db.queryOne(
+      `delete from qualification_level_label where id = $1 returning id`,
+      [id],
+    );
+    if (!row) throw new NotFoundException('ไม่พบป้ายชื่อระดับนี้ หรือไม่มีสิทธิ์ลบ');
+    return { deleted: true };
   }
 
   /** ปีการศึกษาทั้งหมด — ใช้เลือกตอนเปิดภาคเรียนใหม่ */
@@ -1184,6 +1610,110 @@ class CatalogController {
     return this.svc.setTermStatus(id, dto.status);
   }
 
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term', 'id')
+  @Patch('terms/:id')
+  updateTerm(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateTermDto) {
+    return this.svc.updateTerm(id, dto);
+  }
+
+  @Get('term-categories')
+  termCategories() {
+    return this.svc.termCategories();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term_category')
+  @Post('term-categories')
+  createTermCategory(@Body() dto: TermCategoryDto) {
+    return this.svc.createTermCategory(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term_category', 'id')
+  @Patch('term-categories/:id')
+  updateTermCategory(@Param('id', ParseUuidPipe) id: string, @Body() dto: TermCategoryDto) {
+    return this.svc.updateTermCategory(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('term_category', 'id')
+  @Delete('term-categories/:id')
+  deleteTermCategory(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteTermCategory(id);
+  }
+
+  @Get('periods')
+  periods() {
+    return this.svc.periods();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('period')
+  @Post('periods')
+  createPeriod(@Body() dto: PeriodDto) {
+    return this.svc.createPeriod(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('period', 'id')
+  @Patch('periods/:id')
+  updatePeriod(@Param('id', ParseUuidPipe) id: string, @Body() dto: PeriodDto) {
+    return this.svc.updatePeriod(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('period', 'id')
+  @Delete('periods/:id')
+  deletePeriod(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deletePeriod(id);
+  }
+
+  @Get('grade-levels')
+  gradeLevels() {
+    return this.svc.gradeLevels();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('grade_level')
+  @Post('grade-levels')
+  createGradeLevel(@Body() dto: GradeLevelDto) {
+    return this.svc.createGradeLevel(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('grade_level', 'id')
+  @Patch('grade-levels/:id')
+  updateGradeLevel(@Param('id', ParseUuidPipe) id: string, @Body() dto: GradeLevelDto) {
+    return this.svc.updateGradeLevel(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('grade_level', 'id')
+  @Delete('grade-levels/:id')
+  deleteGradeLevel(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteGradeLevel(id);
+  }
+
+  @Get('qualification-levels')
+  qualificationLevelLabels() {
+    return this.svc.qualificationLevelLabels();
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('qualification_level_label')
+  @Post('qualification-levels')
+  upsertQualificationLevelLabel(@Body() dto: QualificationLevelLabelDto) {
+    return this.svc.upsertQualificationLevelLabel(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Audit('qualification_level_label', 'id')
+  @Delete('qualification-levels/:id')
+  deleteQualificationLevelLabel(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteQualificationLevelLabel(id);
+  }
+
   @Get('sections/:sectionId/meetings')
   meetings(@Param('sectionId', ParseUuidPipe) sectionId: string) {
     return this.svc.meetings(sectionId);
@@ -1234,8 +1764,8 @@ class CatalogController {
 }
 
 @Module({
-  controllers: [RegradeController, RolloverController, TimetableController, CatalogController],
-  providers: [RegradeService, RolloverService, TimetableService, CatalogService],
-  exports: [RegradeService, RolloverService, TimetableService, CatalogService],
+  controllers: [RegradeController, RolloverController, TimetableController, CatalogController, ClassGroupController],
+  providers: [RegradeService, RolloverService, TimetableService, CatalogService, ClassGroupService],
+  exports: [RegradeService, RolloverService, TimetableService, CatalogService, ClassGroupService],
 })
 export class AcademicModule {}

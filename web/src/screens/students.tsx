@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { api, qs } from '../core/api';
 import { LEVEL, STUDENT_STATUS, thaiDate, money, pct } from '../core/fmt';
 import { href, navigate, useRoute } from '../core/router';
-import { AsyncView, Badge, Card, Field, PageHead, TableCard, Tabs, useAsync } from '../ui/kit';
+import { AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
 import {
   AddressTab,
   AdvisorTab,
@@ -163,15 +163,24 @@ const ATT_STATE: Record<string, { label: string; kind: 'ok' | 'warn' | 'danger' 
 };
 
 const TABS = [
-  { key: 'general', label: 'ข้อมูลทั่วไป' },
+  { key: 'general', label: 'ข้อมูลนักศึกษา' },
   { key: 'address', label: 'ที่อยู่' },
-  { key: 'parent', label: 'บิดามารดา' },
-  { key: 'sensitive', label: 'สุขภาพและข้อมูลอ่อนไหว' },
-  { key: 'prior', label: 'การศึกษาเดิม' },
-  { key: 'advisor', label: 'ที่ปรึกษาและผู้ปกครอง' },
-  { key: 'study', label: 'การเรียนและการเงิน' },
-  { key: 'status', label: 'สถานะและการออก' },
+  { key: 'parent', label: 'ผู้ปกครอง' },
+  { key: 'sensitive', label: 'สุขภาพ' },
+  { key: 'prior', label: 'การศึกษา' },
+  { key: 'advisor', label: 'อาจารย์ที่ปรึกษา' },
+  { key: 'study', label: 'ตารางเรียน / การเงิน' },
+  { key: 'status', label: 'สถานะการศึกษา' },
 ];
+
+const TAB_HINT: Record<string, string> = {
+  general: 'ข้อมูลติดต่อ ครอบครัว และข้อมูลส่วนตัว', address: 'ที่อยู่ตามทะเบียนบ้านและที่อยู่ปัจจุบัน', parent: 'ข้อมูลบิดา มารดา และผู้ดูแล', sensitive: 'ข้อมูลสุขภาพที่มีการควบคุมสิทธิ์', prior: 'ประวัติการศึกษาก่อนเข้าเรียน', advisor: 'อาจารย์ที่ปรึกษาและสิทธิ์ผู้ปกครอง', study: 'เวลาเรียนและยอดการเงินของภาคเรียน', status: 'สถานะการศึกษาและประวัติการเปลี่ยนแปลง',
+};
+const TAB_GROUPS = [
+  { title:'ข้อมูลพื้นฐาน', keys:['general', 'address', 'parent'] },
+  { title:'การดูแลและประวัติ', keys:['sensitive', 'prior', 'advisor'] },
+  { title:'การเรียน', keys:['study', 'status'] },
+] as const;
 
 export function StudentDetailScreen({ id }: { id: string }) {
   const route = useRoute();
@@ -208,52 +217,8 @@ export function StudentDetailScreen({ id }: { id: string }) {
       <AsyncView state={detail}>
         {(s) => (
           <>
-            <Card title={`${s.first_name_th} ${s.last_name_th}`}>
-              <div className="row">
-                <Field label="รหัสนักศึกษา">
-                  <input value={s.student_code} readOnly />
-                </Field>
-                <Field label="ระดับ">
-                  <input value={s.level ? LEVEL[s.level] ?? s.level : '—'} readOnly />
-                </Field>
-                <Field label="ปีที่เข้าศึกษา">
-                  <input value={`${s.admitted_year_be}`} readOnly />
-                </Field>
-                <Field label="วันเกิด">
-                  <input value={thaiDate(s.birth_date)} readOnly />
-                </Field>
-                <Field label="สถานะ">
-                  <input value={STUDENT_STATUS[s.status] ?? s.status} readOnly />
-                </Field>
-              </div>
-              <div className="row">
-                <Field label="หลักสูตร">
-                  <input
-                    value={
-                      s.curriculum_name
-                        ? `${s.curriculum_name}${s.curriculum_edition ? ` (ฉบับ ${s.curriculum_edition})` : ''}`
-                        : 'ยังไม่ได้กำหนดหลักสูตร'
-                    }
-                    readOnly
-                  />
-                </Field>
-              </div>
-            </Card>
-
-            <Tabs
-              tabs={TABS.map((t) =>
-                t.key === 'sensitive' && profile.data && !profile.data.canSeeSensitive
-                  ? { ...t, badge: 'ไม่มีสิทธิ์' }
-                  : t.key === 'parent'
-                    ? { ...t, badge: profile.data?.parents.length || undefined }
-                    : t.key === 'prior'
-                      ? { ...t, badge: profile.data?.priorEducation.length || undefined }
-                      : t,
-              )}
-              active={tab}
-              onChange={setTab}
-            />
-
+            <StudentRecordHeader student={s} profile={profile.data} />
+            <div className="student-record-workspace"><aside className="student-record-nav"><div className="student-record-nav-title"><b>แฟ้มระเบียน</b><span>เลือกหมวดข้อมูลที่ต้องการ</span></div>{TAB_GROUPS.map((group) => <div className="student-record-nav-group" key={group.title}><span>{group.title}</span>{group.keys.map((key) => { const item = TABS.find((x) => x.key === key)!; const badge = key === 'sensitive' && profile.data && !profile.data.canSeeSensitive ? 'ล็อก' : key === 'parent' ? profile.data?.parents.length : key === 'prior' ? profile.data?.priorEducation.length : undefined; return <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}><i>{tab === key ? '●' : '○'}</i><b>{item.label}</b>{badge ? <em>{badge}</em> : null}</button>; })}</div>)}</aside><section className="student-record-content"><div className="student-record-content-head"><div><span>ระเบียนนักศึกษา</span><h3>{TABS.find((x) => x.key === tab)?.label ?? 'ข้อมูลนักศึกษา'}</h3><p>{TAB_HINT[tab] ?? ''}</p></div></div>
             {tab !== 'study' && (
               <AsyncView state={profile}>
                 {(pf) => (
@@ -339,9 +304,22 @@ export function StudentDetailScreen({ id }: { id: string }) {
             </TableCard>
               </>
             )}
+            </section></div>
           </>
         )}
       </AsyncView>
     </>
   );
+}
+
+function StudentRecordHeader({ student: s, profile }: { student: StudentDetail; profile: FullProfile | null }) {
+  const name = `${s.first_name_th} ${s.last_name_th}`;
+  const curriculum = s.curriculum_name ? `${s.curriculum_name}${s.curriculum_edition ? ` (ฉบับ ${s.curriculum_edition})` : ''}` : 'ยังไม่ได้กำหนดหลักสูตร';
+  const rows:[string, string][] = [
+    ['รหัสนักศึกษา', s.student_code],
+    ['ระดับ', s.level ? LEVEL[s.level] ?? s.level : '—'],
+    ['เลขที่', profile?.class_number != null ? String(profile.class_number) : '—'],
+    ['ปีที่เข้า', String(s.admitted_year_be)],
+  ];
+  return <section className="student-record-head"><div className="student-record-identity"><div className="student-record-photo">{name.split(/\s+/).map((x) => x[0] ?? '').slice(0, 2).join('')}</div><div><span>แฟ้มระเบียนนักศึกษา</span><h3>{name}</h3><p>{profile?.nickname_th ? `ชื่อเล่น ${profile.nickname_th} · ` : ''}{profile?.gender === 'male' ? 'ชาย' : profile?.gender === 'female' ? 'หญิง' : 'ไม่ระบุเพศ'}</p></div><Badge kind={statusKind(s.status)}>{STUDENT_STATUS[s.status] ?? s.status}</Badge></div><div className="student-record-facts">{rows.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}<div className="student-record-curriculum"><span>หลักสูตร</span><b>{curriculum}</b></div></div></section>;
 }

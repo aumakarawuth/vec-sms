@@ -58,6 +58,10 @@ export function checkProductionConfig(env: NodeJS.ProcessEnv): GuardResult {
       );
     }
 
+    if (env.MFA_DISABLED === 'true') {
+      errors.push('MFA_DISABLED=true ในระบบจริง — ห้ามปิดการยืนยันสองชั้นนอกเครื่องพัฒนา');
+    }
+
     if (env.ALLOW_SUPERUSER === 'true') {
       errors.push(
         'ALLOW_SUPERUSER=true ในระบบจริง — Row-Level Security จะถูกข้ามทั้งหมด ' +

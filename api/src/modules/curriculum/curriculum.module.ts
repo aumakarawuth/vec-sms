@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Injectable,
@@ -27,9 +28,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { DatabaseError } from 'pg';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, IsUuidArray, ParseUuidPipe } from '../../common/validation/uuid';
+import { VEC_2567_REFERENCE } from './vec-2567-reference';
 
 /**
  * หลักสูตรฐานสมรรถนะ
@@ -171,11 +174,35 @@ class ProgramDto {
   @IsString() @MaxLength(200) nameTh: string;
   @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
   @IsOptional() @IsString() @MaxLength(200) careerGroupTh?: string;
+  @IsOptional() @IsString() @MaxLength(10) roomPrefix?: string;
 }
 
 /** สาขางาน — แขนงย่อยภายในสาขาวิชาหนึ่ง เช่น ยานยนต์ ตัวถังและสี */
 class ProgramTrackDto {
   @IsUuid() programId: string;
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+}
+
+class UpdateProgramTypeDto {
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsInt() @Min(0) sortOrder?: number;
+}
+
+/** roomPrefix ตัดช่องว่างและแปลงเป็นตัวใหญ่เอง — กันเจ้าหน้าที่พิมพ์ "ca" กับ "CA" ปนกันจนห้องคนละสาขาดูเหมือนกัน */
+class UpdateProgramDto {
+  @IsIn(QUALIFICATION_LEVEL as unknown as string[]) level: string;
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsString() @MaxLength(200) careerGroupTh?: string;
+  @IsOptional() @IsString() @MaxLength(10) roomPrefix?: string;
+}
+
+class UpdateProgramTrackDto {
   @IsString() @MaxLength(20) code: string;
   @IsString() @MaxLength(200) nameTh: string;
   @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
@@ -189,6 +216,14 @@ class ProgramTrackDto {
  */
 class CreateCurriculumDto {
   @IsUuid() programTrackId: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
+  @IsOptional() @IsIn(CLASS_SHIFT as unknown as string[]) shift?: string;
+  @IsOptional() @IsBoolean() isContinuing?: boolean;
+}
+
+/** ย้ายหลักสูตรข้ามสาขางานไม่ได้เหมือนกับ program (ดูคอมเมนต์ที่ AddProgramForm ฝั่งเว็บ) — แก้ได้แค่ชื่อ/กะ/ต่อเนื่อง */
+class UpdateCurriculumDto {
   @IsString() @MaxLength(200) nameTh: string;
   @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
   @IsOptional() @IsIn(CLASS_SHIFT as unknown as string[]) shift?: string;
@@ -226,18 +261,62 @@ export class CurriculumService {
     return this.db.query(
       `select pt.id as program_type_id, pt.code as type_code, pt.name_th as type_name,
               pr.id as program_id, pr.code as program_code, pr.name_th as program_name,
-              pr.level as program_level,
+              pr.level as program_level, pr.room_prefix as program_room_prefix,
               tr.id as track_id, tr.code as track_code, tr.name_th as track_name,
               cu.id as curriculum_id, cu.name_th as curriculum_name, cu.shift as curriculum_shift,
+              cu.is_continuing as curriculum_is_continuing,
               count(cv.id) as versions
          from program_type pt
-         join program       pr on pr.program_type_id = pt.id
-         left join program_track tr on tr.program_id = pr.id
-         left join curriculum    cu on cu.program_track_id = tr.id
+         left join program  pr on pr.program_type_id = pt.id and pr.active
+         left join program_track tr on tr.program_id = pr.id and tr.active
+         left join curriculum    cu on cu.program_track_id = tr.id and cu.active
          left join curriculum_version cv on cv.curriculum_id = cu.id
-        group by pt.id, pt.code, pt.name_th, pr.id, pr.code, pr.name_th, pr.level,
-                 tr.id, tr.code, tr.name_th, cu.id, cu.name_th, cu.shift
-        order by pt.code, pr.code, tr.code`,
+        where pt.active
+        group by pt.id, pt.code, pt.name_th, pr.id, pr.code, pr.name_th, pr.level, pr.room_prefix,
+                 tr.id, tr.code, tr.name_th, cu.id, cu.name_th, cu.shift, cu.is_continuing
+        order by pt.sort_order, pt.code, pr.code nulls last, tr.code nulls last`,
+    );
+  }
+
+  /** ห้องประจำตามหลักสูตรและปีการศึกษา — ใช้หน้าเลือกแบบต่อเนื่อง */
+  /**
+   * ห้องประจำชั้น — ขับด้วย `class_group` (0081) ไม่ใช่ `student_class_placement`
+   * เหมือนเดิม เพราะแบบเดิม LEFT ไม่มี "ห้องที่เพิ่งสร้างแต่ยังไม่มีนักศึกษา"
+   * ให้เห็นเลย (ต้องมีนักศึกษาอย่างน้อยหนึ่งคนก่อนห้องจะโผล่) — กดปุ่ม
+   * "จัดชั้นปีและห้อง" แล้วห้องใหม่จึงดูเหมือนไม่มีอะไรเกิดขึ้น ทั้งที่บันทึกจริง
+   *
+   * `class_group` ไม่มีคอลัมน์อ้างหลักสูตรโดยตรง (มีแค่ระดับ+ชั้นปี) จึงกรอง
+   * ด้วยระดับของหลักสูตรที่เลือกแทนการกรองด้วยหลักสูตรเป๊ะ ๆ — ห้องเดียวกัน
+   * ระดับเดียวกันอาจมีนักศึกษาต่างหลักสูตรปนกันได้ในความเป็นจริง
+   */
+  async classGroups(academicYearId: string, curriculumId: string) {
+    return this.db.query(
+      `with target as (
+         select p.level from curriculum c
+           join program_track tr on tr.id = c.program_track_id
+           join program p on p.id = tr.program_id
+          where c.id = $2
+       )
+       select cg.id, cg.study_year, cg.code as group_code,
+              count(distinct scp.student_id)::int as students,
+              coalesce(string_agg(distinct trim(coalesce(ap.prefix_th, '') ||
+                coalesce(ap.first_name_th, '') || ' ' || coalesce(ap.last_name_th, '')), ', ')
+                filter (where ast.id is not null), '') as advisor_names
+         from class_group cg
+         cross join target t
+         left join student_class_placement scp
+                on scp.academic_year_id = cg.academic_year_id
+               and scp.study_year = cg.study_year
+               and scp.group_code = cg.code
+         left join student_advisor sa on sa.student_id = scp.student_id
+              and sa.academic_year_id = scp.academic_year_id
+              and sa.is_primary and sa.ended_on is null
+         left join staff ast on ast.id = sa.staff_id
+         left join person ap on ap.id = ast.person_id
+        where cg.academic_year_id = $1 and cg.active and cg.level = t.level
+        group by cg.id, cg.study_year, cg.code
+        order by cg.study_year, cg.code`,
+      [academicYearId, curriculumId],
     );
   }
 
@@ -253,12 +332,13 @@ export class CurriculumService {
   async createProgram(dto: ProgramDto) {
     return this.db.queryOne(
       `insert into program
-         (institution_id, program_type_id, level, code, name_th, name_en, career_group_th)
-       values (current_institution_id(), $1, $2::qualification_level, $3, $4, $5, $6)
-       returning id, program_type_id, level, code, name_th`,
+         (institution_id, program_type_id, level, code, name_th, name_en, career_group_th, room_prefix)
+       values (current_institution_id(), $1, $2::qualification_level, $3, $4, $5, $6, $7)
+       returning id, program_type_id, level, code, name_th, room_prefix`,
       [
         dto.programTypeId, dto.level, dto.code.trim(), dto.nameTh.trim(),
         dto.nameEn?.trim() ?? null, dto.careerGroupTh?.trim() ?? null,
+        dto.roomPrefix?.trim().toUpperCase() ?? null,
       ],
     );
   }
@@ -270,6 +350,102 @@ export class CurriculumService {
        returning id, program_id, code, name_th`,
       [dto.programId, dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null],
     );
+  }
+
+  async updateProgramType(id: string, dto: UpdateProgramTypeDto) {
+    const row = await this.db.queryOne(
+      `update program_type set code = $2, name_th = $3, name_en = $4, sort_order = coalesce($5, sort_order)
+        where id = $1
+       returning id, code, name_th, name_en, sort_order`,
+      [id, dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null, dto.sortOrder ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบหมวดสาขานี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  /**
+   * ลบจริงถ้าไม่มีลูกผูกอยู่ — ถ้ามี (ชน on delete restrict, errcode 23001)
+   * ไม่ลบทิ้ง แต่ตั้ง active = false แทน เพราะสาขา/หลักสูตรที่ "ลบ" มักมี
+   * ข้อมูลผูกอยู่แล้วจริง ๆ (มีสาขาวิชา มีนักศึกษาผูกหลักสูตรอยู่) การลบทิ้ง
+   * จริงจะทำให้ใบ รบ./เอกสารเก่าที่อ้างชื่อสาขาหรือหลักสูตรนั้นอ่านไม่ได้อีก
+   * (หลักข้อ 4 — เขียนอย่างเดียว ห้ามแก้ทับของที่มีคนอ้างอิงอยู่) แถวยังอยู่
+   * ในฐานข้อมูลครบ แค่ไม่โผล่ในตัวเลือกสร้างของใหม่อีกต่อไป (ดู listPrograms)
+   */
+  private isRestrictViolation(e: unknown): e is DatabaseError {
+    return typeof e === 'object' && e !== null && (e as DatabaseError).code === '23001';
+  }
+
+  async deleteProgramType(id: string) {
+    try {
+      const row = await this.db.queryOne(`delete from program_type where id = $1 returning id`, [id]);
+      if (!row) throw new NotFoundException('ไม่พบหมวดสาขานี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true };
+    } catch (err) {
+      if (!this.isRestrictViolation(err)) throw err;
+      const row = await this.db.queryOne(
+        `update program_type set active = false where id = $1 returning id`, [id],
+      );
+      if (!row) throw new NotFoundException('ไม่พบหมวดสาขานี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true, archived: true };
+    }
+  }
+
+  async updateProgram(id: string, dto: UpdateProgramDto) {
+    const row = await this.db.queryOne(
+      `update program set
+         level = $2::qualification_level, code = $3, name_th = $4,
+         name_en = $5, career_group_th = $6, room_prefix = $7
+       where id = $1
+       returning id, program_type_id, level, code, name_th, name_en, career_group_th, room_prefix`,
+      [
+        id, dto.level, dto.code.trim(), dto.nameTh.trim(),
+        dto.nameEn?.trim() ?? null, dto.careerGroupTh?.trim() ?? null,
+        dto.roomPrefix?.trim().toUpperCase() ?? null,
+      ],
+    );
+    if (!row) throw new NotFoundException('ไม่พบสาขาวิชานี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async deleteProgram(id: string) {
+    try {
+      const row = await this.db.queryOne(`delete from program where id = $1 returning id`, [id]);
+      if (!row) throw new NotFoundException('ไม่พบสาขาวิชานี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true };
+    } catch (err) {
+      if (!this.isRestrictViolation(err)) throw err;
+      const row = await this.db.queryOne(
+        `update program set active = false where id = $1 returning id`, [id],
+      );
+      if (!row) throw new NotFoundException('ไม่พบสาขาวิชานี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true, archived: true };
+    }
+  }
+
+  async updateProgramTrack(id: string, dto: UpdateProgramTrackDto) {
+    const row = await this.db.queryOne(
+      `update program_track set code = $2, name_th = $3, name_en = $4
+        where id = $1
+       returning id, program_id, code, name_th, name_en`,
+      [id, dto.code.trim(), dto.nameTh.trim(), dto.nameEn?.trim() ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบสาขางานนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  async deleteProgramTrack(id: string) {
+    try {
+      const row = await this.db.queryOne(`delete from program_track where id = $1 returning id`, [id]);
+      if (!row) throw new NotFoundException('ไม่พบสาขางานนี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true };
+    } catch (err) {
+      if (!this.isRestrictViolation(err)) throw err;
+      const row = await this.db.queryOne(
+        `update program_track set active = false where id = $1 returning id`, [id],
+      );
+      if (!row) throw new NotFoundException('ไม่พบสาขางานนี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true, archived: true };
+    }
   }
 
   /** หลักสูตรเปล่า — ยังไม่มีฉบับ ต้องออกฉบับแรกด้วย createVersion ต่อ */
@@ -284,6 +460,40 @@ export class CurriculumService {
         dto.shift ?? null, dto.isContinuing ?? null,
       ],
     );
+  }
+
+  async updateCurriculum(id: string, dto: UpdateCurriculumDto) {
+    const row = await this.db.queryOne(
+      `update curriculum set
+         name_th = $2, name_en = $3, shift = coalesce($4::class_shift, shift),
+         is_continuing = coalesce($5, is_continuing)
+       where id = $1
+       returning id, program_track_id, name_th, shift, is_continuing`,
+      [id, dto.nameTh.trim(), dto.nameEn?.trim() ?? null, dto.shift ?? null, dto.isContinuing ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบหลักสูตรนี้ หรือไม่มีสิทธิ์แก้ไข');
+    return row;
+  }
+
+  /**
+   * ลบได้เฉพาะหลักสูตรที่ยังไม่มีฉบับ — มีฉบับแล้วแปลว่าอาจมีนักศึกษาผูกอยู่
+   * (หลักข้อ 1 ในเอกสารโปรเจกต์: ฉบับที่มีนักศึกษาแก้ทับไม่ได้ ต้องโคลนเป็น
+   * ฉบับใหม่แทน) — `curriculum_version.curriculum_id` เป็น RESTRICT อยู่แล้ว
+   * แต่ปล่อยให้ตกไปที่ 23001 ทั่วไปจะไม่บอกผู้ใช้ว่าต้องลบฉบับก่อนแบบไหน
+   */
+  async deleteCurriculum(id: string) {
+    try {
+      const row = await this.db.queryOne(`delete from curriculum where id = $1 returning id`, [id]);
+      if (!row) throw new NotFoundException('ไม่พบหลักสูตรนี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true };
+    } catch (err) {
+      if (!this.isRestrictViolation(err)) throw err;
+      const row = await this.db.queryOne(
+        `update curriculum set active = false where id = $1 returning id`, [id],
+      );
+      if (!row) throw new NotFoundException('ไม่พบหลักสูตรนี้ หรือไม่มีสิทธิ์ลบ');
+      return { deleted: true, archived: true };
+    }
   }
 
   /** ฉบับแรกของหลักสูตรที่เพิ่งสร้าง — ดู CreateVersionDto ว่าทำไมแยกจาก clone */
@@ -758,9 +968,29 @@ export class CurriculumService {
 class CurriculumController {
   constructor(private readonly svc: CurriculumService) {}
 
+  /** ชุดอ้างอิง สอศ. 2567 สำหรับตรวจสอบก่อนนำเข้า ไม่เขียนทับหลักสูตรเดิม */
+  @Get('official/2567')
+  official2567(@Query('level') level?: 'PVC' | 'PVS') {
+    const rows = level ? VEC_2567_REFERENCE.filter((row) => row.level === level) : VEC_2567_REFERENCE;
+    return { source: 'สำนักงานคณะกรรมการการอาชีวศึกษา (สอศ.) · VEC Data Catalog', editionBe: 2567, rows,
+      summary: { total: rows.length, pvc: rows.filter((row) => row.level === 'PVC').length, pvs: rows.filter((row) => row.level === 'PVS').length } };
+  }
+
+  // finance เพิ่มเข้ามาเฉพาะเมธอดนี้ เพื่ออ่านรายชื่อสาขาตอนตั้งโครงสร้าง
+  // ค่าเทอมแยกสาขา — ไม่เปิดให้ทั้งคอนโทรลเลอร์ เพราะ students/:id/credits
+  // เป็นข้อมูลผลการเรียนของนักศึกษา ไม่ใช่เรื่องของงานการเงิน
+  @Roles('student', 'guardian', 'teacher', 'academic', 'registrar', 'director', 'admin', 'finance')
   @Get('programs')
   programs() {
     return this.svc.listPrograms();
+  }
+
+  @Get('class-groups')
+  classGroups(
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('curriculumId', ParseUuidPipe) curriculumId: string,
+  ) {
+    return this.svc.classGroups(academicYearId, curriculumId);
   }
 
   @Roles('academic', 'registrar', 'director', 'admin')
@@ -770,9 +1000,33 @@ class CurriculumController {
   }
 
   @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('program-types/:id')
+  updateProgramType(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateProgramTypeDto) {
+    return this.svc.updateProgramType(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('program-types/:id')
+  deleteProgramType(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteProgramType(id);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
   @Post('programs')
   createProgram(@Body() dto: ProgramDto) {
     return this.svc.createProgram(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('programs/:id')
+  updateProgram(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateProgramDto) {
+    return this.svc.updateProgram(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('programs/:id')
+  deleteProgram(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteProgram(id);
   }
 
   @Roles('academic', 'registrar', 'director', 'admin')
@@ -782,9 +1036,33 @@ class CurriculumController {
   }
 
   @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('program-tracks/:id')
+  updateProgramTrack(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateProgramTrackDto) {
+    return this.svc.updateProgramTrack(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('program-tracks/:id')
+  deleteProgramTrack(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteProgramTrack(id);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
   @Post('curricula')
   createCurriculum(@Body() dto: CreateCurriculumDto) {
     return this.svc.createCurriculum(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('curricula/:id')
+  updateCurriculum(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateCurriculumDto) {
+    return this.svc.updateCurriculum(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('curricula/:id')
+  deleteCurriculum(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.deleteCurriculum(id);
   }
 
   @Get('grade-schemes')

@@ -4680,6 +4680,104 @@ async function main() {
     expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
   });
 
+  console.log('══ โครงสร้างค่าเทอมและส่วนลดรายคน (0080 — ไม่เคยมีทางเรียกจริงตั้งแต่ 0010) ══');
+  let feeItemId = '';
+  let combinedScheduleId = '';
+  let fundingSourceId = '';
+  let grantedFundingId = '';
+
+  await check('API-231 ครูสร้างรายการค่าธรรมเนียมเองไม่ได้', async () => {
+    const r = await teacher('/finance/fee-items', {
+      method: 'POST',
+      body: JSON.stringify({ code: 'HACK', nameTh: 'ครูสร้างเอง', kind: 'other' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-232 การเงินสร้างรายการค่าธรรมเนียมได้', async () => {
+    const r = await finance('/finance/fee-items', {
+      method: 'POST',
+      body: JSON.stringify({ code: 'TEST231', nameTh: 'ค่าทดสอบ API-231', kind: 'other' }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    feeItemId = r.body.id;
+  });
+
+  await check('API-233 กำหนดโครงสร้างค่าเทอมแบบ "รวม" ได้ — ไม่ระบุระดับ/ชั้นปี/สาขา', async () => {
+    const r = await finance('/finance/fee-schedules', {
+      method: 'POST',
+      body: JSON.stringify({ academicYearId: AY, announcementNo: 'ทดสอบ API-233' }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.level == null && r.body.study_year == null && r.body.program_id == null,
+      `ควรว่างทั้งสามช่อง ได้ ${JSON.stringify(r.body)}`);
+    combinedScheduleId = r.body.id;
+
+    const list = await finance(`/finance/fee-schedules?academicYearId=${AY}`);
+    expect(list.status === 200, `ได้ ${list.status}`);
+    expect(list.body.some((x: any) => x.id === combinedScheduleId), 'ควรเห็นโครงสร้างที่เพิ่งสร้างในรายการ');
+  });
+
+  await check('API-234 ตั้งค่ารายการในโครงสร้างค่าเทอมเป็นชุดได้ และแก้ราคาซ้ำไม่สร้างรายการซ้อน', async () => {
+    const r = await finance(`/finance/fee-schedules/${combinedScheduleId}/lines`, {
+      method: 'POST',
+      body: JSON.stringify({ lines: [{ feeItemId, termOrdinal: 1, amount: 111.11 }] }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.length === 1, `ควรมี 1 รายการ ได้ ${r.body.length}`);
+    expect(Number(r.body[0].amount) === 111.11, `ราคาควรเป็น 111.11 ได้ ${r.body[0].amount}`);
+
+    const again = await finance(`/finance/fee-schedules/${combinedScheduleId}/lines`, {
+      method: 'POST',
+      body: JSON.stringify({ lines: [{ feeItemId, termOrdinal: 1, amount: 222.22 }] }),
+    });
+    expect(again.status === 201, `ควรได้ 201 ได้ ${again.status}`);
+    expect(again.body.length === 1, `แก้ราคาซ้ำต้องไม่เพิ่มแถวใหม่ ได้ ${again.body.length} แถว`);
+    expect(Number(again.body[0].amount) === 222.22, `ราคาควรอัปเดตเป็น 222.22 ได้ ${again.body[0].amount}`);
+  });
+
+  await check('API-235 ครูมอบส่วนลดให้นักศึกษาเองไม่ได้', async () => {
+    const r = await teacher(`/finance/students/${F.student}/funding`, {
+      method: 'POST',
+      body: JSON.stringify({ fundingSourceId: '00000000-0000-0000-0000-000000000000', academicYearId: AY, percentOff: 100 }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-236 การเงินมอบส่วนลดเฉพาะรายการได้ และอนุมัติให้ทันทีในตัว', async () => {
+    const src = await finance('/finance/funding-sources', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'other', nameTh: 'ส่วนลดทดสอบ API-236' }),
+    });
+    expect(src.status === 201, `ควรได้ 201 ได้ ${src.status}: ${JSON.stringify(src.body)}`);
+    fundingSourceId = src.body.id;
+
+    const r = await finance(`/finance/students/${F.student}/funding`, {
+      method: 'POST',
+      body: JSON.stringify({
+        fundingSourceId, academicYearId: AY, feeItemId, percentOff: 50, note: 'ทดสอบ API-236',
+      }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(!!r.body.approved_at, 'การกระทำนี้คือการอนุมัติในตัว — ต้องมี approved_at ทันทีโดยไม่ต้องมีขั้นแยก');
+    grantedFundingId = r.body.id;
+
+    const list = await finance(`/finance/students/${F.student}/funding`);
+    expect(list.status === 200, `ได้ ${list.status}`);
+    expect(list.body.some((x: any) => x.id === grantedFundingId), 'ควรเห็นส่วนลดที่เพิ่งมอบในระเบียนของนักศึกษาคนนั้น');
+  });
+
+  await check('API-237 ถอนส่วนลดได้ และถอนซ้ำได้ 404', async () => {
+    const r = await finance(`/finance/students/${F.student}/funding/${grantedFundingId}`, { method: 'DELETE' });
+    expect(r.status === 200, `ควรได้ 200 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const list = await finance(`/finance/students/${F.student}/funding`);
+    expect(!list.body.some((x: any) => x.id === grantedFundingId), 'ถอนแล้วต้องไม่เห็นในรายการอีก');
+
+    const again = await finance(`/finance/students/${F.student}/funding/${grantedFundingId}`, { method: 'DELETE' });
+    expect(again.status === 404, `ถอนซ้ำควรได้ 404 ได้ ${again.status}`);
+  });
+
   await app.close();
 
   console.log('');

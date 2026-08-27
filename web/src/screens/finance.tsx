@@ -102,6 +102,452 @@ interface ReconcileResult {
   unmatched: number;
 }
 
+interface AcademicYear {
+  id: string;
+  year_be: number;
+}
+
+interface ProgramRow {
+  program_id: string;
+  program_name: string;
+}
+
+interface FeeItem {
+  id: string;
+  code: string;
+  name_th: string;
+  kind: string;
+  subsidised: boolean;
+  refundable: boolean;
+}
+
+interface FeeSchedule {
+  id: string;
+  level: string | null;
+  study_year: number | null;
+  program_id: string | null;
+  program_name: string | null;
+  announcement_no: string | null;
+  announced_on: string | null;
+  active: boolean;
+  line_count: number;
+}
+
+interface FeeScheduleLine {
+  id: string;
+  fee_item_id: string;
+  fee_item_name: string;
+  term_ordinal: number;
+  amount: string | number;
+}
+
+interface FundingSource {
+  id: string;
+  kind: string;
+  name_th: string;
+  external_ref: string | null;
+  active: boolean;
+}
+
+interface StudentFundingRow {
+  id: string;
+  funding_source_id: string;
+  funding_name: string;
+  kind: string;
+  academic_year_id: string;
+  term_id: string | null;
+  fee_item_id: string | null;
+  fee_item_name: string | null;
+  percent_off: string | number | null;
+  amount: string | number | null;
+  document_no: string | null;
+  note: string | null;
+  approved_at: string | null;
+}
+
+const LEVEL_LABEL: Record<string, string> = { PVC: 'ปวช.', PVS: 'ปวส.', TVB: 'ทวิภาคีบัณฑิต' };
+
+const FEE_ITEM_KIND: Record<string, string> = {
+  tuition: 'ค่าเล่าเรียน', lab_material: 'ค่าวัสดุฝึก', activity: 'ค่ากิจกรรม',
+  insurance: 'ค่าประกันอุบัติเหตุ', uniform: 'ค่าเครื่องแบบ', book: 'ค่าหนังสือ',
+  exam: 'ค่าธรรมเนียมสอบ', dormitory: 'ค่าหอพัก', other: 'อื่น ๆ',
+};
+
+const FUNDING_KIND: Record<string, string> = {
+  scholarship: 'ทุนการศึกษา', sibling: 'ส่วนลดพี่น้อง', staff_child: 'ส่วนลดบุตรบุคลากร',
+  gov_subsidy: 'เงินอุดหนุนรายบุคคล', student_loan: 'กยศ.', employer: 'ทุนสถานประกอบการ', other: 'อื่น ๆ',
+};
+
+/**
+ * โครงสร้างค่าเทอม — ระบุแยกสาขา/ชั้นปี/ระดับได้ หรือเว้นว่างให้เป็น "รวม"
+ * (ใช้กับทุกค่าของมิตินั้น) ตามที่ program_id รองรับมาตั้งแต่ 0010 และ 0080
+ * เปิดให้ level/study_year ว่างได้แบบเดียวกัน — ไม่มีปุ่มนี้มาก่อนเลยตั้งแต่
+ * 0010 วิทยาลัยที่เปิดใหม่จึงตั้งค่าเทอมเองไม่ได้นอกจากมือแตะฐานข้อมูล
+ */
+function FeeScheduleSetupCard() {
+  const years = useAsync(() => api.get<AcademicYear[]>('/academic/years'), []);
+  const programs = useAsync(() => api.get<ProgramRow[]>('/curriculum/programs'), []);
+  const feeItems = useAsync(() => api.get<FeeItem[]>('/finance/fee-items'), []);
+
+  const [yearId, setYearId] = useState('');
+  const schedules = useAsync(
+    () => (yearId ? api.get<FeeSchedule[]>(`/finance/fee-schedules${qs({ academicYearId: yearId })}`) : Promise.resolve([])),
+    [yearId],
+  );
+
+  const [level, setLevel] = useState('');
+  const [studyYear, setStudyYear] = useState('');
+  const [programId, setProgramId] = useState('');
+  const [announcementNo, setAnnouncementNo] = useState('');
+  const [announcedOn, setAnnouncedOn] = useState('');
+
+  const [itemCode, setItemCode] = useState('');
+  const [itemName, setItemName] = useState('');
+  const [itemKind, setItemKind] = useState('tuition');
+
+  const [scheduleId, setScheduleId] = useState('');
+  const lines = useAsync(
+    () => (scheduleId ? api.get<FeeScheduleLine[]>(`/finance/fee-schedules/${scheduleId}/lines`) : Promise.resolve([])),
+    [scheduleId],
+  );
+  const [lineItemId, setLineItemId] = useState('');
+  const [lineTerm, setLineTerm] = useState('1');
+  const [lineAmount, setLineAmount] = useState('');
+
+  const uniquePrograms = new Map<string, string>();
+  for (const p of programs.data ?? []) uniquePrograms.set(p.program_id, p.program_name);
+
+  return (
+    <>
+      <Card title="รายการค่าธรรมเนียม">
+        <div className="row">
+          <Field label="รหัส">
+            <input value={itemCode} onChange={(e) => setItemCode(e.target.value)} placeholder="TUITION" />
+          </Field>
+          <Field label="ชื่อรายการ">
+            <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="ค่าเล่าเรียน" />
+          </Field>
+          <Field label="ประเภท">
+            <select value={itemKind} onChange={(e) => setItemKind(e.target.value)}>
+              {Object.entries(FEE_ITEM_KIND).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </Field>
+          <div className="shrink">
+            <ActionButton
+              className="primary"
+              onRun={() => api.post('/finance/fee-items', { code: itemCode.trim(), nameTh: itemName.trim(), kind: itemKind })}
+              onDone={() => { setItemCode(''); setItemName(''); feeItems.reload(); }}
+            >
+              เพิ่มรายการ
+            </ActionButton>
+          </div>
+        </div>
+        <AsyncView state={feeItems}>
+          {(rows) => rows.length === 0 ? (
+            <div className="empty">ยังไม่มีรายการค่าธรรมเนียม</div>
+          ) : (
+            <div className="hint">{rows.map((r) => `${r.name_th} (${r.code})`).join(' · ')}</div>
+          )}
+        </AsyncView>
+      </Card>
+
+      <TableCard
+        title="โครงสร้างค่าเทอม"
+        actions={
+          <div style={{ width: 200 }}>
+            <AsyncView state={years}>
+              {(rows) => (
+                <select value={yearId} onChange={(e) => { setYearId(e.target.value); setScheduleId(''); }}>
+                  <option value="">— เลือกปีการศึกษา —</option>
+                  {rows.map((y) => <option key={y.id} value={y.id}>ปีการศึกษา {y.year_be}</option>)}
+                </select>
+              )}
+            </AsyncView>
+          </div>
+        }
+      >
+        {yearId && (
+          <>
+            <div className="row">
+              <Field label="ระดับ">
+                <select value={level} onChange={(e) => setLevel(e.target.value)}>
+                  <option value="">ทุกระดับ (รวม)</option>
+                  {Object.entries(LEVEL_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </Field>
+              <Field label="ชั้นปี">
+                <select value={studyYear} onChange={(e) => setStudyYear(e.target.value)}>
+                  <option value="">ทุกชั้นปี (รวม)</option>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>ชั้นปีที่ {n}</option>)}
+                </select>
+              </Field>
+              <Field label="สาขา">
+                <select value={programId} onChange={(e) => setProgramId(e.target.value)}>
+                  <option value="">ทุกสาขา (รวม)</option>
+                  {[...uniquePrograms].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+              </Field>
+              <Field label="เลขที่ประกาศ">
+                <input value={announcementNo} onChange={(e) => setAnnouncementNo(e.target.value)} placeholder="ปก.2569/001" />
+              </Field>
+              <Field label="วันประกาศ (พ.ศ. หรือ ค.ศ.)">
+                <input value={announcedOn} onChange={(e) => setAnnouncedOn(e.target.value)} placeholder="2569-03-15" />
+              </Field>
+              <div className="shrink">
+                <ActionButton
+                  className="primary"
+                  onRun={() =>
+                    api.post('/finance/fee-schedules', {
+                      academicYearId: yearId,
+                      ...(level ? { level } : {}),
+                      ...(studyYear ? { studyYear: Number(studyYear) } : {}),
+                      ...(programId ? { programId } : {}),
+                      ...(announcementNo.trim() ? { announcementNo: announcementNo.trim() } : {}),
+                      ...(announcedOn.trim() ? { announcedOn: toGregorianIso(announcedOn.trim()) } : {}),
+                    })
+                  }
+                  onDone={() => { setAnnouncementNo(''); setAnnouncedOn(''); schedules.reload(); }}
+                >
+                  สร้างโครงสร้าง
+                </ActionButton>
+              </div>
+            </div>
+
+            <AsyncView state={schedules} empty="ปีการศึกษานี้ยังไม่มีโครงสร้างค่าเทอม">
+              {(rows) => (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 34 }} />
+                      <th style={{ width: 110 }}>ระดับ</th>
+                      <th style={{ width: 90 }}>ชั้นปี</th>
+                      <th>สาขา</th>
+                      <th style={{ width: 140 }}>เลขที่ประกาศ</th>
+                      <th className="num" style={{ width: 90 }}>รายการ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((s) => (
+                      <tr key={s.id}>
+                        <td>
+                          <input
+                            type="radio" name="fee-schedule" style={{ width: 'auto' }}
+                            checked={scheduleId === s.id} onChange={() => setScheduleId(s.id)}
+                          />
+                        </td>
+                        <td>{s.level ? LEVEL_LABEL[s.level] ?? s.level : <em>ทุกระดับ</em>}</td>
+                        <td>{s.study_year ?? <em>ทุกชั้นปี</em>}</td>
+                        <td>{s.program_name ?? <em>ทุกสาขา</em>}</td>
+                        <td>{s.announcement_no ?? '—'}</td>
+                        <td className="num">{s.line_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </AsyncView>
+          </>
+        )}
+      </TableCard>
+
+      {scheduleId && (
+        <TableCard title="รายการในโครงสร้างที่เลือก">
+          <div className="row">
+            <Field label="รายการค่าธรรมเนียม">
+              <AsyncView state={feeItems}>
+                {(rows) => (
+                  <select value={lineItemId} onChange={(e) => setLineItemId(e.target.value)}>
+                    <option value="">— เลือกรายการ —</option>
+                    {rows.map((r) => <option key={r.id} value={r.id}>{r.name_th}</option>)}
+                  </select>
+                )}
+              </AsyncView>
+            </Field>
+            <Field label="งวด/ภาคเรียนที่">
+              <select value={lineTerm} onChange={(e) => setLineTerm(e.target.value)}>
+                {[1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </Field>
+            <Field label="จำนวนเงิน">
+              <input value={lineAmount} onChange={(e) => setLineAmount(e.target.value)} inputMode="decimal" />
+            </Field>
+            <div className="shrink">
+              <ActionButton
+                className="primary"
+                onRun={() => {
+                  if (!lineItemId) throw new Error('เลือกรายการค่าธรรมเนียมก่อน');
+                  return api.post(`/finance/fee-schedules/${scheduleId}/lines`, {
+                    lines: [{ feeItemId: lineItemId, termOrdinal: Number(lineTerm), amount: Number(lineAmount) }],
+                  });
+                }}
+                onDone={() => { setLineAmount(''); lines.reload(); schedules.reload(); }}
+              >
+                บันทึกราคา
+              </ActionButton>
+            </div>
+          </div>
+          <AsyncView state={lines} empty="โครงสร้างนี้ยังไม่มีรายการราคา">
+            {(rows) => (
+              <table>
+                <thead>
+                  <tr>
+                    <th>รายการ</th>
+                    <th style={{ width: 110 }}>งวด/ภาคเรียนที่</th>
+                    <th className="num" style={{ width: 130 }}>จำนวนเงิน</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((l) => (
+                    <tr key={l.id}>
+                      <td>{l.fee_item_name}</td>
+                      <td>{l.term_ordinal}</td>
+                      <td className="num">{money(l.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </AsyncView>
+        </TableCard>
+      )}
+    </>
+  );
+}
+
+/**
+ * ส่วนลด/ทุนรายคน — เจาะจงรายการได้ (0080) เช่น ลดเฉพาะค่าแรกเข้า ไม่แตะ
+ * ค่าเทอม ต่างจากทุนที่ตั้งใจลดทั้งใบซึ่งเว้นช่องรายการว่างไว้ กดมอบแล้ว
+ * ถือเป็นการอนุมัติทันที เพราะมีแค่ finance/registrar/director/admin
+ * เท่านั้นที่กดถึงหน้านี้ได้ (บังคับซ้ำที่ฐานข้อมูลอีกชั้น)
+ */
+function StudentDiscountCard({ studentId, academicYearId }: { studentId: string; academicYearId: string }) {
+  const funding = useAsync(() => api.get<StudentFundingRow[]>(`/finance/students/${studentId}/funding`), [studentId]);
+  const sources = useAsync(() => api.get<FundingSource[]>('/finance/funding-sources'), []);
+  const feeItems = useAsync(() => api.get<FeeItem[]>('/finance/fee-items'), []);
+
+  const [sourceId, setSourceId] = useState('');
+  const [feeItemId, setFeeItemId] = useState('');
+  const [amountKind, setAmountKind] = useState<'percent' | 'amount'>('percent');
+  const [value, setValue] = useState('');
+  const [note, setNote] = useState('');
+
+  const [newKind, setNewKind] = useState('scholarship');
+  const [newName, setNewName] = useState('');
+
+  return (
+    <TableCard title="ส่วนลดและทุนของนักศึกษาคนนี้">
+      <div className="row">
+        <Field label="สร้างแหล่งทุน/ส่วนลดใหม่">
+          <select value={newKind} onChange={(e) => setNewKind(e.target.value)}>
+            {Object.entries(FUNDING_KIND).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </Field>
+        <Field label="ชื่อ">
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="เช่น ทุนเรียนดี, ลดค่าแรกเข้า" />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            onRun={() => api.post('/finance/funding-sources', { kind: newKind, nameTh: newName.trim() })}
+            onDone={() => { setNewName(''); sources.reload(); }}
+          >
+            เพิ่มแหล่งทุน
+          </ActionButton>
+        </div>
+      </div>
+
+      <div className="row">
+        <Field label="แหล่งทุน/ส่วนลด">
+          <AsyncView state={sources}>
+            {(rows) => (
+              <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+                <option value="">— เลือก —</option>
+                {rows.map((s) => <option key={s.id} value={s.id}>{s.name_th} ({FUNDING_KIND[s.kind] ?? s.kind})</option>)}
+              </select>
+            )}
+          </AsyncView>
+        </Field>
+        <Field label="ลดเฉพาะรายการ (ว่าง = ลดทุกรายการในใบแจ้งหนี้)">
+          <AsyncView state={feeItems}>
+            {(rows) => (
+              <select value={feeItemId} onChange={(e) => setFeeItemId(e.target.value)}>
+                <option value="">— ลดทุกรายการ —</option>
+                {rows.map((r) => <option key={r.id} value={r.id}>{r.name_th}</option>)}
+              </select>
+            )}
+          </AsyncView>
+        </Field>
+        <Field label="รูปแบบ">
+          <select value={amountKind} onChange={(e) => setAmountKind(e.target.value as 'percent' | 'amount')}>
+            <option value="percent">เปอร์เซ็นต์</option>
+            <option value="amount">จำนวนเงิน</option>
+          </select>
+        </Field>
+        <Field label={amountKind === 'percent' ? 'ลดกี่ %' : 'ลดกี่บาท'}>
+          <input value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" />
+        </Field>
+        <Field label="หมายเหตุ (ถ้ามี)">
+          <input value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!sourceId) throw new Error('เลือกแหล่งทุน/ส่วนลดก่อน');
+              if (!value) throw new Error('ระบุจำนวนที่จะลดก่อน');
+              return api.post(`/finance/students/${studentId}/funding`, {
+                fundingSourceId: sourceId,
+                academicYearId,
+                ...(feeItemId ? { feeItemId } : {}),
+                ...(amountKind === 'percent' ? { percentOff: Number(value) } : { amount: Number(value) }),
+                ...(note.trim() ? { note: note.trim() } : {}),
+              });
+            }}
+            onDone={() => { setValue(''); setNote(''); funding.reload(); }}
+          >
+            มอบส่วนลด
+          </ActionButton>
+        </div>
+      </div>
+
+      <AsyncView state={funding} empty="นักศึกษาคนนี้ยังไม่มีส่วนลดหรือทุนใด ๆ">
+        {(rows) => (
+          <table>
+            <thead>
+              <tr>
+                <th>แหล่งทุน/ส่วนลด</th>
+                <th>ลดเฉพาะรายการ</th>
+                <th className="num" style={{ width: 110 }}>จำนวน</th>
+                <th>หมายเหตุ</th>
+                <th style={{ width: 90 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.funding_name} <span className="hint">({FUNDING_KIND[r.kind] ?? r.kind})</span></td>
+                  <td>{r.fee_item_name ?? <em>ทุกรายการ</em>}</td>
+                  <td className="num">{r.percent_off != null ? `${r.percent_off}%` : money(r.amount ?? 0)}</td>
+                  <td>{r.note ?? '—'}</td>
+                  <td>
+                    <ActionButton
+                      className="ghost"
+                      confirm="ถอนส่วนลดนี้มีผลกับใบแจ้งหนี้ที่จะออกครั้งต่อไป ยืนยันหรือไม่"
+                      onRun={() => api.del(`/finance/students/${studentId}/funding/${r.id}`)}
+                      onDone={() => funding.reload()}
+                    >
+                      ถอน
+                    </ActionButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </AsyncView>
+    </TableCard>
+  );
+}
+
 /**
  * แปลงปี พ.ศ. ที่พิมพ์มาให้เป็น ค.ศ. ก่อนส่งเข้า API เสมอ
  *
@@ -253,7 +699,7 @@ function PendingMatchRow({
 }
 
 export function FinanceScreen() {
-  const { terms, termId, setTerm } = useTermPicker();
+  const { terms, termId, term, setTerm } = useTermPicker();
   const aging = useAsync(() => api.get<AgingRow[]>('/finance/ar-aging'), []);
   const students = useAsync(() => api.get<StudentRow[]>('/students?limit=200'), []);
   const pending = useAsync(() => api.get<PendingMatch[]>('/finance/reconcile/pending'), []);
@@ -328,6 +774,8 @@ export function FinanceScreen() {
           )}
         </AsyncView>
       </TableCard>
+
+      <FeeScheduleSetupCard />
 
       <BankImportCard onDone={() => pending.reload()} />
 
@@ -404,6 +852,8 @@ export function FinanceScreen() {
               )}
             </AsyncView>
           </Card>
+
+          {term && <StudentDiscountCard studentId={studentId} academicYearId={term.academic_year_id} />}
 
           <Card title="ออกใบแจ้งหนี้ของภาคเรียนที่เลือก">
             <div className="row">

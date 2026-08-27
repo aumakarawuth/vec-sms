@@ -209,6 +209,7 @@ export function ActionButton({
   className = '',
   confirm,
   onDone,
+  toast = false,
 }: {
   onRun: () => Promise<unknown>;
   children: ReactNode;
@@ -216,9 +217,22 @@ export function ActionButton({
   /** ข้อความยืนยันก่อนทำ — ใช้กับรายการที่ย้อนกลับไม่ได้ */
   confirm?: string;
   onDone?: (result: unknown) => void;
+  /**
+   * แสดง error เป็นแผงลอยมุมจอแทนกล่องแทรกอยู่ในหน้า — ใช้กับปุ่มที่อยู่ใน
+   * dialog ลอย (cascade-editor) ซึ่งพื้นที่แคบ กล่อง error แบบเดิมจะดัน
+   * เลย์เอาต์จนฟอร์มขยับ ค่าเริ่มต้นยังเป็นกล่องแทรกเหมือนเดิมเพื่อไม่กระทบ
+   * ฟอร์มอื่นที่ใช้ ActionButton อยู่แล้วทั้งระบบ
+   */
+  toast?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast || !error) return;
+    const t = setTimeout(() => setError(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast, error]);
 
   return (
     <>
@@ -241,7 +255,9 @@ export function ActionButton({
       >
         {busy ? 'กำลังทำ…' : children}
       </button>
-      {error && <Notice kind="error">{error}</Notice>}
+      {error && (toast
+        ? <div className="toast-error" role="alert">{error}<button onClick={() => setError(null)} aria-label="ปิด">×</button></div>
+        : <Notice kind="error">{error}</Notice>)}
     </>
   );
 }

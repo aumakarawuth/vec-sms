@@ -13,6 +13,8 @@
  */
 import { useState } from 'react';
 import { api, qs } from '../core/api';
+import { href } from '../core/router';
+import { useScope } from '../core/scope';
 import { termLabel, type Term } from '../core/catalog';
 import { TERM_STATUS, thaiDate, thaiDateTime } from '../core/fmt';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
@@ -31,6 +33,7 @@ interface Placement {
   group_code: string | null;
   student_code: string;
   full_name: string;
+  class_number: number | null;
 }
 
 interface RegradeSession {
@@ -71,7 +74,23 @@ interface RoomRow {
   id: string;
   code: string;
   name_th: string;
+  kind?: string;
+  capacity?: number | null;
+  building?: string | null;
 }
+
+interface ClassGroup {
+  id: string;
+  level: string;
+  study_year: number;
+  code: string;
+  cohort: string | null;
+  finance_group_th: string | null;
+  students: number;
+  advisors: { id: string; nameTh: string }[];
+}
+
+const LEVEL_LABEL: Record<string, string> = { PVC: 'ปวช.', PVS: 'ปวส.', TVB: 'ทล.บ.' };
 
 interface SessionCourse {
   id: string;
@@ -652,12 +671,14 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
     () => api.get<PlaceableStudent[]>(`/students${qs({ limit: '200', academicYearId })}`),
     [academicYearId],
   );
+  const classGroups = useAsync(() => api.get<ClassGroup[]>('/class-groups'), []);
   const [q, setQ] = useState('');
   const [onlyUnplaced, setOnlyUnplaced] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [studyYear, setStudyYear] = useState('1');
   const [groupCode, setGroupCode] = useState('');
   const [result, setResult] = useState<Awaited<ReturnType<typeof placeInChunks>> | null>(null);
+  const [mode, setMode] = useState<'search' | 'place'>('search');
 
   const visible = (students.data ?? []).filter((s) => {
     if (onlyUnplaced && s.group_code) return false;
@@ -673,9 +694,14 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
     else next.add(id);
     setSelected(next);
   };
+  const selectVisible = () => setSelected(new Set(visible.map((s) => s.id)));
+  const clearSelected = () => setSelected(new Set());
+  const selectedNames = (students.data ?? []).filter((s) => selected.has(s.id)).map((s) => s.full_name);
 
   return (
-    <Card title="จัดนักศึกษาเข้าชั้นปี/ห้อง">
+    <Card title="จัดห้องเรียน">
+      <div className="classroom-mode-tabs"><button className={mode === 'search' ? 'active' : ''} onClick={() => setMode('search')}>1. ค้นหาและเลือกรายชื่อ</button><button className={mode === 'place' ? 'active' : ''} onClick={() => setMode('place')}>2. กำหนดห้องเรียน <span>{selected.size}</span></button></div>
+      {mode === 'search' && <>
       <div className="row">
         <Field label="ค้นหารหัสหรือชื่อ">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="เช่น 69201 หรือ ปวริศ" />
@@ -684,9 +710,7 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
           <input type="checkbox" checked={onlyUnplaced} onChange={(e) => setOnlyUnplaced(e.target.checked)} />
           แสดงเฉพาะที่ยังไม่จัดห้อง
         </label>
-        <div style={{ marginTop: 22, color: 'var(--ink-soft)', fontSize: 12 }}>
-          เลือกแล้ว {selected.size} คน
-        </div>
+        <div className="shrink classroom-selection-actions"><button onClick={selectVisible} disabled={visible.length === 0}>เลือกทั้งหมดที่แสดง ({visible.length})</button><button onClick={clearSelected} disabled={selected.size === 0}>ล้างที่เลือก</button></div>
       </div>
 
       <AsyncView state={students} empty="ไม่มีนักศึกษา">
@@ -721,7 +745,10 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
         )}
       </AsyncView>
 
-      <div className="row" style={{ marginTop: 10 }}>
+      <div className="classroom-next"><span>เลือกรายชื่อแล้ว <b>{selected.size}</b> คน</span><button className="primary" disabled={selected.size === 0} onClick={() => setMode('place')}>ไปกำหนดห้องเรียน →</button></div>
+      </>}
+
+      {mode === 'place' && <><Notice kind="info">กำหนดชั้นปีและห้องให้กับนักศึกษาที่เลือก {selected.size} คน หากต้องการเปลี่ยนรายชื่อ ให้กลับไปที่ขั้นตอนค้นหา</Notice><div className="classroom-selected-summary"><b>รายชื่อที่เลือก</b><span>{selectedNames.slice(0, 5).join(' · ')}{selectedNames.length > 5 ? ` และอีก ${selectedNames.length - 5} คน` : ''}</span><button className="link" onClick={() => setMode('search')}>แก้ไขรายชื่อ</button></div><div className="row" style={{ marginTop: 10 }}>
         <Field label="ชั้นปี">
           <select value={studyYear} onChange={(e) => setStudyYear(e.target.value)} style={{ maxWidth: 90 }}>
             {[1, 2, 3, 4, 5, 6].map((y) => (
@@ -729,8 +756,10 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
             ))}
           </select>
         </Field>
-        <Field label="รหัสห้อง (ถ้ามี)">
-          <input value={groupCode} onChange={(e) => setGroupCode(e.target.value)} placeholder="เช่น 1/1" style={{ maxWidth: 100 }} />
+        <Field label="ห้องเรียน">
+          <AsyncView state={classGroups}>
+            {(groups) => <select value={groupCode} onChange={(e) => { const group = groups.find((x) => x.code === e.target.value); setGroupCode(e.target.value); if (group) setStudyYear(String(group.study_year)); }}><option value="">— ยังไม่กำหนดห้อง —</option>{groups.map((group) => <option key={group.id} value={group.code}>{LEVEL_LABEL[group.level]} {group.study_year} / {group.code}</option>)}</select>}
+          </AsyncView>
         </Field>
         <div className="shrink">
           <ActionButton
@@ -760,6 +789,7 @@ function PlaceStudentsForm({ academicYearId, onDone }: { academicYearId: string;
           )}
         </Notice>
       )}
+      </>}
     </Card>
   );
 }
@@ -1136,4 +1166,73 @@ export function AcademicYearScreen() {
       </Notice>
     </>
   );
+}
+
+/** หน้าจอแยก: สร้างห้องก่อน แล้วจึงนำรายชื่อนักศึกษาเข้าห้องในอีกหน้าหนึ่ง */
+export function AcademicClassroomScreen() {
+  const years = useAsync(() => api.get<AcademicYear[]>('/academic/years'), []);
+  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
+  const groups = useAsync(() => api.get<ClassGroup[]>('/class-groups'), []);
+  const [academicYearId, setAcademicYearId] = useState('');
+  const [level, setLevel] = useState('PVC');
+  const [studyYear, setStudyYear] = useState('1');
+  const [code, setCode] = useState('');
+  const [cohort, setCohort] = useState('');
+  const [advisorStaffId, setAdvisorStaffId] = useState('');
+  const [financeGroupTh, setFinanceGroupTh] = useState('');
+
+  return <>
+    <PageHead title="จัดชั้นปีและห้อง" sub="สร้างห้องประจำชั้น เช่น ปวช.1 / CA.1/1 แยกจากห้องกายภาพสำหรับตารางสอน" actions={<a href={href('/academic-year/placements')}>จัดนักศึกษาเข้าห้อง →</a>} />
+    <Card title="สร้างห้องประจำชั้นใหม่">
+      <div className="row">
+        <Field label="ปีการศึกษา"><select value={academicYearId} onChange={(e) => setAcademicYearId(e.target.value)}><option value="">— เลือกปีการศึกษา —</option>{(years.data ?? []).map((year) => <option key={year.id} value={year.id}>{year.year_be}</option>)}</select></Field>
+        <Field label="ระดับ"><select value={level} onChange={(e) => setLevel(e.target.value)}><option value="PVC">ปวช.</option><option value="PVS">ปวส.</option><option value="TVB">ทล.บ.</option></select></Field>
+        <Field label="ชั้นปี"><select value={studyYear} onChange={(e) => setStudyYear(e.target.value)}>{[1,2,3,4,5,6].map((year) => <option key={year} value={year}>{year}</option>)}</select></Field>
+        <Field label="ห้อง"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น CA.1/1" /></Field>
+        <Field label="รุ่นที่ (ถ้ามี)"><input value={cohort} onChange={(e) => setCohort(e.target.value)} placeholder="เช่น 2569" /></Field>
+        <Field label="อาจารย์ที่ปรึกษา"><select value={advisorStaffId} onChange={(e) => setAdvisorStaffId(e.target.value)}><option value="">— ยังไม่ระบุ —</option>{(staff.data?.items ?? []).map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}</select></Field>
+        <Field label="กลุ่มการเงิน (ถ้ามี)"><input value={financeGroupTh} onChange={(e) => setFinanceGroupTh(e.target.value)} /></Field>
+        <div className="shrink"><ActionButton className="primary" onRun={() => {
+          if (!academicYearId || !code.trim()) throw new Error('เลือกปีการศึกษาและกรอกห้องให้ครบ');
+          return api.post('/class-groups', { academicYearId, level, studyYear: Number(studyYear), code: code.trim(), ...(cohort.trim() ? { cohort: cohort.trim() } : {}), ...(advisorStaffId ? { advisorStaffIds: [advisorStaffId] } : {}), ...(financeGroupTh.trim() ? { financeGroupTh: financeGroupTh.trim() } : {}) });
+        }} onDone={() => { setCode(''); setCohort(''); setAdvisorStaffId(''); setFinanceGroupTh(''); groups.reload(); }}>สร้างห้องประจำชั้น</ActionButton></div>
+      </div>
+    </Card>
+    <TableCard title="ห้องประจำชั้นที่สร้างแล้ว">
+      <AsyncView state={groups} empty="ยังไม่มีห้องประจำชั้น">{(items) => <table><thead><tr><th>เกรด</th><th>ห้อง</th><th>รุ่นที่</th><th className="num">นักศึกษา</th><th>ข้อมูล</th></tr></thead><tbody>
+        {items.map((group) => <tr key={group.id}><td>{LEVEL_LABEL[group.level]} {group.study_year}</td><td>{group.code}</td><td>{group.cohort ?? '—'}</td><td className="num">{group.students}</td><td>{group.advisors.map((advisor) => advisor.nameTh).join(', ') || '—'}{group.finance_group_th ? ` · ${group.finance_group_th}` : ''}</td></tr>)}
+      </tbody></table>}</AsyncView>
+    </TableCard>
+  </>;
+}
+
+/** หน้าจอแยก: จัดรายชื่อนักศึกษาเข้าชั้นปี/ห้องหลังจากสร้างห้องแล้ว */
+export function AcademicPlacementScreen() {
+  const scope = useScope();
+  const ayId = scope.yearId;
+  const placements = useAsync(
+    () => ayId ? api.get<Placement[]>(`/rollover/placements${qs({ academicYearId: ayId })}`) : Promise.resolve([]),
+    [ayId],
+  );
+
+  return <>
+    <PageHead title="จัดห้องเรียน" sub="ค้นหารายชื่อ เลือกนักศึกษา แล้วกำหนดชั้นปีและห้องเรียน" actions={<a href={href('/academic-year/classes')}>จัดการห้องประจำชั้น</a>} />
+    {!ayId && <Notice kind="info">ยังไม่มีปีการศึกษาในส่วนหัวของระบบ ให้ผู้ดูแลเพิ่มปีการศึกษาก่อนจึงจะจัดห้องได้</Notice>}
+    {ayId && <PlaceStudentsForm academicYearId={ayId} onDone={() => placements.reload()} />}
+    {ayId && <RenumberClassNumbersCard academicYearId={ayId} placements={placements.data ?? []} onDone={() => placements.reload()} />}
+    {ayId && <TableCard title="นักศึกษาแยกตามชั้นปีและห้อง">
+      <AsyncView state={placements} empty="ยังไม่ได้จัดห้องให้ปีการศึกษานี้">
+        {(rows) => <table><thead><tr><th style={{ width: 100 }}>ชั้นปี</th><th style={{ width: 120 }}>ห้อง</th><th style={{ width: 80 }}>เลขที่</th><th style={{ width: 150 }}>รหัสนักศึกษา</th><th>ชื่อ — นามสกุล</th></tr></thead><tbody>
+          {rows.map((student) => <tr key={student.student_code}><td>ปวช. {student.study_year}</td><td>{student.group_code ?? '—'}</td><td>{student.class_number ?? '—'}</td><td className="mono">{student.student_code}</td><td>{student.full_name}</td></tr>)}
+        </tbody></table>}
+      </AsyncView>
+    </TableCard>}
+  </>;
+}
+
+function RenumberClassNumbersCard({ academicYearId, placements, onDone }: { academicYearId:string; placements:Placement[]; onDone:()=>void }) {
+  const rooms = [...new Map(placements.filter((p) => p.group_code).map((p) => [`${p.study_year}|${p.group_code}`, p])).values()];
+  const [roomKey, setRoomKey] = useState('');
+  const selected = rooms.find((room) => `${room.study_year}|${room.group_code}` === roomKey);
+  return <Card title="เรียงเลขที่ในห้อง"><div className="row"><Field label="ห้องเรียน"><select value={roomKey} onChange={(e) => setRoomKey(e.target.value)}><option value="">— เลือกห้อง —</option>{rooms.map((room) => <option key={`${room.study_year}|${room.group_code}`} value={`${room.study_year}|${room.group_code}`}>ชั้นปี {room.study_year} / ห้อง {room.group_code}</option>)}</select></Field><div style={{ flex:2, color:'var(--ink-soft)', fontSize:12 }}>ระบบจะเรียงเลขที่ใหม่ตามรหัสนักศึกษา จากน้อยไปมาก แล้วบันทึกลงระเบียนของทุกคนในห้อง</div><div className="shrink"><ActionButton className="primary" confirm={selected ? `เรียงเลขที่ใหม่ให้ห้อง ${selected.group_code} จำนวน ${placements.filter((p) => p.study_year === selected.study_year && p.group_code === selected.group_code).length} คน ยืนยันหรือไม่` : undefined} onRun={() => { if (!selected?.group_code) throw new Error('เลือกห้องก่อน'); return api.post('/rollover/placements/renumber', { academicYearId, studyYear:selected.study_year, groupCode:selected.group_code }); }} onDone={onDone}>เรียงเลขที่ใหม่</ActionButton></div></div></Card>;
 }

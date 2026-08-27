@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Injectable,
@@ -11,7 +12,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ArrayNotEmpty, IsArray, IsIn, IsISO8601, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsISO8601, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
@@ -23,6 +24,71 @@ const METHODS = [
   'cash', 'bank_transfer', 'promptpay', 'credit_card', 'counter_service',
   'direct_debit', 'gov_subsidy', 'student_loan', 'scholarship', 'adjustment',
 ] as const;
+
+const FEE_ITEM_KINDS = [
+  'tuition', 'lab_material', 'activity', 'insurance', 'uniform', 'book', 'exam', 'dormitory', 'other',
+] as const;
+
+const QUALIFICATION_LEVELS = ['PVC', 'PVS', 'TVB'] as const;
+
+const FUNDING_KINDS = [
+  'scholarship', 'sibling', 'staff_child', 'gov_subsidy', 'student_loan', 'employer', 'other',
+] as const;
+
+class FeeItemDto {
+  @IsString() @MaxLength(20) code: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsIn(FEE_ITEM_KINDS as unknown as string[]) kind: string;
+  @IsOptional() @IsBoolean() subsidised?: boolean;
+  @IsOptional() @IsBoolean() refundable?: boolean;
+}
+
+/**
+ * level/studyYear/programId เว้นว่างได้ทั้งสามช่อง = "รวม" ใช้กับทุกค่าของ
+ * มิตินั้น (ดู 0080) — เจาะจงได้เท่าที่วิทยาลัยต้องการจริง ไม่บังคับครบ
+ */
+class FeeScheduleDto {
+  @IsUuid() academicYearId: string;
+  @IsOptional() @IsIn(QUALIFICATION_LEVELS as unknown as string[]) level?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(4) studyYear?: number;
+  @IsOptional() @IsUuid() programId?: string;
+  @IsOptional() @IsString() @MaxLength(100) announcementNo?: string;
+  @IsOptional() @IsISO8601() announcedOn?: string;
+}
+
+class FeeScheduleLineDto {
+  @IsUuid() feeItemId: string;
+  @IsInt() @Min(1) @Max(3) termOrdinal: number;
+  @IsNumber() @Min(0) amount: number;
+}
+
+class SetFeeScheduleLinesDto {
+  @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => FeeScheduleLineDto)
+  lines: FeeScheduleLineDto[];
+}
+
+class FundingSourceDto {
+  @IsIn(FUNDING_KINDS as unknown as string[]) kind: string;
+  @IsString() @MaxLength(200) nameTh: string;
+  @IsOptional() @IsString() @MaxLength(100) externalRef?: string;
+}
+
+/**
+ * feeItemId เว้นว่าง = ลดทุกรายการในใบแจ้งหนี้ (ทุนที่ตั้งใจลดทั้งใบ) ·
+ * ระบุ = ลดเฉพาะรายการนั้น (เช่น ลดค่าแรกเข้าอย่างเดียว) — ดู 0080
+ * ต้องมี percentOff หรือ amount อย่างใดอย่างหนึ่งเสมอ (constraint บังคับอยู่แล้ว
+ * แต่ตรวจซ้ำที่นี่เพื่อให้ข้อความผิดพลาดอ่านง่ายกว่าข้อความจาก constraint)
+ */
+class StudentFundingDto {
+  @IsUuid() fundingSourceId: string;
+  @IsUuid() academicYearId: string;
+  @IsOptional() @IsUuid() termId?: string;
+  @IsOptional() @IsUuid() feeItemId?: string;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) percentOff?: number;
+  @IsOptional() @IsNumber() @Min(0) amount?: number;
+  @IsOptional() @IsString() @MaxLength(100) documentNo?: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
 
 class IssueInvoiceDto {
   @IsUuid() studentId: string;
@@ -306,6 +372,149 @@ export class FinanceService {
                    else 4 end`,
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // โครงสร้างค่าธรรมเนียม — ไม่เคยมีเส้นทางสร้างเลยตั้งแต่ 0010 (0080)
+  // ─────────────────────────────────────────────────────────────────
+  async feeItems() {
+    return this.db.query(
+      `select id, code, name_th, kind, subsidised, refundable
+         from fee_item order by kind, code`,
+    );
+  }
+
+  async createFeeItem(dto: FeeItemDto) {
+    return this.db.queryOne(
+      `insert into fee_item (institution_id, code, name_th, kind, subsidised, refundable)
+       values (current_institution_id(), $1, $2, $3::fee_item_kind, coalesce($4, false), coalesce($5, false))
+       returning id, code, name_th, kind, subsidised, refundable`,
+      [dto.code.trim(), dto.nameTh.trim(), dto.kind, dto.subsidised ?? null, dto.refundable ?? null],
+    );
+  }
+
+  /** program_name/level_label ว่าง = "รวม" ตามที่หน้าจอต้องแสดง (0080) */
+  async feeSchedules(academicYearId: string) {
+    return this.db.query(
+      `select fs.id, fs.level, fs.study_year, fs.program_id, p.name_th as program_name,
+              fs.announcement_no, fs.announced_on, fs.active,
+              count(fsl.id)::int as line_count
+         from fee_schedule fs
+         left join program p on p.id = fs.program_id
+         left join fee_schedule_line fsl on fsl.fee_schedule_id = fs.id
+        where fs.academic_year_id = $1
+        group by fs.id, p.name_th
+        order by fs.level nulls first, fs.study_year nulls first, p.name_th nulls first`,
+      [academicYearId],
+    );
+  }
+
+  async createFeeSchedule(dto: FeeScheduleDto) {
+    return this.db.queryOne(
+      `insert into fee_schedule
+         (institution_id, academic_year_id, level, study_year, program_id, announcement_no, announced_on)
+       values (current_institution_id(), $1, $2::qualification_level, $3, $4, $5, $6)
+       returning id, level, study_year, program_id, announcement_no, announced_on, active`,
+      [dto.academicYearId, dto.level ?? null, dto.studyYear ?? null, dto.programId ?? null,
+       dto.announcementNo ?? null, dto.announcedOn ?? null],
+    );
+  }
+
+  async feeScheduleLines(id: string) {
+    return this.db.query(
+      `select fsl.id, fsl.fee_item_id, fi.name_th as fee_item_name, fsl.term_ordinal, fsl.amount
+         from fee_schedule_line fsl
+         join fee_item fi on fi.id = fsl.fee_item_id
+        where fsl.fee_schedule_id = $1
+        order by fsl.term_ordinal, fi.code`,
+      [id],
+    );
+  }
+
+  /** ตั้งค่าทีละหลายรายการในคำขอเดียว — แก้ราคาซ้ำเดิมได้ ไม่สร้างรายการซ้อน */
+  async setFeeScheduleLines(id: string, dto: SetFeeScheduleLinesDto) {
+    return this.db.tx(async (c) => {
+      for (const line of dto.lines) {
+        await c.query(
+          `insert into fee_schedule_line (fee_schedule_id, fee_item_id, term_ordinal, amount)
+           values ($1, $2, $3, $4)
+           on conflict (fee_schedule_id, fee_item_id, term_ordinal)
+             do update set amount = excluded.amount`,
+          [id, line.feeItemId, line.termOrdinal, line.amount],
+        );
+      }
+      const rows = await c.query(
+        `select fsl.id, fsl.fee_item_id, fi.name_th as fee_item_name, fsl.term_ordinal, fsl.amount
+           from fee_schedule_line fsl
+           join fee_item fi on fi.id = fsl.fee_item_id
+          where fsl.fee_schedule_id = $1
+          order by fsl.term_ordinal, fi.code`,
+        [id],
+      );
+      return rows.rows;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // ส่วนลด ทุน และแหล่งเงินภายนอก — ไม่เคยมีเส้นทางสร้างเลยตั้งแต่ 0010 (0080)
+  // ─────────────────────────────────────────────────────────────────
+  async fundingSources() {
+    return this.db.query(
+      `select id, kind, name_th, external_ref, active
+         from funding_source order by kind, name_th`,
+    );
+  }
+
+  async createFundingSource(dto: FundingSourceDto) {
+    return this.db.queryOne(
+      `insert into funding_source (institution_id, kind, name_th, external_ref)
+       values (current_institution_id(), $1::funding_kind, $2, $3)
+       returning id, kind, name_th, external_ref, active`,
+      [dto.kind, dto.nameTh.trim(), dto.externalRef?.trim() ?? null],
+    );
+  }
+
+  async studentFunding(studentId: string) {
+    return this.db.query(
+      `select sf.id, sf.funding_source_id, f.name_th as funding_name, f.kind,
+              sf.academic_year_id, sf.term_id, sf.fee_item_id, fi.name_th as fee_item_name,
+              sf.percent_off, sf.amount, sf.document_no, sf.note, sf.approved_at
+         from student_funding sf
+         join funding_source f on f.id = sf.funding_source_id
+         left join fee_item fi on fi.id = sf.fee_item_id
+        where sf.student_id = $1
+        order by sf.approved_at desc nulls first`,
+      [studentId],
+    );
+  }
+
+  /**
+   * มอบส่วนลด/ทุน — เฉพาะบทบาทระดับวิทยาลัยเรียกได้ (RLS บังคับซ้ำอีกชั้น)
+   * การกระทำนี้เองคือการอนุมัติ จึงประทับ approved_by/approved_at ให้ทันที
+   * ไม่มีขั้นรอตรวจแยกต่างหาก เพราะคนที่กดได้ต้องผ่าน @Roles มาแล้ว
+   */
+  async grantFunding(studentId: string, dto: StudentFundingDto) {
+    if (dto.percentOff == null && dto.amount == null) {
+      throw new BadRequestException('ต้องระบุเปอร์เซ็นต์หรือจำนวนเงินส่วนลดอย่างน้อยหนึ่งอย่าง');
+    }
+    return this.db.queryOne(
+      `insert into student_funding
+         (student_id, funding_source_id, academic_year_id, term_id, fee_item_id,
+          percent_off, amount, approved_by, approved_at, document_no, note)
+       values ($1, $2, $3, $4, $5, $6, $7, current_actor_id(), now(), $8, $9)
+       returning id, funding_source_id, academic_year_id, term_id, fee_item_id,
+                 percent_off, amount, document_no, note, approved_at`,
+      [studentId, dto.fundingSourceId, dto.academicYearId, dto.termId ?? null, dto.feeItemId ?? null,
+       dto.percentOff ?? null, dto.amount ?? null, dto.documentNo ?? null, dto.note ?? null],
+    );
+  }
+
+  async revokeFunding(id: string) {
+    const done = await this.db.query(
+      `delete from student_funding where id = $1 returning id`, [id],
+    );
+    if (done.length === 0) throw new NotFoundException('ไม่พบรายการส่วนลดนี้ หรือถูกลบไปแล้ว');
+    return { ok: true };
+  }
 }
 
 @Roles('finance', 'director', 'admin')
@@ -380,6 +589,67 @@ class FinanceController {
   @Get('ar-aging')
   aging() {
     return this.svc.aging();
+  }
+
+  @Get('fee-items')
+  feeItems() {
+    return this.svc.feeItems();
+  }
+
+  @Audit('fee_item')
+  @Post('fee-items')
+  createFeeItem(@Body() dto: FeeItemDto) {
+    return this.svc.createFeeItem(dto);
+  }
+
+  @Get('fee-schedules')
+  feeSchedules(@Query('academicYearId', ParseUuidPipe) academicYearId: string) {
+    return this.svc.feeSchedules(academicYearId);
+  }
+
+  @Audit('fee_schedule')
+  @Post('fee-schedules')
+  createFeeSchedule(@Body() dto: FeeScheduleDto) {
+    return this.svc.createFeeSchedule(dto);
+  }
+
+  @Get('fee-schedules/:id/lines')
+  feeScheduleLines(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.feeScheduleLines(id);
+  }
+
+  @Audit('fee_schedule', 'id')
+  @Post('fee-schedules/:id/lines')
+  setFeeScheduleLines(@Param('id', ParseUuidPipe) id: string, @Body() dto: SetFeeScheduleLinesDto) {
+    return this.svc.setFeeScheduleLines(id, dto);
+  }
+
+  @Get('funding-sources')
+  fundingSources() {
+    return this.svc.fundingSources();
+  }
+
+  @Audit('funding_source')
+  @Post('funding-sources')
+  createFundingSource(@Body() dto: FundingSourceDto) {
+    return this.svc.createFundingSource(dto);
+  }
+
+  @Get('students/:id/funding')
+  studentFunding(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.studentFunding(id);
+  }
+
+  @Audit('student_funding', 'id')
+  @Post('students/:id/funding')
+  grantFunding(@Param('id', ParseUuidPipe) id: string, @Body() dto: StudentFundingDto) {
+    return this.svc.grantFunding(id, dto);
+  }
+
+  @Audit('student_funding', 'fundingId')
+  @Delete('students/:id/funding/:fundingId')
+  revokeFunding(@Param('fundingId', ParseUuidPipe) fundingId: string) {
+    return this.svc.revokeFunding(fundingId);
   }
 }
 

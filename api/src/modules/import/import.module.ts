@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Injectable,
@@ -24,6 +26,12 @@ import {
 import { Type } from 'class-transformer';
 import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
+import {
+  encryptNationalId,
+  hashNationalId,
+  isValidThaiNationalId,
+  normalizeNationalId,
+} from '../../common/crypto/national-id';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, IsUuidArray, ParseUuidPipe } from '../../common/validation/uuid';
 
@@ -51,7 +59,7 @@ class ImportRowDto {
 }
 
 class CreateImportDto {
-  @IsIn(['student', 'academic_history', 'staff']) kind: string;
+  @IsIn(['student', 'academic_history', 'staff', 'grade']) kind: string;
   @IsOptional() @IsString() sourceName?: string;
   @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => ImportRowDto)
   rows: ImportRowDto[];
@@ -86,7 +94,61 @@ class ApproveTransferDto {
 
 @Injectable()
 export class ImportService {
+  /* ─── กุญแจอยู่นอกฐานข้อมูล — หลักเดียวกับ students/profile.ts ─── */
+  private readonly nationalIdKey = process.env.NATIONAL_ID_KEY ?? '';
+  private readonly hashSecret = process.env.IP_HASH_SECRET ?? 'vec-sms';
+
   constructor(private readonly db: DbService) {}
+
+  /**
+   * เข้ารหัส/แฮชเลขประจำตัวประชาชนทุกช่องในแถวก่อนส่งเข้า
+   * `apply_student_import()` — ฟังก์ชันในฐานข้อมูลไม่มีกุญแจและไม่ควรมี
+   * (ดูคอมเมนต์บนสุดของ 0087) จึงต้องทำที่ชั้นนี้ หลักเดียวกับ
+   * `students/profile.ts` ที่แก้ระเบียนทีละคน — ต่างกันแค่ทำเป็นชุด
+   *
+   * ─── ทำไมนักศึกษาเข้ารหัสด้วย แต่บิดามารดา/ผู้ปกครองแฮชอย่างเดียว ───
+   * ใบ รบ. พิมพ์เลขบัตรของ**นักศึกษา**เท่านั้น จึงมีแค่ช่องนี้ที่ต้อง
+   * ถอดรหัสกลับมาได้ ส่วนอีกสามช่องใช้แค่ค้นหา/กันซ้ำ ไม่มีอะไรต้องพิมพ์
+   *
+   * ─── ทำไมไม่ `throw` เมื่อเลขบัตรไม่ผ่านหลักที่ 13 อีกต่อไป ───
+   * เดิม throw ตรงนี้ทำให้ `create()` ล้มทั้งคำขอตั้งแต่แถวแรกที่เลขบัตรพัง
+   * — ไฟล์นำเข้าจริงเป็นพันแถวมักมีเลขบัตรปลอม/พิมพ์ผิดปนอยู่บ้างเสมอ
+   * (เจอจริงกับ student.csv ที่แนบมา) การล้มทั้งไฟล์เพราะแถวเดียวบังคับให้
+   * เจ้าหน้าที่ต้องไล่แก้ทีละแถวนอกระบบก่อนนำเข้าได้แม้แต่รอบแรก
+   * ปล่อยผ่านตรงนี้แทน (ไม่ใส่ hash/enc ให้ช่องที่ผิด) แล้วให้
+   * `validate_student_row` ที่ตรวจ checksum อยู่แล้วจับเป็นปัญหารายแถว
+   * ตามกลไกเดิมของสองขั้นตอน (ตรวจ → เห็นรายการปัญหา → เลือกนำเข้าเฉพาะ
+   * แถวที่ผ่าน) เลขที่ไม่ผ่านจึงไม่ถูกเข้ารหัส/แฮชและไม่ถูกเขียนลง
+   * `person.national_id_enc`/`national_id_hash` เลย (ช่องว่างเปล่า ไม่ใช่
+   * ค่าปลอมที่ดูเหมือนใช้ได้) — เหตุผลเดียวกับที่ `consume_password_reset()`
+   * ค้นหาก่อนแฮชทีหลังใน CLAUDE.md
+   */
+  private encryptNationalIdFields(payload: Record<string, unknown>): Record<string, unknown> {
+    const out = { ...payload };
+    const own = typeof out.national_id === 'string' ? out.national_id.trim() : '';
+    if (own && isValidThaiNationalId(own)) {
+      if (!this.nationalIdKey) {
+        throw new BadRequestException(
+          'ระบบยังไม่ได้ตั้งกุญแจเข้ารหัสเลขประจำตัวประชาชน (NATIONAL_ID_KEY) ' +
+            'จึงนำเข้าแถวที่มีเลขบัตรไม่ได้ — ลบคอลัมน์เลขบัตรออกก่อน หรือให้ผู้ดูแลระบบตั้งกุญแจ',
+        );
+      }
+      const n = normalizeNationalId(own);
+      out.national_id_hash_hex = hashNationalId(n, this.hashSecret).toString('hex');
+      out.national_id_enc_hex = encryptNationalId(n, this.nationalIdKey).toString('hex');
+    }
+
+    for (const prefix of ['father', 'mother', 'guardian']) {
+      const key = `${prefix}_national_id`;
+      const raw = typeof out[key] === 'string' ? (out[key] as string).trim() : '';
+      if (raw && isValidThaiNationalId(raw)) {
+        out[`${prefix}_national_id_hash_hex`] =
+          hashNationalId(normalizeNationalId(raw), this.hashSecret).toString('hex');
+      }
+    }
+
+    return out;
+  }
 
   /** ขั้นที่ 1 — สร้างรอบและตรวจทุกแถว ไม่เขียนข้อมูลจริงเลย */
   async create(dto: CreateImportDto) {
@@ -102,9 +164,14 @@ export class ImportService {
       ).rows[0];
 
       for (const row of dto.rows) {
+        // เข้ารหัส/แฮชเลขบัตรตอนสร้างแถวครั้งเดียว — apply_student_import()
+        // ไม่มีกุญแจและไม่ควรมี (ดูคอมเมนต์บนสุดของ 0087)
+        const payload = dto.kind === 'student'
+          ? this.encryptNationalIdFields(row.payload)
+          : row.payload;
         await c.query(
           `insert into import_row (batch_id, row_no, payload) values ($1, $2, $3::jsonb)`,
-          [batch.id, row.rowNo, JSON.stringify(row.payload)],
+          [batch.id, row.rowNo, JSON.stringify(payload)],
         );
       }
 
@@ -136,6 +203,7 @@ export class ImportService {
       kind === 'student' ? 'validate_student_row'
       : kind === 'staff' ? 'validate_staff_row'
       : kind === 'academic_history' ? 'validate_academic_history_row'
+      : kind === 'grade' ? 'validate_grade_import_row'
       : null;
 
     if (validator) {
@@ -154,7 +222,7 @@ export class ImportService {
           set ok_rows    = s.ok_rows,
               error_rows = s.error_rows,
               total_rows = s.total_rows,
-              status     = (case when s.error_rows = 0 then 'validated' else 'draft' end)::import_status
+              status     = (case when s.error_rows = 0 then 'validated' else 'failed' end)::import_status
          from (select count(*) filter (where ok)     as ok_rows,
                       count(*) filter (where not ok) as error_rows,
                       count(*)                       as total_rows
@@ -210,6 +278,25 @@ export class ImportService {
   }
 
   /**
+   * ลบรอบนำเข้าที่ยังไม่ได้กดนำเข้าจริง — ทุกครั้งที่กด "ตรวจอย่างเดียว" หรือ
+   * ลองไฟล์ใหม่ระบบสร้างรอบใหม่เสมอ (ไม่ใช้ซ้ำของเดิม) รอบที่ตรวจแล้วพบว่าผิด
+   * แล้วเจ้าหน้าที่แก้ไฟล์ไปอัปโหลดใหม่จึงค้างอยู่ในตารางประวัติเรื่อย ๆ
+   * โดยไม่มีทางลบทิ้ง — ลบได้เฉพาะรอบที่ยังไม่ถูกนำเข้าจริง เพราะรอบที่นำเข้า
+   * แล้วคือหลักฐานว่าเคยเขียนอะไรลงไปบ้าง (`applied_at` ใช้ตรวจสอบย้อนหลังได้)
+   */
+  async remove(batchId: string) {
+    const row = await this.db.queryOne<{ status: string }>(
+      `select status from import_batch where id = $1`,
+      [batchId],
+    );
+    if (!row) throw new ForbiddenException('ไม่พบรอบนำเข้านี้ หรือไม่มีสิทธิ์เข้าถึง');
+    if (row.status === 'applied') {
+      throw new BadRequestException('รอบนี้นำเข้าจริงไปแล้ว ลบไม่ได้ — เป็นหลักฐานว่าเคยเขียนอะไรลงไปบ้าง');
+    }
+    await this.db.query(`delete from import_batch where id = $1`, [batchId]);
+  }
+
+  /**
    * ขั้นที่ 2 — นำเข้าจริง ทั้งชุดหรือไม่เลย
    *
    * เลือกฟังก์ชันตามชนิดของรอบนำเข้า ไม่ใช่ให้ผู้เรียกระบุมา — ถ้าผู้เรียก
@@ -229,11 +316,12 @@ export class ImportService {
         kind === 'student' ? 'apply_student_import'
         : kind === 'staff' ? 'apply_staff_import'
         : kind === 'academic_history' ? 'apply_academic_history_import'
+        : kind === 'grade' ? 'apply_grade_import'
         : null;
 
       if (!fn) {
         throw new UnprocessableEntityException(
-          `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษา บุคลากร และประวัติการเรียนเดิม`,
+          `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษา บุคลากร ประวัติการเรียนเดิม และผลการเรียน`,
         );
       }
 
@@ -362,6 +450,12 @@ class ImportController {
   @Post(':id/apply')
   apply(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.apply(id);
+  }
+
+  @Audit('import_batch')
+  @Delete(':id')
+  remove(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.remove(id);
   }
 }
 

@@ -3,13 +3,18 @@ import { Badge, Card, Notice, PageHead } from '../ui/kit';
 type State='ready'|'partial'|'planned'; type Item={key:string;title:string;desc:string;path?:string;state:State};
 /** หนึ่งหน้าจอจริงมีการ์ดเดียว — เดิม /curriculum มีการ์ดชี้ปลายทางเดียวกันสี่ใบ */
 const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
- {title:'การตั้งค่า',subtitle:'หลักสูตร ปีการศึกษา และค่าเรียน',items:[
-  {key:'curriculum',title:'โครงสร้างหลักสูตร',desc:'สาขาวิชา หลักสูตร รุ่น ระดับการศึกษา ห้องเรียน และหน่วยกิตสะสม',path:'/curriculum',state:'ready'},
-  {key:'academic-year',title:'ปีการศึกษาและระดับชั้น',desc:'เปิดปีการศึกษา/ภาคเรียนใหม่ เดินสถานะภาคเรียน และจัดชั้นปี',path:'/academic-year',state:'ready'},
-  {key:'tuition',title:'ค่าเรียน',desc:'ค่าธรรมเนียม ใบแจ้งหนี้ และตารางการชำระ',path:'/finance',state:'ready'},
+ {title:'โครงสร้างหลักสูตร',subtitle:'หมวดภาคเรียน คาบเรียน ระดับชั้น สาขา หลักสูตร และระดับการศึกษา',items:[
+  {key:'term-categories',title:'หมวดภาคเรียน',desc:'จัดกลุ่มภาคเรียนตามรอบเรียน (รอบเช้า รอบบ่าย ทวิภาคี) และแก้ไขช่วงวันที่ย่อยของแต่ละภาคเรียน',path:'/term-categories',state:'ready'},
+  {key:'periods',title:'คาบเรียน',desc:'กำหนดกลุ่มคาบและช่วงเวลาที่ใช้จัดตารางสอน',path:'/periods',state:'ready'},
+  {key:'grade-levels',title:'ชื่อระดับชั้น',desc:'ตั้งชื่อและชื่อย่อของแต่ละชั้นปีในแต่ละระดับ (ปวช.1 ฯลฯ) — ป้ายแสดงผลเท่านั้น ไม่กระทบการเลื่อนชั้นจริง',path:'/grade-levels',state:'ready'},
+  {key:'branches',title:'ประเภท/สาขา/ชั้นเรียน/ห้องเรียน',desc:'เลือกหลักสูตรก่อน แล้วดูประเภท สาขา และเพิ่มห้องประจำชั้น',path:'/curriculum/programs',state:'ready'},
+  {key:'curriculum',title:'หลักสูตร',desc:'เลือกหลักสูตร สอศ. แก้ชื่อ และนำเข้าเป็นฉบับร่าง',path:'/curriculum-library',state:'ready'},
+  {key:'education-level',title:'ระดับการศึกษา',desc:'กำหนดระดับและฉบับหลักสูตร (ปวช./ปวส.) ที่ใช้ในระบบ',path:'/education-levels',state:'ready'},
  ]},
- {title:'เครื่องมือ',subtitle:'งานตามกำหนดเวลา ข้อมูลระบบ และสื่อ',items:[
+ {title:'เครื่องมือ',subtitle:'งานตามกำหนดเวลา นำเข้า/ส่งออกข้อมูล และสื่อ',items:[
   {key:'jobs',title:'งานตามกำหนดเวลา',desc:'ดูสถานะและสั่งรันงานประจำวันของระบบ (คำนวณสถิติ ส่งแจ้งเตือน ฯลฯ)',path:'/jobs',state:'ready'},
+  {key:'import',title:'นำเข้าข้อมูล',desc:'นำเข้าข้อมูลนักศึกษาและบุคลากรจากไฟล์ พร้อมขั้นตรวจสอบก่อนบันทึกจริง',path:'/import',state:'ready'},
+  {key:'government-exports',title:'ส่งออกข้อมูล',desc:'ออกไฟล์ข้อมูลตามรูปแบบที่หน่วยงานรัฐกำหนด (PVRS ฯลฯ)',path:'/government-exports',state:'ready'},
   {key:'system-info',title:'System Informations',desc:'ข้อมูลเวอร์ชัน สถานะบริการ และสภาพแวดล้อมระบบ',state:'planned'},
   {key:'images',title:'จัดการไฟล์รูปภาพ',desc:'รูปนักศึกษา บุคลากร ตราสถานศึกษา และไฟล์ประกอบ',state:'planned'},
   {key:'qr',title:'QR Code',desc:'สร้างรหัสสำหรับเช็กอิน เอกสาร และการตรวจสอบ',state:'planned'},

@@ -7,9 +7,11 @@
  * แม้ปัจจุบันจะใช้ฉบับ 2567 แล้ว การแก้ฉบับเดิมจึงเท่ากับเปลี่ยนเกณฑ์จบ
  * ของคนที่เรียนไปแล้วครึ่งทาง วิธีที่ถูกคือ **โคลนเป็นฉบับใหม่**
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
+import { href } from '../core/router';
+import { useScope } from '../core/scope';
 import { ActionButton, AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
 import { CourseEntry } from './course-entry';
 
@@ -215,16 +217,18 @@ interface ProgramRow {
   program_type_id: string;
   type_code: string;
   type_name: string;
-  program_id: string;
-  program_code: string;
-  program_name: string;
-  program_level: string;
+  program_id: string | null;
+  program_code: string | null;
+  program_name: string | null;
+  program_level: string | null;
+  program_room_prefix: string | null;
   track_id: string | null;
   track_code: string | null;
   track_name: string | null;
   curriculum_id: string | null;
   curriculum_name: string | null;
   curriculum_shift: string | null;
+  curriculum_is_continuing: boolean | null;
   versions: string | number;
 }
 
@@ -252,12 +256,13 @@ function uniqueBy<T, K>(rows: T[], key: (row: T) => K | null | undefined): T[] {
   return out;
 }
 
-function AddProgramTypeForm({ onDone }: { onDone: () => void }) {
-  const [code, setCode] = useState('');
-  const [nameTh, setNameTh] = useState('');
+function AddProgramTypeForm({ editing, onDone }: { editing?: { id: string; code: string; nameTh: string }; onDone: () => void }) {
+  const [code, setCode] = useState(editing?.code ?? '');
+  const [nameTh, setNameTh] = useState(editing?.nameTh ?? '');
+  const ready = code.trim() && nameTh.trim();
 
   return (
-    <Card title="เพิ่มหมวดสาขา">
+    <Card title={editing ? 'แก้ไขหมวดสาขา' : 'เพิ่มหมวดสาขา'}>
       <p className="hint">ระดับบนสุด เช่น อุตสาหกรรม พาณิชยกรรม คหกรรม — ส่วนใหญ่วิทยาลัยหนึ่งมีไม่กี่หมวด</p>
       <div className="row">
         <Field label="รหัสหมวด">
@@ -267,34 +272,58 @@ function AddProgramTypeForm({ onDone }: { onDone: () => void }) {
           <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น อุตสาหกรรม" />
         </Field>
         <div className="shrink">
-          <ActionButton
-            className="primary"
-            onRun={() => {
-              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อหมวดสาขา');
-              return api.post('/curriculum/program-types', { code: code.trim(), nameTh: nameTh.trim() });
-            }}
-            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
-          >
-            เพิ่มหมวดสาขา
-          </ActionButton>
+          {ready ? (
+            <ActionButton
+              className="primary"
+              toast
+              onRun={() => (editing
+                ? api.patch(`/curriculum/program-types/${editing.id}`, { code: code.trim(), nameTh: nameTh.trim() })
+                : api.post('/curriculum/program-types', { code: code.trim(), nameTh: nameTh.trim() }))}
+              onDone={() => { setCode(''); setNameTh(''); onDone(); }}
+            >
+              {editing ? 'บันทึกการแก้ไข' : 'เพิ่มหมวดสาขา'}
+            </ActionButton>
+          ) : <button className="primary" disabled>{editing ? 'บันทึกการแก้ไข' : 'เพิ่มหมวดสาขา'}</button>}
         </div>
+        {editing && (
+          <div className="shrink">
+            <ActionButton
+              className="ghost danger"
+              toast
+              confirm="ลบหมวดสาขานี้ใช่หรือไม่ — ลบไม่ได้ถ้ายังมีสาขาวิชาผูกอยู่"
+              onRun={() => api.del(`/curriculum/program-types/${editing.id}`)}
+              onDone={onDone}
+            >
+              ลบหมวดสาขา
+            </ActionButton>
+          </div>
+        )}
       </div>
     </Card>
   );
 }
 
-function AddProgramForm({ programTypes, onDone }: { programTypes: ProgramRow[]; onDone: () => void }) {
-  const [programTypeId, setProgramTypeId] = useState('');
-  const [level, setLevel] = useState('PVC');
-  const [code, setCode] = useState('');
-  const [nameTh, setNameTh] = useState('');
+function AddProgramForm({
+  programTypes, initialProgramTypeId = '', editing, onDone,
+}: {
+  programTypes: ProgramRow[];
+  initialProgramTypeId?: string;
+  editing?: { id: string; programTypeId: string; level: string; code: string; nameTh: string; roomPrefix: string | null };
+  onDone: () => void;
+}) {
+  const [programTypeId, setProgramTypeId] = useState(editing?.programTypeId ?? initialProgramTypeId);
+  const [level, setLevel] = useState(editing?.level ?? 'PVC');
+  const [code, setCode] = useState(editing?.code ?? '');
+  const [nameTh, setNameTh] = useState(editing?.nameTh ?? '');
+  const [roomPrefix, setRoomPrefix] = useState(editing?.roomPrefix ?? '');
+  const ready = programTypeId && code.trim() && nameTh.trim();
 
   return (
-    <Card title="เพิ่มสาขาวิชา">
+    <Card title={editing ? 'แก้ไขสาขาวิชา' : 'เพิ่มสาขาวิชา'}>
       <p className="hint">ผูกระดับการศึกษาไว้ที่ชั้นนี้ — สาขาเดียวกันที่เปิดทั้ง ปวช. และ ปวส. ต้องสร้างสองแถว</p>
       <div className="row">
         <Field label="หมวดสาขา">
-          <select value={programTypeId} onChange={(e) => setProgramTypeId(e.target.value)}>
+          <select value={programTypeId} onChange={(e) => setProgramTypeId(e.target.value)} disabled={!!editing} title={editing ? 'ย้ายหมวดสาขาไม่ได้ — ลบแล้วสร้างใหม่ในหมวดที่ถูกต้องแทน' : undefined}>
             <option value="">— เลือกหมวดสาขา —</option>
             {programTypes.map((t) => (
               <option key={t.program_type_id} value={t.program_type_id}>{t.type_code} {t.type_name}</option>
@@ -314,41 +343,75 @@ function AddProgramForm({ programTypes, onDone }: { programTypes: ProgramRow[]; 
         <Field label="ชื่อสาขาวิชา">
           <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น ช่างยนต์" />
         </Field>
+        <Field label="คำนำหน้ารหัสห้อง">
+          <input
+            value={roomPrefix}
+            onChange={(e) => setRoomPrefix(e.target.value.toUpperCase())}
+            placeholder="เช่น CA"
+            style={{ maxWidth: 100 }}
+          />
+        </Field>
         <div className="shrink">
-          <ActionButton
-            className="primary"
-            onRun={() => {
-              if (!programTypeId) throw new Error('เลือกหมวดสาขาก่อน');
-              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อสาขาวิชา');
-              return api.post('/curriculum/programs', {
-                programTypeId, level, code: code.trim(), nameTh: nameTh.trim(),
-              });
-            }}
-            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
-          >
-            เพิ่มสาขาวิชา
-          </ActionButton>
+          {ready ? (
+            <ActionButton
+              className="primary"
+              toast
+              onRun={() => {
+                // UpdateProgramDto ไม่มีช่อง programTypeId — ย้ายสาขาวิชาข้ามหมวด
+                // ยังไม่รองรับ ต้องลบสาขาวิชานี้แล้วสร้างใหม่ในหมวดที่ถูกต้องแทน
+                const common = { level, code: code.trim(), nameTh: nameTh.trim(), roomPrefix: roomPrefix.trim() || undefined };
+                return editing
+                  ? api.patch(`/curriculum/programs/${editing.id}`, common)
+                  : api.post('/curriculum/programs', { ...common, programTypeId });
+              }}
+              onDone={() => { setCode(''); setNameTh(''); setRoomPrefix(''); onDone(); }}
+            >
+              {editing ? 'บันทึกการแก้ไข' : 'เพิ่มสาขาวิชา'}
+            </ActionButton>
+          ) : <button className="primary" disabled>{editing ? 'บันทึกการแก้ไข' : 'เพิ่มสาขาวิชา'}</button>}
         </div>
+        {editing && (
+          <div className="shrink">
+            <ActionButton
+              className="ghost danger"
+              toast
+              confirm="ลบสาขาวิชานี้ใช่หรือไม่ — ลบไม่ได้ถ้ายังมีสาขางานผูกอยู่"
+              onRun={() => api.del(`/curriculum/programs/${editing.id}`)}
+              onDone={onDone}
+            >
+              ลบสาขาวิชา
+            </ActionButton>
+          </div>
+        )}
       </div>
+      <p className="hint">คำนำหน้ารหัสห้องเป็นแค่คำแนะนำตอนตั้งชื่อห้องประจำชั้น (เช่น บัญชี = CA, คอมพิวเตอร์ = CC) ไม่บังคับและไม่ตรวจสอบซ้ำ</p>
     </Card>
   );
 }
 
-function AddProgramTrackForm({ programs, onDone }: { programs: ProgramRow[]; onDone: () => void }) {
-  const [programId, setProgramId] = useState('');
-  const [code, setCode] = useState('');
-  const [nameTh, setNameTh] = useState('');
+function AddProgramTrackForm({
+  programs, initialProgramId = '', editing, onDone,
+}: {
+  programs: ProgramRow[];
+  initialProgramId?: string;
+  editing?: { id: string; programId: string; code: string; nameTh: string };
+  onDone: () => void;
+}) {
+  const [programId, setProgramId] = useState(editing?.programId ?? initialProgramId);
+  const [code, setCode] = useState(editing?.code ?? '');
+  const [nameTh, setNameTh] = useState(editing?.nameTh ?? '');
+  const ready = programId && code.trim() && nameTh.trim();
 
   return (
-    <Card title="เพิ่มสาขางาน">
+    <Card title={editing ? 'แก้ไขสาขางาน' : 'เพิ่มสาขางาน'}>
       <p className="hint">แขนงย่อยภายในสาขาวิชาหนึ่ง เช่น ช่างยนต์ → ยานยนต์ / ตัวถังและสี</p>
       <div className="row">
         <Field label="สาขาวิชา">
           <select value={programId} onChange={(e) => setProgramId(e.target.value)}>
             <option value="">— เลือกสาขาวิชา —</option>
             {programs.map((p) => (
-              <option key={p.program_id} value={p.program_id}>
-                {p.program_code} {p.program_name} ({QUALIFICATION_LEVEL[p.program_level] ?? p.program_level})
+                <option key={p.program_id ?? p.program_code} value={p.program_id ?? ''}>
+                  {p.program_code} {p.program_name} ({p.program_level ? (QUALIFICATION_LEVEL[p.program_level] ?? p.program_level) : '—'})
               </option>
             ))}
           </select>
@@ -360,37 +423,58 @@ function AddProgramTrackForm({ programs, onDone }: { programs: ProgramRow[]; onD
           <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น ยานยนต์" />
         </Field>
         <div className="shrink">
-          <ActionButton
-            className="primary"
-            onRun={() => {
-              if (!programId) throw new Error('เลือกสาขาวิชาก่อน');
-              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อสาขางาน');
-              return api.post('/curriculum/program-tracks', { programId, code: code.trim(), nameTh: nameTh.trim() });
-            }}
-            onDone={() => { setCode(''); setNameTh(''); onDone(); }}
-          >
-            เพิ่มสาขางาน
-          </ActionButton>
+          {ready ? (
+            <ActionButton
+              className="primary"
+              toast
+              onRun={() => (editing
+                ? api.patch(`/curriculum/program-tracks/${editing.id}`, { code: code.trim(), nameTh: nameTh.trim() })
+                : api.post('/curriculum/program-tracks', { programId, code: code.trim(), nameTh: nameTh.trim() }))}
+              onDone={() => { setCode(''); setNameTh(''); onDone(); }}
+            >
+              {editing ? 'บันทึกการแก้ไข' : 'เพิ่มสาขางาน'}
+            </ActionButton>
+          ) : <button className="primary" disabled>{editing ? 'บันทึกการแก้ไข' : 'เพิ่มสาขางาน'}</button>}
         </div>
+        {editing && (
+          <div className="shrink">
+            <ActionButton
+              className="ghost danger"
+              toast
+              confirm="ลบสาขางานนี้ใช่หรือไม่ — ลบไม่ได้ถ้ายังมีหลักสูตรผูกอยู่"
+              onRun={() => api.del(`/curriculum/program-tracks/${editing.id}`)}
+              onDone={onDone}
+            >
+              ลบสาขางาน
+            </ActionButton>
+          </div>
+        )}
       </div>
     </Card>
   );
 }
 
-function AddCurriculumForm({ tracks, onDone }: { tracks: ProgramRow[]; onDone: () => void }) {
-  const [trackId, setTrackId] = useState('');
-  const [nameTh, setNameTh] = useState('');
-  const [shift, setShift] = useState('morning');
-  const [isContinuing, setIsContinuing] = useState(false);
+function AddCurriculumForm({
+  tracks, initialTrackId = '', editing, onDone,
+}: {
+  tracks: ProgramRow[];
+  initialTrackId?: string;
+  editing?: { id: string; nameTh: string; shift: string | null; isContinuing: boolean | null };
+  onDone: () => void;
+}) {
+  const [trackId, setTrackId] = useState(initialTrackId);
+  const [nameTh, setNameTh] = useState(editing?.nameTh ?? '');
+  const [shift, setShift] = useState(editing?.shift ?? 'morning');
+  const [isContinuing, setIsContinuing] = useState(editing?.isContinuing ?? false);
 
   return (
-    <Card title="เพิ่มหลักสูตรใหม่">
+    <Card title={editing ? 'แก้ไขหลักสูตร' : 'เพิ่มหลักสูตรใหม่'}>
       <p className="hint">
         สาขางานเดียวกันเปิดได้หลายกะ (เช้า/บ่าย/เสาร์-อาทิตย์) แต่ละกะนับเป็นคนละหลักสูตร —
         หลักสูตรที่สร้างตรงนี้ยังไม่มีฉบับ ต้องออกฉบับแรกในหัวข้อถัดไป
       </p>
       <div className="row">
-        <Field label="สาขางาน">
+        {!editing && <Field label="สาขางาน">
           <select value={trackId} onChange={(e) => setTrackId(e.target.value)}>
             <option value="">— เลือกสาขางาน —</option>
             {tracks.map((t) => (
@@ -399,7 +483,7 @@ function AddCurriculumForm({ tracks, onDone }: { tracks: ProgramRow[]; onDone: (
               </option>
             ))}
           </select>
-        </Field>
+        </Field>}
         <Field label="ชื่อหลักสูตร">
           <input
             value={nameTh} onChange={(e) => setNameTh(e.target.value)}
@@ -418,20 +502,49 @@ function AddCurriculumForm({ tracks, onDone }: { tracks: ProgramRow[]; onDone: (
           หลักสูตรต่อเนื่อง
         </label>
         <div className="shrink">
-          <ActionButton
-            className="primary"
-            onRun={() => {
-              if (!trackId) throw new Error('เลือกสาขางานก่อน');
-              if (!nameTh.trim()) throw new Error('กรอกชื่อหลักสูตร');
-              return api.post('/curriculum/curricula', {
-                programTrackId: trackId, nameTh: nameTh.trim(), shift, isContinuing,
-              });
-            }}
-            onDone={() => { setNameTh(''); setIsContinuing(false); onDone(); }}
-          >
-            เพิ่มหลักสูตร
-          </ActionButton>
+          {editing ? (
+            <ActionButton
+              className="primary"
+              toast
+              onRun={() => {
+                if (!nameTh.trim()) throw new Error('กรอกชื่อหลักสูตร');
+                return api.patch(`/curriculum/curricula/${editing.id}`, {
+                  nameTh: nameTh.trim(), shift, isContinuing,
+                });
+              }}
+              onDone={onDone}
+            >
+              บันทึกการแก้ไข
+            </ActionButton>
+          ) : (
+            <ActionButton
+              className="primary"
+              onRun={() => {
+                if (!trackId) throw new Error('เลือกสาขางานก่อน');
+                if (!nameTh.trim()) throw new Error('กรอกชื่อหลักสูตร');
+                return api.post('/curriculum/curricula', {
+                  programTrackId: trackId, nameTh: nameTh.trim(), shift, isContinuing,
+                });
+              }}
+              onDone={() => { setNameTh(''); setIsContinuing(false); onDone(); }}
+            >
+              เพิ่มหลักสูตร
+            </ActionButton>
+          )}
         </div>
+        {editing && (
+          <div className="shrink">
+            <ActionButton
+              className="ghost danger"
+              toast
+              confirm="ลบหลักสูตรนี้ใช่หรือไม่ — ลบไม่ได้ถ้ายังมีฉบับหลักสูตรผูกอยู่"
+              onRun={() => api.del(`/curriculum/curricula/${editing.id}`)}
+              onDone={onDone}
+            >
+              ลบหลักสูตร
+            </ActionButton>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -516,47 +629,154 @@ function AddVersionForm({
   );
 }
 
-function ProgramTree({ rows }: { rows: ProgramRow[] }) {
-  return (
-    <TableCard title="โครงสร้างสาขาวิชา">
-      <table>
-        <thead>
-          <tr>
-            <th>หมวดสาขา</th>
-            <th>สาขาวิชา</th>
-            <th style={{ width: 90 }}>ระดับ</th>
-            <th>สาขางาน</th>
-            <th>หลักสูตร</th>
-            <th className="num" style={{ width: 90 }}>ฉบับ</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.program_id}-${r.track_id ?? 'none'}-${r.curriculum_id ?? i}`}>
-              <td>{r.type_code} {r.type_name}</td>
-              <td>{r.program_code} {r.program_name}</td>
-              <td><Badge kind="default">{QUALIFICATION_LEVEL[r.program_level] ?? r.program_level}</Badge></td>
-              <td>{r.track_name ? `${r.track_code} ${r.track_name}` : <span className="hint">— ยังไม่มีสาขางาน —</span>}</td>
-              <td>{r.curriculum_name ?? (r.track_id && <span className="hint">— ยังไม่มีหลักสูตร —</span>)}</td>
-              <td className="num">
-                {r.curriculum_id ? (
-                  Number(r.versions) === 0
-                    ? <Badge kind="warn">ยังไม่มีฉบับ</Badge>
-                    : r.versions
-                ) : ''}
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--ink-soft)' }}>ยังไม่มีสาขาวิชาในระบบ — เริ่มจากเพิ่มหมวดสาขาด้านล่าง</td></tr>
-          )}
-        </tbody>
-      </table>
-    </TableCard>
-  );
+interface ClassGroupRow {
+  id: string;
+  study_year: number;
+  group_code: string | null;
+  students: string | number;
+  advisor_names: string;
 }
 
-export function CurriculumScreen() {
+type AddStage = 'type' | 'program' | 'track' | 'curriculum' | null;
+
+function ProgramCascade({ rows, onDone }: { rows: ProgramRow[]; onDone: () => void }) {
+  const types = uniqueBy(rows, (r) => r.program_type_id);
+  const [typeId, setTypeId] = useState(types[0]?.program_type_id ?? '');
+  const programs = uniqueBy(rows.filter((r) => r.program_type_id === typeId && r.program_id), (r) => r.program_id);
+  const [programId, setProgramId] = useState('');
+  const tracks = uniqueBy(rows.filter((r) => r.program_id === programId && r.track_id), (r) => r.track_id);
+  const [trackId, setTrackId] = useState('');
+  const curricula = uniqueBy(rows.filter((r) => r.track_id === trackId && r.curriculum_id), (r) => r.curriculum_id);
+  const [curriculumId, setCurriculumId] = useState('');
+  // ปีการศึกษามาจากตัวเลือกที่ด้านบนของทั้งหน้าเว็บ (ดู core/scope.tsx) — ไม่มี
+  // ดรอปดาวน์ของตัวเองอีกต่อไป เปลี่ยนที่เดียวมีผลกับ "ชั้นเรียน/ห้องเรียน" ทันที
+  const scope = useScope();
+  const yearId = scope.yearId;
+  const [adding, setAdding] = useState<AddStage>(null);
+  const [editTypeRow, setEditTypeRow] = useState<ProgramRow | null>(null);
+  const [editProgramRow, setEditProgramRow] = useState<ProgramRow | null>(null);
+  const [editTrackRow, setEditTrackRow] = useState<ProgramRow | null>(null);
+  const [editCurriculumRow, setEditCurriculumRow] = useState<ProgramRow | null>(null);
+  const openAdd = (stage: AddStage) => { setEditTypeRow(null); setEditProgramRow(null); setEditTrackRow(null); setEditCurriculumRow(null); setAdding(stage); };
+  const [roomYear, setRoomYear] = useState<number | null>(null);
+
+  const selectType = (id: string) => { setTypeId(id); setProgramId(''); setTrackId(''); setCurriculumId(''); };
+  const selectProgram = (id: string) => { setProgramId(id); setTrackId(''); setCurriculumId(''); };
+  const selectTrack = (id: string) => { setTrackId(id); setCurriculumId(''); };
+
+  useEffect(() => {
+    const first = types[0];
+    if (first && !types.some((r) => r.program_type_id === typeId)) selectType(first.program_type_id);
+  }, [rows, typeId]);
+  useEffect(() => {
+    const first = programs[0];
+    if (first?.program_id && !programs.some((r) => r.program_id === programId)) selectProgram(first.program_id);
+  }, [typeId, rows, programId]);
+  useEffect(() => {
+    const first = tracks[0];
+    if (first?.track_id && !tracks.some((r) => r.track_id === trackId)) selectTrack(first.track_id);
+  }, [programId, rows, trackId]);
+  useEffect(() => {
+    const first = curricula[0];
+    if (first?.curriculum_id && !curricula.some((r) => r.curriculum_id === curriculumId)) setCurriculumId(first.curriculum_id);
+  }, [trackId, rows, curriculumId]);
+
+  const groups = useAsync(
+    () => yearId && curriculumId
+      ? api.get<ClassGroupRow[]>(`/curriculum/class-groups${qs({ academicYearId: yearId, curriculumId })}`)
+      : Promise.resolve([]),
+    [yearId, curriculumId],
+  );
+  const roomYears = [...new Set((groups.data ?? []).map((item) => item.study_year))].sort((a, b) => a - b);
+  useEffect(() => { const first = roomYears[0]; if (first !== undefined && !roomYears.includes(roomYear ?? -1)) setRoomYear(first); }, [groups.data, roomYear]);
+  const closeEditor = () => { setAdding(null); setEditTypeRow(null); setEditProgramRow(null); setEditTrackRow(null); setEditCurriculumRow(null); };
+  const done = () => { closeEditor(); onDone(); };
+
+  return <>
+    <div className="cascade-board">
+      <CascadeColumn title="ประเภทวิชา" count={types.length} addLabel="เพิ่มประเภทวิชา" onAdd={() => openAdd('type')}>
+        {types.map((r) => <div className="cascade-row" key={r.program_type_id}>
+          <button className={typeId === r.program_type_id ? 'selected' : ''} onClick={() => selectType(r.program_type_id)}>
+            <strong>{r.type_code}</strong><span>{r.type_name}</span>
+          </button>
+          <button className="cascade-edit" title="แก้ไข" onClick={() => { setEditTypeRow(r); setAdding('type'); }}>✎</button>
+        </div>)}
+      </CascadeColumn>
+      <CascadeColumn title="สาขาวิชา/กลุ่มอาชีพ" count={programs.length} addLabel="เพิ่มสาขาวิชา" onAdd={() => openAdd('program')}>
+        {programs.map((r) => <div className="cascade-row" key={r.program_id}>
+          <button className={programId === r.program_id ? 'selected' : ''} onClick={() => r.program_id && selectProgram(r.program_id)}>
+            <strong>{r.program_code}</strong><span>{r.program_name} · {QUALIFICATION_LEVEL[r.program_level ?? ''] ?? r.program_level}</span>
+          </button>
+          <button className="cascade-edit" title="แก้ไข" onClick={() => { setEditProgramRow(r); setAdding('program'); }}>✎</button>
+        </div>)}
+      </CascadeColumn>
+      <CascadeColumn title="หลักสูตร/รอบเรียน" count={curricula.length} addLabel={trackId ? 'เพิ่มหลักสูตร' : 'เพิ่มสาขางาน'} onAdd={() => openAdd(trackId ? 'curriculum' : 'track')}>
+        {!trackId && tracks.length > 0 && <p className="cascade-hint">เลือกสาขางานก่อน</p>}
+        {tracks.map((r) => <div className="cascade-row" key={r.track_id!}>
+          <button className={trackId === r.track_id ? 'selected' : ''} onClick={() => selectTrack(r.track_id!)}>
+            <strong>{r.track_code}</strong><span>{r.track_name}</span>
+          </button>
+          <button className="cascade-edit" title="แก้ไข" onClick={() => { setEditTrackRow(r); setAdding('track'); }}>✎</button>
+        </div>)}
+        {trackId && curricula.map((r) => <div className="cascade-row" key={r.curriculum_id!}>
+          <button className={`curriculum-row ${curriculumId === r.curriculum_id ? 'selected' : ''}`} onClick={() => setCurriculumId(r.curriculum_id!)}>
+            <strong>{CLASS_SHIFT[r.curriculum_shift ?? ''] ?? r.curriculum_shift}</strong><span>{r.curriculum_name}</span>
+          </button>
+          <button className="cascade-edit" title="แก้ไข" onClick={() => { setEditCurriculumRow(r); setAdding('curriculum'); }}>✎</button>
+        </div>)}
+      </CascadeColumn>
+      <div className="cascade-column class-groups">
+        <header><div><strong>ชั้นเรียน/ห้องเรียน</strong><small>{scope.year ? `ปีการศึกษา ${scope.year.year_be}` : 'เลือกปีการศึกษาที่ด้านบน'}</small></div></header>
+        {!curriculumId ? <div className="empty">เลือกหลักสูตรจากรายการด้านบนเพื่อดูห้องประจำชั้น</div> : <AsyncView state={groups} empty="หลักสูตรนี้ยังไม่มีการจัดห้องในปีที่เลือก">
+          {(list) => <><div className="class-room-tabs">{roomYears.map((year) => <button key={year} className={roomYear === year ? 'active' : ''} onClick={() => setRoomYear(year)}>ปวช.{year}</button>)}</div><table><thead><tr><th>เกรด</th><th>ห้อง</th><th className="num">นักศึกษา</th><th>ข้อมูล</th></tr></thead>
+            <tbody>{list.filter((g) => g.study_year === roomYear).map((g) => <tr key={g.id}><td>ปวช.{g.study_year}</td><td>{g.group_code ?? 'ยังไม่ระบุ'}</td><td className="num">{g.students}</td><td><strong>อาจารย์ที่ปรึกษา</strong><br />{g.advisor_names || '—'}</td></tr>)}</tbody></table></>}
+        </AsyncView>}
+        {/* สร้าง/แก้ไข/ลบห้องประจำชั้นทำที่หน้า "ปีการศึกษาและภาคเรียน" จุดเดียว —
+           เคยมีฟอร์มสร้างห้องอยู่ตรงนี้ด้วย ซึ่งเขียนลงตาราง class_group ตัวเดียว
+           กับหน้านั้น แต่ไม่มีช่องตั้งอาจารย์ที่ปรึกษา/กลุ่มการเงินให้เลย ทั้งที่
+           คอลัมน์ข้อมูลด้านบนแสดงสองอย่างนี้อยู่ — สองฟอร์มเขียนตารางเดียวกัน
+           ไม่ครบเท่ากันเสี่ยงข้อมูลไม่ตรงกันโดยไม่มีอะไรฟ้อง จึงเหลือฟอร์มเดียว
+           ที่ครบกว่า แผงนี้จึงแสดงผลอย่างเดียว */}
+        <a className="cascade-add" href={href('/academic-year/classes')}>จัดการห้องประจำชั้น →</a>
+      </div>
+    </div>
+
+    {adding && <div className="cascade-editor-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
+      <div className="cascade-editor">
+        <button className="cascade-editor-close" onClick={closeEditor} aria-label="ปิด">×</button>
+        {adding === 'type' && <AddProgramTypeForm editing={editTypeRow ? { id: editTypeRow.program_type_id, code: editTypeRow.type_code, nameTh: editTypeRow.type_name } : undefined} onDone={done} />}
+        {adding === 'program' && <AddProgramForm programTypes={types} initialProgramTypeId={typeId} editing={editProgramRow ? { id: editProgramRow.program_id!, programTypeId: editProgramRow.program_type_id, level: editProgramRow.program_level!, code: editProgramRow.program_code!, nameTh: editProgramRow.program_name!, roomPrefix: editProgramRow.program_room_prefix } : undefined} onDone={done} />}
+        {adding === 'track' && <AddProgramTrackForm programs={programs} initialProgramId={programId} editing={editTrackRow ? { id: editTrackRow.track_id!, programId: editTrackRow.program_id!, code: editTrackRow.track_code!, nameTh: editTrackRow.track_name! } : undefined} onDone={done} />}
+        {adding === 'curriculum' && <AddCurriculumForm
+          tracks={tracks}
+          initialTrackId={trackId}
+          editing={editCurriculumRow ? {
+            id: editCurriculumRow.curriculum_id!,
+            nameTh: editCurriculumRow.curriculum_name!,
+            shift: editCurriculumRow.curriculum_shift,
+            isContinuing: editCurriculumRow.curriculum_is_continuing,
+          } : undefined}
+          onDone={done}
+        />}
+      </div>
+    </div>}
+  </>;
+}
+
+function CascadeColumn({ title, count, addLabel, onAdd, children }: { title: string; count: number; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
+  return <div className="cascade-column"><header><div><strong>{title}</strong><small>{count} รายการ</small></div></header><div className="cascade-list">{children}</div><button className="cascade-add" onClick={onAdd}>＋ {addLabel}</button></div>;
+}
+
+export type CurriculumMode = 'programs' | 'versions' | 'plan' | 'courses';
+
+const MODE_TITLE: Record<CurriculumMode, { title: string; sub: string }> = {
+  programs: { title: 'สาขาและหลักสูตร', sub: 'จัดหมวดสาขา สาขาวิชา สาขางาน และหลักสูตรที่เปิดสอน' },
+  versions: { title: 'ฉบับและโครงสร้างหลักสูตร', sub: 'จัดฉบับหลักสูตร หมวดวิชา รายวิชา และเกณฑ์สำเร็จการศึกษา' },
+  plan: { title: 'แผนการเรียน', sub: 'กำหนดรายวิชาแยกตามชั้นปีและภาคเรียน' },
+  courses: { title: 'คลังรายวิชา', sub: 'ค้นหาและตรวจสอบรายวิชากลางของวิทยาลัย' },
+};
+
+export function CurriculumScreen({ mode }: { mode: CurriculumMode }) {
   const programs = useAsync(() => api.get<ProgramRow[]>('/curriculum/programs'), []);
   const gradeSchemes = useAsync(() => api.get<GradeScheme[]>('/curriculum/grade-schemes'), []);
   const versions = useAsync(() => api.get<Version[]>('/curriculum/versions'), []);
@@ -564,9 +784,6 @@ export function CurriculumScreen() {
   const [q, setQ] = useState('');
 
   const rows = programs.data ?? [];
-  const programTypes = uniqueBy(rows, (r) => r.program_type_id);
-  const allPrograms = uniqueBy(rows, (r) => r.program_id);
-  const tracksOnly = uniqueBy(rows.filter((r) => r.track_id), (r) => r.track_id);
   const curriculaOnly = uniqueBy(rows.filter((r) => r.curriculum_id), (r) => r.curriculum_id);
 
   const reloadTree = () => programs.reload();
@@ -587,20 +804,23 @@ export function CurriculumScreen() {
 
   return (
     <>
-      <PageHead title="โครงสร้างหลักสูตร" />
-
-      <ProgramTree rows={rows} />
-      <AddProgramTypeForm onDone={reloadTree} />
-      <AddProgramForm programTypes={programTypes} onDone={reloadTree} />
-      <AddProgramTrackForm programs={allPrograms} onDone={reloadTree} />
-      <AddCurriculumForm tracks={tracksOnly} onDone={reloadTree} />
-      <AddVersionForm
-        curricula={curriculaOnly}
-        gradeSchemes={gradeSchemes.data ?? []}
-        onDone={() => { reloadTree(); versions.reload(); }}
+      <PageHead
+        title={MODE_TITLE[mode].title}
+        sub={MODE_TITLE[mode].sub}
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
       />
 
-      <TableCard title="ฉบับหลักสูตร">
+      {mode === 'programs' && <>
+        <ProgramCascade rows={rows} onDone={reloadTree} />
+      </>}
+
+      {mode === 'versions' && <AddVersionForm
+          curricula={curriculaOnly}
+          gradeSchemes={gradeSchemes.data ?? []}
+          onDone={() => { reloadTree(); versions.reload(); }}
+        />}
+
+      {(mode === 'versions' || mode === 'plan') && <TableCard title="เลือกฉบับหลักสูตร">
         <AsyncView state={versions} empty="ยังไม่มีหลักสูตรในระบบ">
           {(rows) => (
             <table>
@@ -650,20 +870,20 @@ export function CurriculumScreen() {
             </table>
           )}
         </AsyncView>
-      </TableCard>
+      </TableCard>}
 
-      {versionId && versions.data && (
+      {mode === 'versions' && versionId && versions.data && (
         <CloneVersionCard
           version={versions.data.find((v) => v.id === versionId)!}
           onDone={() => versions.reload()}
         />
       )}
 
-      {versionId && (
+      {(mode === 'versions' || mode === 'plan') && versionId && (
         <AsyncView state={structure}>
           {(s) => (
             <>
-              <TableCard title="เกณฑ์การจบของฉบับนี้">
+              {mode === 'versions' && <TableCard title="เกณฑ์การจบของฉบับนี้">
                 <table>
                   <thead>
                     <tr>
@@ -686,7 +906,7 @@ export function CurriculumScreen() {
                     ))}
                   </tbody>
                 </table>
-              </TableCard>
+              </TableCard>}
 
               {/*
                 วางไว้ **เหนือ** รายการหมวดวิชาโดยตั้งใจ — คนที่เปิดหน้านี้ตอน
@@ -694,12 +914,12 @@ export function CurriculumScreen() {
                 ถ้าอยู่ท้ายสุด หลักสูตรที่ยังว่างจะแสดงหมวดเปล่า ๆ สิบกว่าใบ
                 คั่นก่อนถึงกล่องที่ใช้ทำงานจริง
               */}
-              <CourseEntry
+              {mode === 'versions' && <CourseEntry
                 versionId={versionId}
                 editionBe={s.edition_be}
                 categories={s.categories}
                 onDone={structure.reload}
-              />
+              />}
 
               {s.categories.map((c) => (
                 <TableCard
@@ -722,7 +942,7 @@ export function CurriculumScreen() {
                           <th>ชื่อวิชา</th>
                           <th className="num" style={{ width: 70 }}>นก.</th>
                           <th style={{ width: 110 }}>ประเภท</th>
-                          <th style={{ width: 190 }}>ภาคเรียนตามหลักสูตร</th>
+                          {mode === 'plan' && <th style={{ width: 190 }}>ชั้นปีและภาคเรียน</th>}
                           <th style={{ width: 90 }}>ลำดับ</th>
                         </tr>
                       </thead>
@@ -737,9 +957,9 @@ export function CurriculumScreen() {
                                 {REQUIREMENT[co.requirement] ?? co.requirement}
                               </Badge>
                             </td>
-                            <td>
+                            {mode === 'plan' && <td>
                               <PlanTermEditor course={co} onSaved={() => structure.reload()} />
-                            </td>
+                            </td>}
                             <td>
                               {/*
                                 เลื่อนทีละขั้นแต่ส่งลำดับ**ทั้งชุด**ไปให้ API
@@ -770,7 +990,7 @@ export function CurriculumScreen() {
                 </TableCard>
               ))}
 
-              {s.uncategorized.length > 0 && (
+              {mode === 'versions' && s.uncategorized.length > 0 && (
                 <Card title={`รายวิชาที่ยังไม่ได้จัดหมวด — ${s.uncategorized.length} วิชา`}>
                   {s.uncategorized.map((co) => (
                     <div key={co.id}>
@@ -784,7 +1004,7 @@ export function CurriculumScreen() {
         </AsyncView>
       )}
 
-      <TableCard title="คลังรายวิชาของวิทยาลัย">
+      {mode === 'courses' && <TableCard title="คลังรายวิชาของวิทยาลัย">
         <div style={{ padding: 12, borderBottom: '1px solid var(--line-soft)' }}>
           <input
             value={q}
@@ -817,7 +1037,7 @@ export function CurriculumScreen() {
             </div>
           )}
         </AsyncView>
-      </TableCard>
+      </TableCard>}
     </>
   );
 }

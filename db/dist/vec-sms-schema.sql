@@ -2,8 +2,8 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้างฐานข้อมูล
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- migration ล่าสุด  0079
--- ลายนิ้วมือต้นทาง  c713ec2ac0dc5443
+-- migration ล่าสุด  0088
+-- ลายนิ้วมือต้นทาง  55d219d13a7a171c
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์นี้มีเฉพาะโครงสร้าง ไม่มีข้อมูลใด ๆ ใช้กับระบบจริง
@@ -22336,3 +22336,1273 @@ end $$;
 comment on function ignore_bank_match(uuid) is
   'ทำเครื่องหมายว่ารายการเดินบัญชีนี้ไม่ใช่ค่าเทอม (เช่น เงินคืน รายการภายใน'
   'ธนาคาร) — ไม่ลบทิ้ง เพื่อให้ตรวจสอบย้อนหลังได้ว่าทำไมถึงไม่นับ (0079)';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0080_fee_setup_and_scoped_discounts.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0080_fee_setup_and_scoped_discounts.sql
+-- โครงสร้างค่าเทอมกำหนดเป็นแบบรวมได้ + ส่วนลดรายคนต้องเจาะจงรายการได้
+--
+-- ─── เจอตอนตรวจว่างานการเงินกำหนดค่าเทอมแยกสาขา/ชั้นปี/ระดับได้ไหม ───
+-- พบว่า fee_item · fee_schedule · funding_source ไม่เคยมีเส้นทาง API ให้
+-- สร้างเลยสักตัวตั้งแต่ 0010 (มีแต่ rollover_fee_schedules() ที่คัดลอกของ
+-- ที่มีอยู่แล้วไปปีถัดไป ไม่ได้สร้างจากศูนย์) วิทยาลัยที่เปิดใหม่จึงตั้ง
+-- ค่าเทอมของตัวเองไม่ได้เลยนอกจากมือแตะฐานข้อมูลตรง ๆ — reference-data.sql
+-- ตั้งใจไม่ seed ให้ (ราคาเป็นเรื่องของแต่ละวิทยาลัย ถูกแล้ว) แต่ก็ไม่เคยมี
+-- ใครสร้างเส้นทางให้วิทยาลัยตั้งเอง รูปเดียวกับข้อ 20 ที่ program_type เจอ
+--
+-- ─── และร้ายแรงกว่านั้น — สี่ตารางนี้ไม่มีนโยบายบทบาทเลยสักข้อ ───
+-- ทดสอบยิงจริงในบริบท app.role = 'student' แล้วทำได้ทั้งสามอย่าง:
+--   insert เข้า funding_source (สร้างประเภททุนของทั้งวิทยาลัยเอง)
+--   insert เข้า student_funding ให้ตัวเองลด 100% โดยไม่ต้องมีใครอนุมัติ
+--     (approved_by/approved_at ว่างได้ — using ไม่มี with check จึงเท่ากับ
+--     with check เดียวกัน แต่ using เองก็ไม่เช็คเจ้าของ เช็คแค่ว่านักศึกษา
+--     คนนั้นอยู่วิทยาลัยเดียวกัน ไม่ใช่ว่าเป็นนักศึกษาคนนั้นเอง)
+--   insert เข้า fee_item (ตั้งรายการค่าธรรมเนียมของทั้งวิทยาลัยเอง)
+-- บทเรียนเดียวกับข้อ 16/20 — ตารางที่ไม่มี API ไม่ได้แปลว่าปิด แปลว่ายัง
+-- ไม่มีใครดู อ่านโค้ด API ให้ข้อสรุปว่า "ไม่มีใครเขียนได้" ซึ่งตรงข้ามกับ
+-- ความจริง ปิดด้วย finance_write_only แบบเดียวกับที่ fee_schedule_line
+-- มีอยู่แล้วตั้งแต่ 0017 (ไม่รู้ทำไมตัวแม่ทั้งสามไม่เคยได้ตัวเดียวกัน)
+--
+-- ─── ปัญหาที่สาม — ส่วนลดทุกชนิดของนักศึกษาคนหนึ่งลดทุกรายการเท่ากันหมด ───
+-- issue_invoice() รวมส่วนลดทั้งหมดของนักศึกษาแล้วหักจาก "ทุกบรรทัด" ของ
+-- ใบแจ้งหนี้เท่ากัน เพราะ join กับ student_funding โดยไม่กรองว่าส่วนลดนั้น
+-- ตั้งใจลดรายการไหน — ส่วนลดค่าแรกเข้าอย่างเดียวจะไปลดค่าเทอม ค่ากิจกรรม
+-- ค่าประกัน ด้วยเท่ากันหมด และถ้ามีทั้งทุนการศึกษา+กยศ.+ลดค่าแรกเข้าพร้อมกัน
+-- ยอดทั้งสามจะถูกบวกรวมแล้วหักซ้ำทุกบรรทัดเหมือนกันหมด ไม่ใช่คนละรายการ
+-- ตามที่ควรจะเป็น เพิ่ม fee_item_id ให้ student_funding (ว่าง = ลดทุกรายการ
+-- เหมือนเดิม สำหรับทุนที่ตั้งใจลดทั้งใบจริง ๆ เช่น ทุนเรียนดี)
+--
+-- ─── และ level/study_year ยังไม่รองรับ "รวม" เหมือนที่ program_id รองรับอยู่แล้ว ───
+-- program_id ว่างได้มาตั้งแต่ 0010 แปลว่า "ใช้กับทุกสาขา" แต่ level กับ
+-- study_year เป็น not null บังคับเจาะจงเสมอ วิทยาลัยที่ค่าเทอมเท่ากันทุก
+-- ชั้นปีหรือทุกระดับ (พบได้บ่อยกับค่ากิจกรรม/ค่าประกัน) ต้องสร้างแถวซ้ำ
+-- แยกทุกชั้นปีทุกระดับทั้งที่ตัวเลขเหมือนกันทุกใบ ทำให้แก้ทีก็ต้องแก้หลายแถว
+-- และพลาดแถวใดแถวหนึ่งได้ง่าย เปิดให้ว่างได้แบบเดียวกับ program_id แล้วให้
+-- issue_invoice() เลือกโครงสร้างที่เจาะจงที่สุดก่อนเสมอ (สาขา > ชั้นปี >
+-- ระดับ) ถ้าไม่มีเจาะจงพอจึงร่วงไปใช้แบบรวม
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+-- ───────────────────────────────────────────────────────────────────
+-- 1) ปิดช่องโหว่ RLS ก่อน — สี่ตารางนี้ไม่เคยมีนโยบายบทบาทเลย
+-- ───────────────────────────────────────────────────────────────────
+do $$
+declare t text;
+begin
+  foreach t in array array['fee_item', 'fee_schedule', 'funding_source'] loop
+    execute format($f$
+      create policy finance_write_only on %I
+        as restrictive
+        for all
+        using (true)
+        with check (current_app_role() in ('finance', 'registrar', 'director', 'admin'))
+    $f$, t);
+  end loop;
+end $$;
+
+-- student_funding ต้องแยกเป็นสองนโยบาย — subject_scope (for all) ให้เจ้าตัว
+-- และผู้ปกครองที่ยืนยันแล้วอ่านส่วนลดของตัวเองได้ (โปร่งใสว่าลดเพราะอะไร
+-- เท่าไร) ส่วน finance_write_only (เฉพาะ insert/update/delete) จำกัดว่าเขียน
+-- ได้เฉพาะบทบาทระดับวิทยาลัย — รวมกันด้วย AND ตามธรรมชาติของ restrictive
+-- จึงได้ผลลัพธ์คือ "อ่านได้ถ้าเป็นเจ้าของ/ผู้ปกครอง/เจ้าหน้าที่ เขียนได้
+-- เฉพาะเจ้าหน้าที่" ระวังอย่าใช้ for all กับ subject_scope เพราะจะกิน select
+-- ของเจ้าของทิ้งไปด้วย (กับดักเดียวกับที่ TEST 231 เจอกับ may_see_sensitive)
+create policy subject_scope on student_funding
+  as restrictive
+  using (
+    current_app_role() in ('finance', 'registrar', 'director', 'admin')
+    or exists (select 1 from student s
+               where s.id = student_funding.student_id and s.person_id = current_actor_id())
+    or exists (select 1 from student_guardian sg
+               where sg.student_id = student_funding.student_id
+                 and sg.person_id  = current_actor_id()
+                 and sg.verified_at is not null
+                 and sg.can_view_finance)
+  );
+
+create policy finance_write_only on student_funding
+  as restrictive
+  for insert
+  with check (current_app_role() in ('finance', 'registrar', 'director', 'admin'));
+
+create policy finance_write_only_update on student_funding
+  as restrictive
+  for update
+  using (current_app_role() in ('finance', 'registrar', 'director', 'admin'))
+  with check (current_app_role() in ('finance', 'registrar', 'director', 'admin'));
+
+create policy finance_write_only_delete on student_funding
+  as restrictive
+  for delete
+  using (current_app_role() in ('finance', 'registrar', 'director', 'admin'));
+
+-- ───────────────────────────────────────────────────────────────────
+-- 2) ส่วนลดเจาะจงรายการได้ — ว่าง = ลดทุกรายการเหมือนเดิม
+-- ───────────────────────────────────────────────────────────────────
+alter table student_funding
+  add column fee_item_id uuid references fee_item on delete restrict;
+
+comment on column student_funding.fee_item_id is
+  'ว่าง = ลดทุกรายการในใบแจ้งหนี้ (เช่น ทุนเรียนดีที่ตั้งใจลดทั้งใบ) ·
+   ระบุ = ลดเฉพาะรายการนั้น (เช่น ลดค่าแรกเข้าอย่างเดียว ไม่แตะค่าเทอม)';
+
+-- ───────────────────────────────────────────────────────────────────
+-- 3) level/study_year ว่างได้แบบเดียวกับ program_id — ว่าง = ทุกค่า
+-- ───────────────────────────────────────────────────────────────────
+alter table fee_schedule alter column level drop not null;
+alter table fee_schedule alter column study_year drop not null;
+
+alter table fee_schedule drop constraint fee_schedule_study_year_check;
+alter table fee_schedule add constraint fee_schedule_study_year_check
+  check (study_year is null or study_year between 1 and 4);
+
+comment on column fee_schedule.level is
+  'ว่าง = ใช้กับทุกระดับ (ปวช./ปวส.) — เหมือนกับที่ program_id ว่างมาตั้งแต่ 0010';
+comment on column fee_schedule.study_year is
+  'ว่าง = ใช้กับทุกชั้นปี — พบบ่อยกับค่ากิจกรรม/ค่าประกันที่เท่ากันทุกปี';
+
+-- ───────────────────────────────────────────────────────────────────
+-- 4) issue_invoice() — เลือกโครงสร้างที่เจาะจงที่สุดก่อน + ส่วนลดเจาะจงรายการ
+-- ───────────────────────────────────────────────────────────────────
+create or replace function issue_invoice(
+  p_student_id  uuid,
+  p_term_id     uuid,
+  p_installments integer default 1
+) returns uuid language plpgsql as $$
+declare
+  v_inst      uuid;
+  v_year_id   uuid;
+  v_level     qualification_level;
+  v_study_yr  smallint;
+  v_program   uuid;
+  v_ordinal   smallint;
+  v_sched     uuid;
+  v_invoice   uuid;
+  v_no        text;
+  v_code      text;
+  v_subtotal  numeric(12,2) := 0;
+  v_discount  numeric(12,2) := 0;
+  v_due       date;
+  v_year_be   smallint;
+  v_admitted  smallint;
+  i           smallint;
+begin
+  select s.institution_id, s.student_code, s.admitted_year_be
+    into v_inst, v_code, v_admitted
+  from student s where s.id = p_student_id;
+
+  if v_inst is null then
+    raise exception 'ไม่พบนักศึกษา %', p_student_id;
+  end if;
+
+  select t.academic_year_id, t.ordinal, ay.year_be
+    into v_year_id, v_ordinal, v_year_be
+  from term t join academic_year ay on ay.id = t.academic_year_id
+  where t.id = p_term_id;
+
+  select p.level, p.id into v_level, v_program
+  from student_curriculum sc
+  join curriculum_version cv on cv.id = sc.curriculum_version_id
+  join curriculum c          on c.id  = cv.curriculum_id
+  join program_track pt      on pt.id = c.program_track_id
+  join program p              on p.id  = pt.program_id
+  where sc.student_id = p_student_id and sc.effective_to is null;
+
+  if v_level is null then
+    raise exception 'นักศึกษา % ยังไม่ได้กำหนดหลักสูตร ออกใบแจ้งหนี้ไม่ได้', p_student_id;
+  end if;
+
+  v_study_yr := least(greatest(v_year_be - v_admitted + 1, 1), 4);
+
+  -- เลือกโครงสร้างค่าธรรมเนียม เจาะจงก่อนเสมอ — สาขา > ชั้นปี > ระดับ
+  -- ว่างในมิติไหนแปลว่า "ใช้กับทุกค่าของมิตินั้น" (รูปเดียวกับ program_id
+  -- ที่ว่างมาตั้งแต่ 0010 แต่ตอนนี้ครบทั้งสามมิติ)
+  select fs.id into v_sched
+  from fee_schedule fs
+  where fs.institution_id   = v_inst
+    and fs.academic_year_id = v_year_id
+    and (fs.level = v_level or fs.level is null)
+    and (fs.study_year = v_study_yr or fs.study_year is null)
+    and fs.active
+    and (fs.program_id = v_program or fs.program_id is null)
+  order by
+    (fs.program_id is not null) desc,
+    (fs.study_year is not null) desc,
+    (fs.level is not null) desc
+  limit 1;
+
+  if v_sched is null then
+    raise exception 'ไม่พบโครงสร้างค่าธรรมเนียมสำหรับ % ชั้นปี % ปีการศึกษา %', v_level, v_study_yr, v_year_be;
+  end if;
+
+  v_no := to_char(v_year_be, 'FM0000') || '-' || lpad(nextval('invoice_no_seq')::text, 6, '0');
+  select t.starts_on + 30 into v_due from term t where t.id = p_term_id;
+
+  insert into invoice (institution_id, student_id, term_id, invoice_no, due_on, ref1, ref2, status)
+  values (v_inst, p_student_id, p_term_id, 'INV-' || v_no, v_due,
+          v_code, regexp_replace(v_no, '\D', '', 'g'), 'draft')
+  returning id into v_invoice;
+
+  -- บรรทัดค่าธรรมเนียม พร้อมหักส่วนลดและทุนที่นักศึกษาได้รับ — เฉพาะส่วนลด
+  -- ที่เจาะจงรายการนี้ (fee_item_id ตรงกัน) หรือเจาะจงทุกรายการ (ว่าง)
+  insert into invoice_line (invoice_id, fee_item_id, description, amount, discount, funding_id)
+  select
+    v_invoice,
+    fi.id,
+    fi.name_th,
+    fsl.amount,
+    least(
+      coalesce(sum(coalesce(sf.amount, fsl.amount * sf.percent_off / 100)), 0),
+      fsl.amount
+    ),
+    (array_agg(sf.id order by sf.id) filter (where sf.id is not null))[1]
+  from fee_schedule_line fsl
+  join fee_item fi on fi.id = fsl.fee_item_id
+  left join student_funding sf
+         on sf.student_id       = p_student_id
+        and sf.academic_year_id = v_year_id
+        and (sf.term_id is null or sf.term_id = p_term_id)
+        and (sf.fee_item_id is null or sf.fee_item_id = fi.id)
+        and sf.approved_at is not null
+  where fsl.fee_schedule_id = v_sched
+    and fsl.term_ordinal    = v_ordinal
+  group by fi.id, fi.name_th, fsl.amount;
+
+  select coalesce(sum(amount), 0), coalesce(sum(discount), 0)
+    into v_subtotal, v_discount
+  from invoice_line where invoice_id = v_invoice;
+
+  update invoice
+  set subtotal = v_subtotal, discount_total = v_discount, total = v_subtotal - v_discount,
+      status = 'issued'
+  where id = v_invoice;
+
+  for i in 1..greatest(p_installments, 1) loop
+    insert into installment (invoice_id, seq, due_on, amount)
+    values (
+      v_invoice, i,
+      v_due + ((i - 1) * 60),
+      case when i < greatest(p_installments, 1)
+           then round((v_subtotal - v_discount) / greatest(p_installments, 1), 2)
+           else (v_subtotal - v_discount)
+                - round((v_subtotal - v_discount) / greatest(p_installments, 1), 2)
+                  * (greatest(p_installments, 1) - 1)
+      end
+    );
+  end loop;
+
+  return v_invoice;
+end $$;
+
+comment on function issue_invoice is
+  'ออกใบแจ้งหนี้หนึ่งใบต่อนักศึกษาต่อภาคเรียน หักทุนและส่วนลดที่อนุมัติแล้วให้อัตโนมัติ
+   ตามรายการที่ทุน/ส่วนลดนั้นเจาะจงไว้ (ว่าง = ทุกรายการ) เลือกโครงสร้างค่าธรรมเนียม
+   ที่เจาะจงสาขา/ชั้นปี/ระดับที่สุดก่อนเสมอ ถ้าไม่มีเจาะจงพอจึงใช้แบบที่ตั้งเป็น "รวม"';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0081_class_groups.sql
+-- ───────────────────────────────────────────────────────────────────
+
+begin;
+
+-- ห้องประจำชั้นเป็นคนละสิ่งกับ room (ห้องกายภาพในตารางสอน):
+-- ห้องประจำชั้นต้องสร้างได้ก่อนมีนักศึกษา แล้วจึงค่อยจัดรายชื่อเข้าห้องภายหลัง
+create table class_group (
+  id uuid primary key default gen_random_uuid(),
+  institution_id uuid not null references institution on delete restrict,
+  academic_year_id uuid not null references academic_year on delete restrict,
+  level qualification_level not null,
+  study_year smallint not null check (study_year between 1 and 6),
+  code text not null,
+  cohort text,
+  finance_group_th text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (institution_id, academic_year_id, level, study_year, code)
+);
+create index on class_group (academic_year_id) where active;
+create trigger class_group_touch before update on class_group for each row execute function set_updated_at();
+
+create table class_group_advisor (
+  class_group_id uuid not null references class_group on delete cascade,
+  staff_id uuid not null references staff on delete restrict,
+  primary key (class_group_id, staff_id)
+);
+
+alter table class_group enable row level security;
+alter table class_group force row level security;
+create policy tenant_isolation on class_group using (institution_id = current_institution_id()) with check (institution_id = current_institution_id());
+create policy class_group_write on class_group as restrictive for all using (current_app_role() = any (array['registrar','academic','director','admin'])) with check (current_app_role() = any (array['registrar','academic','director','admin']));
+
+alter table class_group_advisor enable row level security;
+alter table class_group_advisor force row level security;
+create policy tenant_isolation on class_group_advisor using (exists (select 1 from class_group cg where cg.id = class_group_advisor.class_group_id and cg.institution_id = current_institution_id())) with check (exists (select 1 from class_group cg where cg.id = class_group_advisor.class_group_id and cg.institution_id = current_institution_id()));
+create policy class_group_advisor_write on class_group_advisor as restrictive for all using (current_app_role() = any (array['registrar','academic','director','admin'])) with check (current_app_role() = any (array['registrar','academic','director','admin']));
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0082_term_categories.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0082 — หมวดภาคเรียน (term_category) และช่องวันที่ย่อยของภาคเรียน
+--
+-- ─── ทำไมต้องมีตารางใหม่ ───
+-- วิทยาลัยอาชีวศึกษาบางแห่งเปิดหลายรอบในภาคเรียนเดียวกัน (รอบเช้า/รอบบ่าย/
+-- ทวิภาคี) ซึ่งแต่ละรอบมีปฏิทินของตัวเอง (วันลงทะเบียน วันชำระเงิน ฯลฯ
+-- อาจไม่ตรงกัน) `term` เดิมผูกกับ `academic_year` ตรง ๆ ไม่มีชั้นจัดกลุ่มนี้
+--
+-- `term_category` เป็นตารางเลือกได้ (institution_id ผูกกับวิทยาลัย ไม่ผูก
+-- กับปีการศึกษาใดปีหนึ่ง) เพราะรอบเรียนเป็นรูปแบบการจัดองค์กรของวิทยาลัย
+-- ไม่ใช่ของภาคเรียนใดภาคเรียนหนึ่ง — สร้างครั้งเดียวใช้ได้ทุกปี
+--
+-- ─── ทำไมช่องวันที่ใหม่ไม่ซ้ำกับที่มีอยู่ ───
+-- `add_drop_ends_on` (สิ้นสุดเพิ่ม-ถอน) และ `grade_due_on` (กำหนดส่งเกรด)
+-- มีอยู่แล้วตั้งแต่ 0001 — คือ "วันสิ้นสุด" ของงานลงทะเบียนรายวิชาและงาน
+-- สมุดบันทึกคะแนนตามลำดับ จึงไม่เพิ่มคอลัมน์ใหม่ซ้ำ เพิ่มเฉพาะ "วันเริ่มต้น"
+-- ที่ยังไม่มี (`registration_starts_on`, `gradebook_starts_on`) บวกช่วงที่
+-- ไม่เคยมีเลยทั้งคู่ (การชำระเงิน, การตรวจสอบข้อมูลจบโดยนักศึกษา)
+-- ═══════════════════════════════════════════════════════════════════
+
+create table term_category (
+  id              uuid      primary key default gen_random_uuid(),
+  institution_id  uuid      not null references institution on delete restrict,
+  title           text      not null,
+  sort_order      smallint  not null default 0,
+  created_at      timestamptz not null default now(),
+  unique (institution_id, title)
+);
+
+alter table term_category enable row level security;
+alter table term_category force  row level security;
+
+create policy tenant_isolation on term_category
+  using (institution_id = current_institution_id())
+  with check (institution_id = current_institution_id());
+
+-- เหตุผลของการแยก insert/update/delete แทน `for all` — ดู 0074/0065
+create policy academic_insert on term_category
+  as restrictive for insert
+  with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'));
+
+create policy academic_update on term_category
+  as restrictive for update
+  using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+  with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'));
+
+create policy academic_delete on term_category
+  as restrictive for delete
+  using (current_app_role() in ('academic', 'registrar', 'director', 'admin'));
+
+alter table term add column category_id       uuid references term_category on delete set null;
+alter table term add column short_name        text;
+alter table term add column sort_order        smallint    not null default 0;
+alter table term add column is_normal         boolean     not null default true;
+alter table term add column registration_starts_on date;
+alter table term add column gradebook_starts_on    date;
+alter table term add column payment_starts_on      date;
+alter table term add column payment_ends_on        date;
+alter table term add column audit_starts_on        date;
+alter table term add column audit_ends_on          date;
+
+comment on column term.category_id is
+  'หมวด/รอบเรียนที่ภาคเรียนนี้สังกัด (รอบเช้า/รอบบ่าย/ทวิภาคี ฯลฯ) — ว่างได้ วิทยาลัยที่ไม่แยกรอบไม่ต้องตั้งค่านี้';
+comment on column term.is_normal is
+  'ภาคเรียนปกติ (true) หรือภาคพิเศษ/ปรับพื้นฐาน (false) — ใช้กรองแสดงผลไม่ให้ปนกับภาคที่ ordinal=0';
+
+alter table term add constraint term_registration_range
+  check (registration_starts_on is null or add_drop_ends_on is null or registration_starts_on <= add_drop_ends_on);
+alter table term add constraint term_gradebook_range
+  check (gradebook_starts_on is null or grade_due_on is null or gradebook_starts_on <= grade_due_on);
+alter table term add constraint term_payment_range
+  check (payment_starts_on is null or payment_ends_on is null or payment_starts_on <= payment_ends_on);
+alter table term add constraint term_audit_range
+  check (audit_starts_on is null or audit_ends_on is null or audit_starts_on <= audit_ends_on);
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0083_periods_and_level_labels.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0083 — คาบเรียนจริง (period) และป้ายชื่อระดับ/ชั้นปีที่แก้ไขได้
+--
+-- ─── คาบเรียน ───
+-- `section_timeslot.period_from/period_to` (0034) เก็บแค่เลขลำดับคาบมาตลอด
+-- ไม่มีเวลานาฬิกาผูกอยู่เลย หน้าจอ "จัดตารางสอน" และ "ตารางสอบ" จึงพิมพ์
+-- แค่ "คาบ 1–2" โดยไม่มีใครรู้ว่าคือกี่โมงถึงกี่โมง — `period` เป็นตาราง
+-- ใหม่ที่ผูกเลขลำดับกับเวลาจริง ใช้เลขลำดับเดียวกับที่ `section_timeslot`
+-- ใช้อยู่แล้ว (ไม่ใช่คนละชุด) จึงไม่ต้องแก้ตารางเดิม แค่ให้ชั้น API/หน้าจอ
+-- แปลเลขเป็นเวลาให้เพิ่ม
+--
+-- ─── ป้ายชื่อระดับและชั้นปี ───
+-- `qualification_level` (0002) เป็น enum ตายตัวสามค่า และหน้าจอเว็บ
+-- (`academic-year.tsx`, `finance.tsx`) ฮาร์ดโค้ด "ปวช./ปวส." ไว้ในโค้ด
+-- ทั้งสองไฟล์แยกกัน — วิทยาลัยที่อยากเรียกชื่ออื่น (เช่น "ปวช." เป็น
+-- "ระดับกลาง") แก้ไม่ได้เลยนอกจากแก้โค้ด ตารางใหม่สองตัวเก็บป้ายชื่อ
+-- ที่แก้ได้แยกจาก enum ซึ่งยังคงเป็นตัวกำหนดกฎธุรกิจเหมือนเดิม
+--   - `qualification_level_label` — ป้ายชื่อระดับ (ปวช./ปวส./ทล.บ.)
+--   - `grade_level` — ป้ายชื่อชั้นปีในแต่ละระดับ (ปวช.1, ปวช.2, ...)
+-- ทั้งสองเป็นข้อมูลตกแต่งการแสดงผลล้วน ๆ ไม่กระทบการคำนวณเลื่อนชั้นปี
+-- (`rollover_students()` ยังบวก study_year ด้วยตัวเลขเหมือนเดิม)
+-- ═══════════════════════════════════════════════════════════════════
+
+create table period (
+  id              uuid      primary key default gen_random_uuid(),
+  institution_id  uuid      not null references institution on delete restrict,
+  ordinal         smallint  not null check (ordinal between 1 and 20),
+  title           text      not null,
+  short_name      text,
+  starts_at       time,
+  ends_at         time,
+  unique (institution_id, ordinal),
+  check (ends_at is null or starts_at is null or ends_at > starts_at)
+);
+
+create table grade_level (
+  id              uuid                 primary key default gen_random_uuid(),
+  institution_id  uuid                 not null references institution on delete restrict,
+  level           qualification_level  not null,
+  study_year      smallint             not null check (study_year between 1 and 6),
+  title           text                 not null,
+  short_name      text,
+  unique (institution_id, level, study_year)
+);
+
+create table qualification_level_label (
+  id              uuid                 primary key default gen_random_uuid(),
+  institution_id  uuid                 not null references institution on delete restrict,
+  level           qualification_level  not null,
+  title           text                 not null,
+  sort_order      smallint             not null default 0,
+  unique (institution_id, level)
+);
+
+do $$
+declare t text;
+begin
+  foreach t in array array['period', 'grade_level', 'qualification_level_label'] loop
+    execute format('alter table %I enable row level security', t);
+    execute format('alter table %I force  row level security', t);
+    execute format($f$
+      create policy tenant_isolation on %I
+      using (institution_id = current_institution_id())
+      with check (institution_id = current_institution_id())
+    $f$, t);
+    -- เหตุผลของการแยก insert/update/delete แทน `for all` — ดู 0074/0065
+    execute format($f$
+      create policy academic_insert on %I
+        as restrictive for insert
+        with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+    execute format($f$
+      create policy academic_update on %I
+        as restrictive for update
+        using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+        with check (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+    execute format($f$
+      create policy academic_delete on %I
+        as restrictive for delete
+        using (current_app_role() in ('academic', 'registrar', 'director', 'admin'))
+    $f$, t);
+  end loop;
+end $$;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0084_curriculum_shift_uniqueness.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0084 — สาขางานเดียวกันเปิดหลายกะไม่ได้เลยตั้งแต่ 0026
+--
+-- 0026 เพิ่มคอลัมน์ `shift` ให้ `curriculum` เพื่อแยกกะเรียน (เช้า/บ่าย/
+-- เสาร์-อาทิตย์) เป็นคนละหลักสูตรในสาขางานเดียวกัน — หน้าจอ "เพิ่มหลักสูตร
+-- ใหม่" เขียนคำอธิบายไว้เองว่า "สาขางานเดียวกันเปิดได้หลายกะ แต่ละกะนับเป็น
+-- คนละหลักสูตร" แต่ `unique (institution_id, program_track_id)` ที่ตั้งไว้
+-- ตอนสร้างตาราง (ก่อน 0026) ไม่เคยถูกแก้ให้รวม `shift` เข้าไปด้วยเลย
+--
+-- ผลคือสาขางานหนึ่งเปิดได้แค่กะเดียวตลอดกาล — เพิ่มกะที่สองซ้ำสาขางานเดิม
+-- ได้ข้อความ "ข้อมูลซ้ำกับที่มีอยู่แล้ว (curriculum_institution_id_program_
+-- track_id_key)" ทั้งที่หน้าจอเองบอกผู้ใช้ว่าทำได้ — เจอตอนกดปุ่มจริงบน
+-- หน้า "โครงสร้างหลักสูตร" ไม่ใช่ตอนอ่านโค้ด
+-- ═══════════════════════════════════════════════════════════════════
+
+alter table curriculum drop constraint curriculum_institution_id_program_track_id_key;
+alter table curriculum add constraint curriculum_institution_id_program_track_id_shift_key
+  unique (institution_id, program_track_id, shift);
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0085_program_room_prefix.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0085 — คำนำหน้ารหัสห้องประจำสาขา
+--
+-- แต่ละสาขาวิชาตั้งชื่อห้องประจำชั้นด้วยคำนำหน้าของตัวเอง (บัญชี = CA,
+-- คอมพิวเตอร์ = CC, สารสนเทศ = CIT) — เดิมไม่มีที่เก็บค่านี้เลย เจ้าหน้าที่
+-- ต้องจำเองว่าสาขาไหนใช้คำนำหน้าอะไร แล้วพิมพ์เดาทุกครั้งตอนสร้างห้องใหม่
+-- ซึ่งพิมพ์ไม่ตรงกันได้ง่าย (เช่น สลับ CA กับ Ca) เก็บไว้ที่ `program`
+-- เพราะคำนำหน้าผูกกับสาขาวิชา ไม่ใช่กับสาขางานหรือหลักสูตรที่ลึกกว่านั้น
+-- ═══════════════════════════════════════════════════════════════════
+
+alter table program add column if not exists room_prefix text;
+comment on column program.room_prefix is
+  'คำนำหน้ารหัสห้องที่แนะนำสำหรับสาขานี้ เช่น CA, CC, CIT — ใช้แนะนำตอนสร้างห้องประจำชั้นให้สอดคล้องกัน ไม่ได้บังคับหรือตรวจสอบ';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0086_curriculum_tree_soft_delete.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0086 — ลบหมวดสาขา/หลักสูตรที่มีข้อมูลผูกอยู่โดยไม่ทำข้อมูลหาย
+--
+-- `program` และ `program_track` มีคอลัมน์ `active` มาตั้งแต่ 0003 แต่ไม่มี
+-- อะไรอ่านมันเลย (ประกาศเจตนาไว้แล้วไม่มีอะไรทำให้เจตนานั้นเกิดขึ้นจริง —
+-- รูปแบบเดียวกับที่เจอซ้ำ ๆ ทั่วโปรเจกต์) `program_type` กับ `curriculum`
+-- ไม่มีคอลัมน์นี้เลยด้วยซ้ำ
+--
+-- เพิ่มให้ครบทั้งสี่ชั้น เพื่อให้ "ลบ" ที่ชั้น API ทำได้สองแบบ — ลบจริงถ้า
+-- ไม่มีลูกผูกอยู่ (เหมือนเดิม) หรือถ้ามีลูกผูกอยู่ (ชน on delete restrict)
+-- ให้ตั้ง active = false แทนการลบจริง แถวยังอยู่ในฐานข้อมูลครบ ลูกที่ผูกอยู่
+-- ยังอ้างอิงได้ปกติ (ใบ รบ. เก่าที่อ้างหลักสูตรที่ถูก "ลบ" ไปแล้วยังพิมพ์ได้)
+-- แค่ไม่โผล่ในหน้าจอที่ใช้เลือกของใหม่อีกต่อไป — ดู listPrograms() ในโค้ด API
+-- ═══════════════════════════════════════════════════════════════════
+
+alter table program_type add column if not exists active boolean not null default true;
+comment on column program_type.active is
+  'false = ถูก "ลบ" จากหน้าจอทั้งที่มีข้อมูลผูกอยู่ (ชน on delete restrict) — แถวยังอยู่จริง แค่ไม่แสดงในตัวเลือกสร้างของใหม่';
+
+comment on column program.active is
+  'false = ถูก "ลบ" จากหน้าจอทั้งที่มีข้อมูลผูกอยู่ (ชน on delete restrict) — แถวยังอยู่จริง แค่ไม่แสดงในตัวเลือกสร้างของใหม่';
+
+comment on column program_track.active is
+  'false = ถูก "ลบ" จากหน้าจอทั้งที่มีข้อมูลผูกอยู่ (ชน on delete restrict) — แถวยังอยู่จริง แค่ไม่แสดงในตัวเลือกสร้างของใหม่';
+
+alter table curriculum add column if not exists active boolean not null default true;
+comment on column curriculum.active is
+  'false = ถูก "ลบ" จากหน้าจอทั้งที่มีฉบับหลักสูตรผูกอยู่ (ชน on delete restrict) — แถวยังอยู่จริง แค่ไม่แสดงในตัวเลือกสร้างของใหม่';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0087_student_import_full_profile.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0087 — นำเข้าข้อมูลนักศึกษาแบบเต็ม ให้ตรงกับไฟล์แม่แบบของวิทยาลัย
+--
+-- ─── ปัญหาที่แก้ ───
+-- `apply_student_import()` (0023) เขียนแค่ชื่อ/นามสกุล/เพศ/วันเกิด/เบอร์/
+-- อีเมลกับ `person`+`student` สองตารางเท่านั้น ทั้งที่ตาราง `person_sensitive`
+-- (สุขภาพ) · `person_address` (ที่อยู่) · `student_parent` (บิดามารดา) ·
+-- `student_prior_education` (การศึกษาเดิม) มีอยู่แล้วตั้งแต่ 0053 และมี
+-- หน้าจอ "ระเบียนนักศึกษา" อ่าน/แก้ได้ครบทุกแท็บ — แต่ไฟล์นำเข้าไม่เคยเขียน
+-- ตารางเหล่านี้เลย วิทยาลัยที่นำเข้านักศึกษาเป็นพันคนจะได้แต่ข้อมูลพื้นฐาน
+-- แล้วต้องกรอกที่เหลือทีละคนทีละแท็บ ซึ่งเสียเวลาพอ ๆ กับไม่มีระบบนำเข้าเลย
+--
+-- ไฟล์แม่แบบ ImportFull_VocationalEducation.xlsx (รูปแบบเดียวกับ SISA)
+-- มี 80 คอลัมน์ ครอบคลุมนักศึกษา+ผู้ปกครอง+บิดา+มารดา+ที่อยู่สองชุด+สุขภาพ+
+-- การศึกษาเดิม — คอลัมน์ส่วนใหญ่มีตารางรองรับอยู่แล้ว งานหลักคือเปิดทางเขียน
+-- ให้ครบ ไม่ใช่ออกแบบตารางใหม่
+--
+-- ─── สิ่งที่ตั้งใจ "ไม่" เชื่อมอัตโนมัติ ───
+-- รหัสประเภทวิชา/สาขาวิชา/หลักสูตร/ระดับชั้นในไฟล์เป็นโครงสามชั้น
+-- (ประเภท→สาขา→หลักสูตร) แต่ต้นไม้ของระบบนี้ลึกสี่ชั้น (ประเภท→สาขา→
+-- สาขางาน→หลักสูตร→ฉบับ) — ไฟล์ไม่มีรหัสสาขางานและไม่มีเลขฉบับหลักสูตร
+-- ให้เดา การเดาโครงสร้างที่ไม่มีในไฟล์จะจับคู่ผิดแบบเงียบ ๆ (ระดับความเสียหาย
+-- เดียวกับ "ห้อง 301" กับ "301" ก่อน 0034) ปลอดภัยกว่าที่จะเก็บ ห้อง/เลขที่
+-- ไว้แล้วให้เจ้าหน้าที่จัดนักศึกษาเข้าห้องจริงที่หน้า "ลงทะเบียนเรียน"
+-- (ซึ่งออกแบบมาให้เริ่มจากห้องอยู่แล้ว — ดู CLAUDE.md ข้อ 19)
+--
+-- ─── ทำไมเลขบัตรประชาชนไม่แฮช/เข้ารหัสในฟังก์ชันนี้ ───
+-- กุญแจเข้ารหัส (NATIONAL_ID_KEY) กับกุญแจแฮช (IP_HASH_SECRET) อยู่นอก
+-- ฐานข้อมูลโดยตั้งใจ (ดู national-id.ts) ฟังก์ชันนี้จึงรับเฉพาะค่าที่
+-- เข้ารหัส/แฮชมาแล้วจากชั้น API เป็นเลขฐานสิบหก (`*_hash_hex`/`*_enc_hex`)
+-- ไม่รับเลขบัตรตรงแล้วมาแฮชเองแบบ 0023 เดิม (`digest(..,'sha256')` ไม่มี
+-- กุญแจ — ช่องโหว่เดียวกับที่ 0061 ปิดไปแล้วฝั่งหน้าจอแก้ระเบียน)
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+alter table person add column if not exists phone2 text;
+comment on column person.phone2 is 'เบอร์โทรศัพท์สำรอง — ไฟล์นำเข้าบางชุดมีสองเบอร์ต่อคน';
+
+alter table person_address
+  add column if not exists village_no text,   -- หมู่
+  add column if not exists road       text,   -- ถนน
+  add column if not exists alley      text,   -- ตรอก
+  add column if not exists soi        text,   -- ซอย
+  add column if not exists country    text not null default 'ไทย';
+
+alter table student
+  add column if not exists room_code text;
+comment on column student.room_code is
+  'ห้องตามไฟล์นำเข้า — เป็นข้อความอ้างอิงเท่านั้น ยังไม่ผูกกับ class_group จริง '
+  'เพราะไฟล์นำเข้าไม่มีข้อมูลพอจะเดาห้องประจำชั้นที่ถูกต้อง (ดูคอมเมนต์บนสุดของไฟล์นี้) '
+  'ต้องจัดนักศึกษาเข้าห้องจริงที่หน้า "ลงทะเบียนเรียน" อีกที';
+
+commit;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ตรวจแถว — เพิ่มการตรวจฟิลด์ใหม่ ของเดิมยังอยู่ครบ
+-- ═══════════════════════════════════════════════════════════════════
+create or replace function validate_student_row(
+  p_institution_id uuid,
+  p_payload        jsonb
+) returns text[]
+language plpgsql stable as $$
+declare
+  v_errors text[] := '{}';
+  v_code   text := nullif(btrim(p_payload->>'student_code'), '');
+  v_first  text := nullif(btrim(p_payload->>'first_name_th'), '');
+  v_last   text := nullif(btrim(p_payload->>'last_name_th'), '');
+  v_year   text := p_payload->>'admitted_year_be';
+  v_nat    text := nullif(btrim(p_payload->>'national_id'), '');
+  v_father_nat   text := nullif(btrim(p_payload->>'father_national_id'), '');
+  v_mother_nat   text := nullif(btrim(p_payload->>'mother_national_id'), '');
+  v_guardian_nat text := nullif(btrim(p_payload->>'guardian_national_id'), '');
+  v_gpax   text := nullif(btrim(p_payload->>'prior_gpax'), '');
+  v_weight text := nullif(btrim(p_payload->>'weight_kg'), '');
+  v_height text := nullif(btrim(p_payload->>'height_cm'), '');
+begin
+  if v_code is null then
+    v_errors := array_append(v_errors, 'ไม่มีรหัสประจำตัวนักศึกษา');
+  elsif exists (select 1 from student s
+                 where s.institution_id = p_institution_id and s.student_code = v_code) then
+    v_errors := array_append(v_errors, format('รหัสประจำตัว %s มีอยู่ในระบบแล้ว', v_code));
+  end if;
+
+  if v_first is null then v_errors := array_append(v_errors, 'ไม่มีชื่อ'); end if;
+  if v_last  is null then v_errors := array_append(v_errors, 'ไม่มีนามสกุล'); end if;
+
+  if v_year is null or v_year !~ '^\d{4}$' then
+    v_errors := array_append(v_errors, 'ปีที่เข้าศึกษาต้องเป็นพุทธศักราชสี่หลัก');
+  elsif v_year::int < 2500 or v_year::int > 2700 then
+    v_errors := array_append(v_errors, format('ปีที่เข้าศึกษา %s ไม่อยู่ในช่วงที่รับได้ (2500-2700)', v_year));
+  end if;
+
+  -- เลขประจำตัวประชาชนตรวจ checksum ได้ จึงควรตรวจตั้งแต่ตอนนำเข้า
+  -- ไม่ใช่ปล่อยให้ผิดแล้วไปเจอตอนออกเอกสารราชการ
+  --
+  -- ตรวจครบทั้งสี่ช่อง (นักศึกษา/บิดา/มารดา/ผู้ปกครอง) เพราะ ImportService
+  -- ที่ชั้น API เข้ารหัส/แฮชเฉพาะเลขที่ผ่าน checksum เท่านั้น — เลขที่ไม่ผ่าน
+  -- จะไม่มี *_hash_hex/*_enc_hex ติดมาด้วยเลย ถ้าไม่ตรวจซ้ำที่นี่ แถวนั้นจะผ่าน
+  -- การตรวจแบบเงียบ ๆ แล้วช่องเลขบัตรของบิดา/มารดา/ผู้ปกครองว่างเปล่าไปโดย
+  -- ไม่มีใครรู้ (ต่างจากเดิมที่ API โยน exception ทั้งคำขอเมื่อเจอเลขบัตรพัง
+  -- แม้แค่แถวเดียว ซึ่งบล็อกทั้งไฟล์ — ดูคอมเมนต์ใน encryptNationalIdFields())
+  if v_nat is not null then
+    if v_nat !~ '^\d{13}$' then
+      v_errors := array_append(v_errors, 'เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก');
+    elsif not thai_national_id_valid(v_nat) then
+      v_errors := array_append(v_errors, format('เลขประจำตัวประชาชน %s ไม่ผ่านการตรวจหลักที่ 13', v_nat));
+    end if;
+  end if;
+
+  if v_father_nat is not null and not (v_father_nat ~ '^\d{13}$' and thai_national_id_valid(v_father_nat)) then
+    v_errors := array_append(v_errors, format('เลขประจำตัวประชาชนของบิดา %s ไม่ผ่านการตรวจหลักที่ 13', v_father_nat));
+  end if;
+
+  if v_mother_nat is not null and not (v_mother_nat ~ '^\d{13}$' and thai_national_id_valid(v_mother_nat)) then
+    v_errors := array_append(v_errors, format('เลขประจำตัวประชาชนของมารดา %s ไม่ผ่านการตรวจหลักที่ 13', v_mother_nat));
+  end if;
+
+  if v_guardian_nat is not null and not (v_guardian_nat ~ '^\d{13}$' and thai_national_id_valid(v_guardian_nat)) then
+    v_errors := array_append(v_errors, format('เลขประจำตัวประชาชนของผู้ปกครอง %s ไม่ผ่านการตรวจหลักที่ 13', v_guardian_nat));
+  end if;
+
+  if p_payload ? 'status'
+     and p_payload->>'status' not in
+         ('active','on_leave','suspended','withdrawn','transferred_out','dismissed','graduated') then
+    v_errors := array_append(v_errors, format('สถานะ "%s" ไม่ถูกต้อง', p_payload->>'status'));
+  end if;
+
+  if p_payload ? 'gender' and nullif(btrim(p_payload->>'gender'), '') is not null
+     and p_payload->>'gender' not in ('male', 'female', 'other', 'undisclosed') then
+    v_errors := array_append(v_errors, format('เพศ "%s" ไม่ถูกต้อง', p_payload->>'gender'));
+  end if;
+
+  if p_payload ? 'blood_type' and nullif(btrim(p_payload->>'blood_type'), '') is not null
+     and p_payload->>'blood_type' not in ('A', 'B', 'AB', 'O') then
+    v_errors := array_append(v_errors, format('หมู่โลหิต "%s" ไม่ถูกต้อง — ต้องเป็น A, B, AB หรือ O', p_payload->>'blood_type'));
+  end if;
+
+  if v_gpax is not null and (v_gpax !~ '^\d(\.\d+)?$' or v_gpax::numeric > 4) then
+    v_errors := array_append(v_errors, format('ผลการเรียนเดิม "%s" ต้องเป็นตัวเลข 0-4', v_gpax));
+  end if;
+
+  if v_weight is not null and (v_weight !~ '^\d+(\.\d+)?$' or v_weight::numeric not between 10 and 300) then
+    v_errors := array_append(v_errors, format('น้ำหนัก "%s" ต้องเป็นตัวเลขระหว่าง 10-300 กก.', v_weight));
+  end if;
+
+  if v_height is not null and (v_height !~ '^\d+(\.\d+)?$' or v_height::numeric not between 50 and 250) then
+    v_errors := array_append(v_errors, format('ส่วนสูง "%s" ต้องเป็นตัวเลขระหว่าง 50-250 ซม.', v_height));
+  end if;
+
+  return v_errors;
+end $$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- นำเข้าจริง — เขียนทั้งชุดหรือไม่เขียนเลย (ของเดิม) ครบทุกตารางที่มี
+-- ข้อมูลในไฟล์ (ของใหม่)
+-- ═══════════════════════════════════════════════════════════════════
+create or replace function apply_student_import(p_batch_id uuid)
+returns table (imported integer, failed integer)
+language plpgsql as $$
+declare
+  v_batch   import_batch%rowtype;
+  r         record;
+  v_person  uuid;
+  v_student uuid;
+  v_bad     integer := 0;
+  v_ok      integer := 0;
+  v_same_addr boolean;
+  v_guardian_person uuid;
+begin
+  select * into v_batch from import_batch where id = p_batch_id;
+  if not found then
+    raise exception 'ไม่พบรอบนำเข้า % (หรือไม่มีสิทธิ์เข้าถึง)', p_batch_id;
+  end if;
+  if v_batch.status = 'applied' then
+    raise exception 'รอบนำเข้านี้ถูกนำเข้าไปแล้วเมื่อ % นำเข้าซ้ำไม่ได้', v_batch.applied_at;
+  end if;
+  if v_batch.kind <> 'student' then
+    raise exception 'รอบนำเข้านี้เป็นชนิด % ไม่ใช่ข้อมูลนักศึกษา', v_batch.kind;
+  end if;
+
+  -- ตรวจทุกแถวก่อน ไม่เขียนอะไรจนกว่าจะผ่านหมด
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    declare v_errs text[];
+    begin
+      v_errs := validate_student_row(v_batch.institution_id, r.payload);
+      update import_row
+         set errors = v_errs, ok = (cardinality(v_errs) = 0)
+       where id = r.id;
+      if cardinality(v_errs) > 0 then v_bad := v_bad + 1; end if;
+    end;
+  end loop;
+
+  if v_bad > 0 then
+    update import_batch
+       set status = 'failed', error_rows = v_bad,
+           ok_rows = (select count(*) from import_row where batch_id = p_batch_id and ok)
+     where id = p_batch_id;
+    -- ข้อความไม่ชี้ไปที่ import_row เพราะ `raise` rollback การเขียน errors
+    -- ข้างบนไปด้วย รายละเอียดรายแถวจึงหายไปพร้อมข้อผิดพลาด (ดู 0043)
+    raise exception
+      'มี % แถวที่ยังมีปัญหา ไม่ได้นำเข้าอะไรเลย — สั่งตรวจ (validate) รอบนี้อีกครั้ง '
+      'เพื่อดูรายละเอียดรายแถว', v_bad;
+  end if;
+
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    insert into person
+      (institution_id, prefix_th, first_name_th, last_name_th,
+       prefix_en, first_name_en, last_name_en, nickname_th,
+       national_id_enc, national_id_hash, national_id_hash_v,
+       birth_date, gender, phone, phone2, email, nationality)
+    values (
+      v_batch.institution_id,
+      nullif(btrim(r.payload->>'prefix_th'), ''),
+      btrim(r.payload->>'first_name_th'),
+      btrim(r.payload->>'last_name_th'),
+      nullif(btrim(r.payload->>'prefix_en'), ''),
+      nullif(btrim(r.payload->>'first_name_en'), ''),
+      nullif(btrim(r.payload->>'last_name_en'), ''),
+      nullif(btrim(r.payload->>'nickname_th'), ''),
+      -- เข้ารหัส/แฮชมาแล้วจากชั้น API เสมอ — ดูคอมเมนต์บนสุดของไฟล์นี้
+      case when r.payload ? 'national_id_enc_hex'
+           then decode(r.payload->>'national_id_enc_hex', 'hex') end,
+      case when r.payload ? 'national_id_hash_hex'
+           then decode(r.payload->>'national_id_hash_hex', 'hex') end,
+      case when r.payload ? 'national_id_hash_hex' then 2 else 1 end,
+      (nullif(btrim(r.payload->>'birth_date'), ''))::date,
+      coalesce(nullif(btrim(r.payload->>'gender'), ''), 'undisclosed')::gender_kind,
+      nullif(btrim(r.payload->>'phone'), ''),
+      nullif(btrim(r.payload->>'phone2'), ''),
+      nullif(btrim(r.payload->>'email'), ''),
+      nullif(btrim(r.payload->>'nationality'), '')
+    )
+    returning id into v_person;
+
+    insert into student
+      (institution_id, person_id, student_code, admitted_year_be, status,
+       siblings_count, birth_order, siblings_studying, class_number, room_code)
+    values (
+      v_batch.institution_id, v_person,
+      btrim(r.payload->>'student_code'),
+      (r.payload->>'admitted_year_be')::smallint,
+      coalesce(nullif(btrim(r.payload->>'status'), ''), 'active')::student_status,
+      nullif(r.payload->>'siblings_count', '')::smallint,
+      nullif(r.payload->>'birth_order', '')::smallint,
+      nullif(r.payload->>'siblings_studying', '')::smallint,
+      nullif(r.payload->>'class_number', '')::smallint,
+      nullif(btrim(r.payload->>'room_code'), '')
+    )
+    returning id into v_student;
+
+    -- ─── สุขภาพและข้อมูลอ่อนไหว (PDPA ม.26) ─────────────────────────
+    if (r.payload ? 'ethnicity') or (r.payload ? 'religion') or (r.payload ? 'blood_type')
+       or (r.payload ? 'drug_allergy') or (r.payload ? 'chronic_disease')
+       or (r.payload ? 'weight_kg') or (r.payload ? 'height_cm') then
+      insert into person_sensitive
+        (person_id, institution_id, ethnicity, religion, blood_type,
+         drug_allergy, chronic_disease, weight_kg, height_cm)
+      values (
+        v_person, v_batch.institution_id,
+        nullif(btrim(r.payload->>'ethnicity'), ''),
+        nullif(btrim(r.payload->>'religion'), ''),
+        nullif(btrim(r.payload->>'blood_type'), ''),
+        nullif(btrim(r.payload->>'drug_allergy'), ''),
+        nullif(btrim(r.payload->>'chronic_disease'), ''),
+        nullif(r.payload->>'weight_kg', '')::numeric,
+        nullif(r.payload->>'height_cm', '')::numeric
+      );
+    end if;
+
+    -- ─── ที่อยู่ปัจจุบัน + ทะเบียนบ้าน ───────────────────────────────
+    -- "ที่อยู่ปัจจุบันเดียวกับทะเบียนบ้านหรือไม่" (Y/N) — ถ้าใช่ คัดลอกชุด
+    -- เดียวกันลงทั้งสอง kind แทนการเว้นแถว 'registered' ว่างไว้ เพราะหน้าจอ
+    -- ระเบียนนักศึกษาคาดว่าทั้งสอง kind มีข้อมูลเสมอเมื่อมีคนกรอกที่อยู่มาแล้ว
+    v_same_addr := upper(coalesce(nullif(btrim(r.payload->>'address_same_as_registered'), ''), 'Y')) = 'Y';
+
+    if nullif(btrim(r.payload->>'current_address_line'), '') is not null then
+      insert into person_address
+        (institution_id, person_id, kind, address_line, village_no, road, alley, soi,
+         country, subdistrict_th, district_th, province_th, postal_code)
+      values (
+        v_batch.institution_id, v_person, 'current',
+        btrim(r.payload->>'current_address_line'),
+        nullif(btrim(r.payload->>'current_village_no'), ''),
+        nullif(btrim(r.payload->>'current_road'), ''),
+        nullif(btrim(r.payload->>'current_alley'), ''),
+        nullif(btrim(r.payload->>'current_soi'), ''),
+        coalesce(nullif(btrim(r.payload->>'current_country'), ''), 'ไทย'),
+        nullif(btrim(r.payload->>'current_subdistrict_th'), ''),
+        nullif(btrim(r.payload->>'current_district_th'), ''),
+        nullif(btrim(r.payload->>'current_province_th'), ''),
+        nullif(btrim(r.payload->>'current_postal_code'), '')
+      )
+      on conflict (person_id, kind) do update set
+        address_line = excluded.address_line, village_no = excluded.village_no,
+        road = excluded.road, alley = excluded.alley, soi = excluded.soi,
+        country = excluded.country, subdistrict_th = excluded.subdistrict_th,
+        district_th = excluded.district_th, province_th = excluded.province_th,
+        postal_code = excluded.postal_code, updated_at = now();
+    end if;
+
+    if v_same_addr and nullif(btrim(r.payload->>'current_address_line'), '') is not null then
+      insert into person_address
+        (institution_id, person_id, kind, address_line, village_no, road, alley, soi,
+         country, subdistrict_th, district_th, province_th, postal_code)
+      values (
+        v_batch.institution_id, v_person, 'registered',
+        btrim(r.payload->>'current_address_line'),
+        nullif(btrim(r.payload->>'current_village_no'), ''),
+        nullif(btrim(r.payload->>'current_road'), ''),
+        nullif(btrim(r.payload->>'current_alley'), ''),
+        nullif(btrim(r.payload->>'current_soi'), ''),
+        coalesce(nullif(btrim(r.payload->>'current_country'), ''), 'ไทย'),
+        nullif(btrim(r.payload->>'current_subdistrict_th'), ''),
+        nullif(btrim(r.payload->>'current_district_th'), ''),
+        nullif(btrim(r.payload->>'current_province_th'), ''),
+        nullif(btrim(r.payload->>'current_postal_code'), '')
+      )
+      on conflict (person_id, kind) do update set
+        address_line = excluded.address_line, village_no = excluded.village_no,
+        road = excluded.road, alley = excluded.alley, soi = excluded.soi,
+        country = excluded.country, subdistrict_th = excluded.subdistrict_th,
+        district_th = excluded.district_th, province_th = excluded.province_th,
+        postal_code = excluded.postal_code, updated_at = now();
+    elsif not v_same_addr and nullif(btrim(r.payload->>'registered_address_line'), '') is not null then
+      insert into person_address
+        (institution_id, person_id, kind, address_line, village_no, road, alley, soi,
+         country, subdistrict_th, district_th, province_th, postal_code)
+      values (
+        v_batch.institution_id, v_person, 'registered',
+        btrim(r.payload->>'registered_address_line'),
+        nullif(btrim(r.payload->>'registered_village_no'), ''),
+        nullif(btrim(r.payload->>'registered_road'), ''),
+        nullif(btrim(r.payload->>'registered_alley'), ''),
+        nullif(btrim(r.payload->>'registered_soi'), ''),
+        coalesce(nullif(btrim(r.payload->>'registered_country'), ''), 'ไทย'),
+        nullif(btrim(r.payload->>'registered_subdistrict_th'), ''),
+        nullif(btrim(r.payload->>'registered_district_th'), ''),
+        nullif(btrim(r.payload->>'registered_province_th'), ''),
+        nullif(btrim(r.payload->>'registered_postal_code'), '')
+      )
+      on conflict (person_id, kind) do update set
+        address_line = excluded.address_line, village_no = excluded.village_no,
+        road = excluded.road, alley = excluded.alley, soi = excluded.soi,
+        country = excluded.country, subdistrict_th = excluded.subdistrict_th,
+        district_th = excluded.district_th, province_th = excluded.province_th,
+        postal_code = excluded.postal_code, updated_at = now();
+    end if;
+
+    -- ─── บิดา / มารดา — คนละแถว ไม่ผูกกับ person (ดูคอมเมนต์ใน 0053) ──
+    if nullif(btrim(r.payload->>'father_first_name_th'), '') is not null then
+      insert into student_parent
+        (institution_id, student_id, role, prefix_th, first_name_th, last_name_th,
+         national_id_hash, national_id_hash_v, phone, work_phone, email)
+      values (
+        v_batch.institution_id, v_student, 'father',
+        nullif(btrim(r.payload->>'father_prefix_th'), ''),
+        btrim(r.payload->>'father_first_name_th'),
+        nullif(btrim(r.payload->>'father_last_name_th'), ''),
+        case when r.payload ? 'father_national_id_hash_hex'
+             then decode(r.payload->>'father_national_id_hash_hex', 'hex') end,
+        case when r.payload ? 'father_national_id_hash_hex' then 2 else 1 end,
+        nullif(btrim(r.payload->>'father_phone'), ''),
+        nullif(btrim(r.payload->>'father_phone2'), ''),
+        nullif(btrim(r.payload->>'father_email'), '')
+      )
+      on conflict (student_id, role) do update set
+        prefix_th = excluded.prefix_th, first_name_th = excluded.first_name_th,
+        last_name_th = excluded.last_name_th, national_id_hash = excluded.national_id_hash,
+        national_id_hash_v = excluded.national_id_hash_v,
+        phone = excluded.phone, work_phone = excluded.work_phone, email = excluded.email,
+        updated_at = now();
+    end if;
+
+    if nullif(btrim(r.payload->>'mother_first_name_th'), '') is not null then
+      insert into student_parent
+        (institution_id, student_id, role, prefix_th, first_name_th, last_name_th,
+         national_id_hash, national_id_hash_v, phone, work_phone, email)
+      values (
+        v_batch.institution_id, v_student, 'mother',
+        nullif(btrim(r.payload->>'mother_prefix_th'), ''),
+        btrim(r.payload->>'mother_first_name_th'),
+        nullif(btrim(r.payload->>'mother_last_name_th'), ''),
+        case when r.payload ? 'mother_national_id_hash_hex'
+             then decode(r.payload->>'mother_national_id_hash_hex', 'hex') end,
+        case when r.payload ? 'mother_national_id_hash_hex' then 2 else 1 end,
+        nullif(btrim(r.payload->>'mother_phone'), ''),
+        nullif(btrim(r.payload->>'mother_phone2'), ''),
+        nullif(btrim(r.payload->>'mother_email'), '')
+      )
+      on conflict (student_id, role) do update set
+        prefix_th = excluded.prefix_th, first_name_th = excluded.first_name_th,
+        last_name_th = excluded.last_name_th, national_id_hash = excluded.national_id_hash,
+        national_id_hash_v = excluded.national_id_hash_v,
+        phone = excluded.phone, work_phone = excluded.work_phone, email = excluded.email,
+        updated_at = now();
+    end if;
+
+    -- ─── ผู้ปกครอง (คนละคนจากบิดา/มารดาได้ เช่น ปู่ย่า/ลุงป้า) ────────
+    -- สร้าง person ใหม่ให้เสมอ ไม่ค้นหาคนซ้ำข้ามนักศึกษา เพราะเลขบัตรเก็บ
+    -- เป็นแฮชเท่านั้น ค้นหาแบบ "คนเดียวกันดูแลหลายคน" ไม่ได้โดยไม่ถอดรหัส
+    -- (ผู้ปกครองที่ดูแลพี่น้องหลายคนจะมีแถว person ซ้ำกันคนละแถว — ยอมรับได้
+    -- เพราะเป้าหมายของฟิลด์นี้คือช่องทางติดต่อ ไม่ใช่บัญชีผู้ใช้เดียวที่ล็อกอิน)
+    if nullif(btrim(r.payload->>'guardian_first_name_th'), '') is not null then
+      v_guardian_person := null;
+
+      -- พี่น้องมักมีผู้ปกครองคนเดียวกัน — `person.national_id_hash` ไม่ซ้ำ
+      -- ได้ในสถานศึกษาเดียวกัน (unique (institution_id, national_id_hash)
+      -- ตั้งแต่ 0002) ถ้าสร้าง person ใหม่ทุกครั้งโดยไม่เช็คก่อน แถวที่สอง
+      -- จะชนแล้วทำให้ทั้งรอบนำเข้าล้ม จึงค้นหาคนเดิมก่อนเสมอเมื่อมีเลขบัตร
+      if r.payload ? 'guardian_national_id_hash_hex' then
+        select id into v_guardian_person
+          from person
+         where institution_id = v_batch.institution_id
+           and national_id_hash = decode(r.payload->>'guardian_national_id_hash_hex', 'hex');
+      end if;
+
+      if v_guardian_person is null then
+        insert into person
+          (institution_id, prefix_th, first_name_th, last_name_th, phone, phone2, email,
+           national_id_hash, national_id_hash_v)
+        values (
+          v_batch.institution_id,
+          nullif(btrim(r.payload->>'guardian_prefix_th'), ''),
+          btrim(r.payload->>'guardian_first_name_th'),
+          nullif(btrim(r.payload->>'guardian_last_name_th'), ''),
+          nullif(btrim(r.payload->>'guardian_phone'), ''),
+          nullif(btrim(r.payload->>'guardian_phone2'), ''),
+          nullif(btrim(r.payload->>'guardian_email'), ''),
+          case when r.payload ? 'guardian_national_id_hash_hex'
+               then decode(r.payload->>'guardian_national_id_hash_hex', 'hex') end,
+          case when r.payload ? 'guardian_national_id_hash_hex' then 2 else 1 end
+        )
+        returning id into v_guardian_person;
+      end if;
+
+      -- ยังไม่ยืนยันตัวตน (verified_at ว่าง) โดยตั้งใจ — การนำเข้าไฟล์ไม่ใช่
+      -- การยืนยันตัวตนจริง (ดูคอมเมนต์ verified_at ใน 0053)
+      insert into student_guardian
+        (student_id, person_id, relation, is_primary)
+      values (v_student, v_guardian_person, 'guardian', true)
+      on conflict (student_id, person_id) do nothing;
+    end if;
+
+    -- ─── การศึกษาเดิม ────────────────────────────────────────────────
+    if nullif(btrim(r.payload->>'prior_level_th'), '') is not null then
+      insert into student_prior_education
+        (institution_id, student_id, level_th, completed_year_be, gpax,
+         school_th, province_th, note)
+      values (
+        v_batch.institution_id, v_student,
+        btrim(r.payload->>'prior_level_th'),
+        nullif(r.payload->>'prior_completed_year_be', '')::smallint,
+        nullif(r.payload->>'prior_gpax', '')::numeric,
+        nullif(btrim(r.payload->>'prior_school_th'), ''),
+        nullif(btrim(r.payload->>'prior_province_th'), ''),
+        case when nullif(btrim(r.payload->>'prior_credit_units'), '') is not null
+             then 'หน่วยกิตสะสมจากสถานศึกษาเดิม: ' || btrim(r.payload->>'prior_credit_units') end
+      )
+      on conflict (student_id, level_th) do nothing;
+    end if;
+
+    update import_row set created_ref = v_student, ok = true where id = r.id;
+    v_ok := v_ok + 1;
+  end loop;
+
+  update import_batch
+     set status = 'applied', applied_at = now(),
+         ok_rows = v_ok, error_rows = 0, total_rows = v_ok
+   where id = p_batch_id;
+
+  imported := v_ok;
+  failed   := 0;
+  return next;
+end $$;
+
+comment on function apply_student_import(uuid) is
+  'นำเข้าข้อมูลนักศึกษาทั้งชุด — มีแถวใดผิดจะไม่เขียนอะไรเลย ครอบคลุมข้อมูลพื้นฐาน '
+  'สุขภาพ ที่อยู่ บิดามารดา ผู้ปกครอง และการศึกษาเดิม (0087) ไม่ครอบคลุมการจัดห้อง/หลักสูตร '
+  'เพราะไฟล์ไม่มีข้อมูลพอจะเดาได้ถูกต้อง (ดูคอมเมนต์บนสุดของ 0087)';
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0088_grade_import.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0088 — นำเข้าผลการเรียนจากไฟล์ระบบเดิม (finalgrades.csv)
+--
+-- ─── ทำไมนำเข้าเป็นคะแนนในสมุดคะแนน ไม่ใช่เขียน enrollment_result ตรง ───
+-- หลักข้อ 3ก: เกรดเปลี่ยนได้ทางเดียวคือผ่าน `grade_change_request` และ
+-- ทางเดียวที่ enrollment_result ถูกเขียนคือ `compute_section_grades()`
+-- ที่เรียกจาก `submit_section_grades()` หลังครูกดส่งและผ่านสายอนุมัติ
+-- (ครูที่ปรึกษาสาขา → ฝ่ายวิชาการ → ผู้อำนวยการ → ล็อก) ถ้าตัวนำเข้าเขียน
+-- enrollment_result ตรง ๆ จะเป็นการเปิดทางที่สองที่ข้ามการอนุมัติทั้งหมด —
+-- ใครก็ตามที่นำเข้าไฟล์ได้จะแก้เกรดใครก็ได้โดยไม่ต้องมีใครอนุมัติ (ช่องโหว่
+-- แบบเดียวกับข้อ 3ก ที่ CLAUDE.md เตือนไว้สำหรับรอบสอบซ่อม)
+--
+-- ตัวนำเข้าจึงเขียนแค่ `gradebook_item`/`gradebook_score` — เหมือนครูกรอก
+-- คะแนนเอง แล้วยังต้องกด "ส่งเกรด" ที่หน้าสมุดคะแนนและผ่านสายอนุมัติตามปกติ
+-- ต่อ ไม่มีอะไรถูกล็อกเป็นผลจริงจากขั้นตอนนำเข้านี้เพียงอย่างเดียว
+--
+-- ─── ทำไมข้ามแถวที่ไม่มีคะแนนตัวเลข ───
+-- ไฟล์จริงมีทั้งแถวที่ยังไม่ตัดเกรด ("-") และแถวที่มีแต่สัญลักษณ์ผลการเรียน
+-- โดยไม่มีคะแนน (เช่น ข.ร./ผ./ข.ส. — ขาดสอบ/ผ่านแบบไม่มีคะแนน/ขาดส่งงาน)
+-- `gradebook_score.score` เป็นตัวเลขเท่านั้น ไม่มีที่เก็บสัญลักษณ์พวกนี้ตรง ๆ
+-- การเดาตัวเลขแทนสัญลักษณ์คือการปั้นข้อมูลที่ไม่มีอยู่จริง (หลักข้อ 5)
+-- ชั้น API จึงกรองแถวที่ไม่มีคะแนนตัวเลขทิ้งตั้งแต่ก่อนส่งเข้ามา เจ้าหน้าที่
+-- ต้องกรอกแถวเหล่านั้นเองที่หน้าสมุดคะแนนตามปกติ
+--
+-- ─── ทำไม 1 รายการต่อกลุ่มเรียน น้ำหนักเต็ม 100 ───
+-- ไฟล์มีแค่ "คะแนนรวม" ต่อวิชาต่อคน ไม่มีคะแนนย่อยแยกชิ้นงาน จึงสร้าง
+-- `gradebook_item` ชื่อ "คะแนนนำเข้าจากไฟล์เดิม" ตัวเดียวต่อกลุ่มเรียน
+-- (max_score=100, weight=100) แล้วใส่คะแนนที่ได้ตรง ๆ — ถ้ากลุ่มเรียนนั้น
+-- มีชิ้นงานอื่นอยู่ก่อนแล้ว น้ำหนักรวมจะเกิน 100 ซึ่งเป็นสิ่งที่ผู้ใช้ต้อง
+-- ไปจัดการเอง (ปกติควรนำเข้าเฉพาะกลุ่มเรียนที่ยังไม่มีใครกรอกคะแนน)
+-- ═══════════════════════════════════════════════════════════════════
+
+alter type import_kind add value if not exists 'grade';
+
+begin;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ตรวจแถว
+-- ═══════════════════════════════════════════════════════════════════
+create or replace function validate_grade_import_row(
+  p_institution_id uuid,
+  p_payload        jsonb
+) returns text[]
+language plpgsql stable as $$
+declare
+  v_errors      text[] := '{}';
+  v_code        text := nullif(btrim(p_payload->>'student_code'), '');
+  v_course      text := nullif(btrim(p_payload->>'course_code'), '');
+  v_ordinal     text := nullif(btrim(p_payload->>'term_ordinal'), '');
+  v_year        text := nullif(btrim(p_payload->>'academic_year_be'), '');
+  v_score       text := nullif(btrim(p_payload->>'score'), '');
+  v_student_id  uuid;
+  v_match_count integer;
+  v_locked      boolean;
+begin
+  if v_code is null then
+    v_errors := array_append(v_errors, 'ไม่มีรหัสนักศึกษา');
+  end if;
+  if v_course is null then
+    v_errors := array_append(v_errors, 'ไม่มีรหัสวิชา');
+  end if;
+  if v_ordinal is null or v_ordinal !~ '^[1-3]$' then
+    v_errors := array_append(v_errors, 'ภาคเรียนต้องเป็น 1, 2 หรือ 3');
+  end if;
+  if v_year is null or v_year !~ '^\d{4}$' or v_year::int < 2500 or v_year::int > 2700 then
+    v_errors := array_append(v_errors, 'ปีการศึกษาต้องเป็นพุทธศักราชสี่หลัก (2500-2700)');
+  end if;
+  if v_score is null then
+    v_errors := array_append(v_errors, 'ไม่มีคะแนน');
+  elsif v_score !~ '^\d+(\.\d+)?$' or v_score::numeric < 0 or v_score::numeric > 100 then
+    v_errors := array_append(v_errors, format('คะแนน "%s" ต้องเป็นตัวเลข 0-100', v_score));
+  end if;
+
+  -- ตรวจต่อไม่ได้ถ้าค่าพื้นฐานยังไม่ครบ
+  if cardinality(v_errors) > 0 then
+    return v_errors;
+  end if;
+
+  select id into v_student_id
+    from student where institution_id = p_institution_id and student_code = v_code;
+  if v_student_id is null then
+    v_errors := array_append(v_errors, format('ไม่พบนักศึกษารหัส %s ในวิทยาลัยนี้', v_code));
+    return v_errors;
+  end if;
+
+  select count(*), bool_or(cs.is_locked) into v_match_count, v_locked
+    from enrollment e
+    join class_section cs on cs.id = e.class_section_id
+    join course co        on co.id = cs.course_id
+    join term t            on t.id = cs.term_id
+    join academic_year ay  on ay.id = t.academic_year_id
+   where e.student_id = v_student_id
+     and cs.institution_id = p_institution_id
+     and co.code = v_course
+     and t.ordinal = v_ordinal::smallint
+     and ay.year_be = v_year::smallint
+     and e.status = 'enrolled';
+
+  if v_match_count = 0 then
+    v_errors := array_append(v_errors,
+      format('ไม่พบการลงทะเบียนวิชา %s ของนักศึกษา %s ในภาคเรียนที่ %s/%s',
+             v_course, v_code, v_ordinal, v_year));
+  elsif v_match_count > 1 then
+    v_errors := array_append(v_errors,
+      format('พบมากกว่าหนึ่งกลุ่มเรียนที่ตรงกันสำหรับวิชา %s ของนักศึกษา %s — ต้องแก้ด้วยมือ',
+             v_course, v_code));
+  elsif v_locked then
+    v_errors := array_append(v_errors,
+      'กลุ่มเรียนนี้ล็อกผลการเรียนแล้ว — แก้ไขได้เฉพาะผ่านคำร้องขอแก้เกรดเท่านั้น');
+  end if;
+
+  return v_errors;
+end $$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- นำเข้าจริง — เขียน gradebook_item/gradebook_score ทั้งชุดหรือไม่เขียนเลย
+-- ═══════════════════════════════════════════════════════════════════
+create or replace function apply_grade_import(p_batch_id uuid)
+returns table (imported integer, failed integer)
+language plpgsql as $$
+declare
+  v_batch    import_batch%rowtype;
+  r          record;
+  v_bad      integer := 0;
+  v_ok       integer := 0;
+  v_student_id  uuid;
+  v_section_id  uuid;
+  v_enrollment_id uuid;
+  v_item_id     uuid;
+  v_score       record;
+begin
+  select * into v_batch from import_batch where id = p_batch_id;
+  if not found then
+    raise exception 'ไม่พบรอบนำเข้า % (หรือไม่มีสิทธิ์เข้าถึง)', p_batch_id;
+  end if;
+  if v_batch.status = 'applied' then
+    raise exception 'รอบนำเข้านี้ถูกนำเข้าไปแล้วเมื่อ % นำเข้าซ้ำไม่ได้', v_batch.applied_at;
+  end if;
+  if v_batch.kind <> 'grade' then
+    raise exception 'รอบนำเข้านี้เป็นชนิด % ไม่ใช่ผลการเรียน', v_batch.kind;
+  end if;
+
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    declare v_errs text[];
+    begin
+      v_errs := validate_grade_import_row(v_batch.institution_id, r.payload);
+      update import_row
+         set errors = v_errs, ok = (cardinality(v_errs) = 0)
+       where id = r.id;
+      if cardinality(v_errs) > 0 then v_bad := v_bad + 1; end if;
+    end;
+  end loop;
+
+  if v_bad > 0 then
+    update import_batch
+       set status = 'failed', error_rows = v_bad,
+           ok_rows = (select count(*) from import_row where batch_id = p_batch_id and ok)
+     where id = p_batch_id;
+    raise exception
+      'มี % แถวที่ยังมีปัญหา ไม่ได้นำเข้าอะไรเลย — สั่งตรวจ (validate) รอบนี้อีกครั้ง '
+      'เพื่อดูรายละเอียดรายแถว', v_bad;
+  end if;
+
+  for r in select * from import_row where batch_id = p_batch_id order by row_no loop
+    select s.id into v_student_id
+      from student s
+     where s.institution_id = v_batch.institution_id
+       and s.student_code = r.payload->>'student_code';
+
+    select cs.id, e.id into v_section_id, v_enrollment_id
+      from enrollment e
+      join class_section cs on cs.id = e.class_section_id
+      join course co        on co.id = cs.course_id
+      join term t            on t.id = cs.term_id
+      join academic_year ay  on ay.id = t.academic_year_id
+     where e.student_id = v_student_id
+       and cs.institution_id = v_batch.institution_id
+       and co.code = r.payload->>'course_code'
+       and t.ordinal = (r.payload->>'term_ordinal')::smallint
+       and ay.year_be = (r.payload->>'academic_year_be')::smallint
+       and e.status = 'enrolled';
+
+    -- หารายการ "คะแนนนำเข้าจากไฟล์เดิม" ของกลุ่มเรียนนี้ ถ้ายังไม่มีให้สร้าง
+    -- ใหม่ — ค้นด้วยชื่อคงที่เพื่อให้รันซ้ำได้โดยไม่สร้างรายการซ้อนทุกครั้ง
+    select id into v_item_id
+      from gradebook_item
+     where class_section_id = v_section_id and name_th = 'คะแนนนำเข้าจากไฟล์เดิม';
+
+    if v_item_id is null then
+      insert into gradebook_item
+        (class_section_id, name_th, category, max_score, weight, publish_to_student)
+      values (v_section_id, 'คะแนนนำเข้าจากไฟล์เดิม', 'final', 100, 100, false)
+      returning id into v_item_id;
+    end if;
+
+    insert into gradebook_score (gradebook_item_id, enrollment_id, score, recorded_by)
+    values (v_item_id, v_enrollment_id, (r.payload->>'score')::numeric, current_actor_id())
+    on conflict (gradebook_item_id, enrollment_id) do update set
+      score = excluded.score, recorded_by = excluded.recorded_by, recorded_at = now()
+    returning id into v_score;
+
+    update import_row set created_ref = v_score.id, ok = true where id = r.id;
+    v_ok := v_ok + 1;
+  end loop;
+
+  update import_batch
+     set status = 'applied', applied_at = now(),
+         ok_rows = v_ok, error_rows = 0, total_rows = v_ok
+   where id = p_batch_id;
+
+  imported := v_ok;
+  failed   := 0;
+  return next;
+end $$;
+
+comment on function apply_grade_import(uuid) is
+  'นำเข้าคะแนนเป็นรายการในสมุดคะแนน (gradebook_item/gradebook_score) — ไม่แตะ enrollment_result '
+  'เลย ครูยังต้องกด "ส่งเกรด" และผ่านสายอนุมัติตามปกติเหมือนกรอกเอง (0088)';
+
+commit;

@@ -12,7 +12,7 @@
  */
 import { useState } from 'react';
 import { api, qs } from '../core/api';
-import { fetchSections, type Section } from '../core/catalog';
+import { fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { thaiDate } from '../core/fmt';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
@@ -251,6 +251,7 @@ function ExamRow({
   session, rooms, staff, onDone,
 }: { session: ExamSession; rooms: Room[]; staff: StaffRow[]; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
+  const periodLabel = usePeriodLabel();
 
   if (editing) {
     return (
@@ -266,7 +267,7 @@ function ExamRow({
   return (
     <tr>
       <td>{thaiDate(session.exam_date)}</td>
-      <td>{session.period_from}–{session.period_to}</td>
+      <td>{periodLabel(session.period_from, session.period_to)}</td>
       <td><Badge kind="default">{KIND_LABEL[session.kind] ?? session.kind}</Badge></td>
       <td className="mono">
         {session.course_code} <span className="hint">กลุ่ม {session.section_no}</span>

@@ -348,7 +348,9 @@ export class AuthService {
         )
       ).rows[0];
 
-      if (mfa?.required) {
+      // ใช้เฉพาะเครื่องพัฒนาเพื่อทดสอบหน้าจอโดยไม่ต้องผ่าน authenticator
+      // production-guard ต้องไม่อนุญาตให้เปิดค่านี้ในระบบจริง
+      if (mfa?.required && this.config.get('MFA_DISABLED') !== 'true') {
         return {
           mfaRequired: true,
           enrollmentRequired: !mfa.enrolled,
