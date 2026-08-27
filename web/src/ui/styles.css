@@ -333,6 +333,28 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 .empty { padding: 28px; text-align: center; color: var(--ink-faint); font-size: 12.5px; }
 .loading { padding: 20px; color: var(--ink-faint); font-size: 12.5px; }
 
+/* ─── กริดวัน×คาบ (ตารางสอน) ────────────────────────────────────── */
+.week-grid-legend { display: flex; gap: 16px; margin: 2px 0 10px; font-size: 11.5px; color: var(--ink-soft); }
+.week-grid-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.week-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--line); }
+.week-swatch.busy { background: #eef0fb; }
+.week-swatch.suggest { background: #e3f7ea; }
+.week-swatch.avoid { background: #fdf3d9; }
+.week-grid-wrap { overflow-x: auto; }
+.week-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.week-grid th, .week-grid td { border: 1px solid var(--line); }
+.week-grid thead th { padding: 8px 6px; font-size: 11.5px; color: var(--ink-soft); background: #f7f8fc; }
+.week-grid-period { padding: 6px 8px; font-size: 11px; color: var(--ink-soft); background: #f7f8fc; white-space: nowrap; text-align: left; }
+.week-cell { height: 42px; min-width: 100px; padding: 0; text-align: center; vertical-align: middle; }
+.week-cell.busy { background: #eef0fb; color: var(--ink); font-size: 11.5px; cursor: pointer; }
+.week-cell.busy:hover { background: #e0e3fa; }
+.week-cell.busy.selected { background: #4143ca; color: #fff; }
+.week-cell.suggest { background: #e3f7ea; padding: 0; }
+.week-cell.suggest.avoid { background: #fdf3d9; }
+.week-cell-place { width: 100%; height: 100%; min-height: 42px; border: 0; background: transparent; color: #1f8a4c; font-size: 11px; font-weight: 600; cursor: pointer; }
+.week-cell.suggest.avoid .week-cell-place { color: #8a6d1f; }
+.week-cell-place:hover { background: rgba(0,0,0,.04); }
+
 /* ─── หน้าเข้าสู่ระบบ ───────────────────────────────────────────── */
 .login-wrap {
   height: 100%; display: grid; place-items: center; background: #10243a;

@@ -1403,6 +1403,33 @@ export class CatalogService {
   }
 
   /**
+   * ตารางสอนของ "ตัวเอง" — กรองด้วย current_actor_id() ไม่ใช่ staffId ที่ส่งมา
+   *
+   * ตั้งใจไม่รับพารามิเตอร์ staffId เลย เพราะ `/timetable/*` ทั้งชุดปิดไม่ให้
+   * ครูเรียกอยู่แล้ว (ครูเห็นภาระงาน/ห้องของคนอื่นได้ไม่ได้) เส้นทางนี้จึง
+   * ต้องตอบได้แค่ "ของฉัน" เท่านั้นโดยไม่มีทางส่งรหัสครูคนอื่นมาดูแทนได้เลย
+   * — ไม่มีแถวก็แปลว่าไม่มีระเบียน `staff` ผูกกับบัญชีนี้ ไม่ใช่ error
+   */
+  async mySchedule(termId: string) {
+    return this.db.query(
+      `select st.id as timeslot_id, st.day_of_week, st.period_from, st.period_to,
+              cs.id as class_section_id, cs.section_no,
+              co.code, co.name_th, co.credits,
+              coalesce(r.code, st_room.code) as room_code,
+              coalesce(r.name_th, st_room.name_th) as room_name
+         from staff s
+         join class_section cs on cs.teacher_id = s.id and cs.term_id = $1
+         join section_timeslot st on st.class_section_id = cs.id
+         join course co on co.id = cs.course_id
+         left join room r on r.id = cs.room_id
+         left join room st_room on st_room.id = st.room_id
+        where s.person_id = current_actor_id()
+        order by st.day_of_week, st.period_from`,
+      [termId],
+    );
+  }
+
+  /**
    * คาบเรียนของกลุ่มเรียนหนึ่ง — หน้าเช็คชื่อต้องเลือกคาบก่อนเสมอ
    *
    * นับยอดที่บันทึกไปแล้วมาด้วย เพื่อให้ครูเห็นทันทีว่าคาบไหนยังไม่ได้เช็ค
@@ -1745,6 +1772,11 @@ class CatalogController {
   @Get('sections')
   sections(@Query('termId', ParseUuidPipe) termId: string, @Query('q') q?: string) {
     return this.svc.sections(termId, q);
+  }
+
+  @Get('my-schedule')
+  mySchedule(@Query('termId', ParseUuidPipe) termId: string) {
+    return this.svc.mySchedule(termId);
   }
 
   // เปิดกลุ่มเรียนเป็นงานวิชาการ ไม่ใช่งานของครูผู้สอน

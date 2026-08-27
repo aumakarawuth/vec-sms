@@ -34,6 +34,7 @@ import { ImportScreen } from './screens/import';
 import { JobsScreen } from './screens/jobs';
 import { LettersScreen } from './screens/letters';
 import { LoginScreen } from './screens/login';
+import { MyScheduleScreen } from './screens/my-schedule';
 import { OnetScreen } from './screens/onet';
 import { PersonnelCenterScreen } from './screens/personnel-center';
 import { PersonnelSearchScreen } from './screens/personnel-search';
@@ -234,6 +235,7 @@ function Routes() {
   if (head === 'jobs') return <JobsScreen />;
   if (head === 'hr') return <HrScreen />;
   if (head === 'timetable') return <TimetableScreen />;
+  if (head === 'my-schedule') return <MyScheduleScreen />;
   if (head === 'admissions') return <AdmissionsScreen />;
   if (head === 'academic-year') {
     if (second === 'classes') return <AcademicClassroomScreen />;

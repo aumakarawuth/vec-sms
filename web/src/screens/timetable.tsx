@@ -13,7 +13,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
-import { fetchSections, usePeriodLabel, type Section } from '../core/catalog';
+import { fetchPeriods, fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -296,6 +296,255 @@ function TransferRow({ slot, rooms, onDone }: { slot: Timeslot; rooms: Room[]; o
   );
 }
 
+/**
+ * วางคาบแบบเห็นภาพ — คลิกช่องว่างเพื่อวางทันที แทนอ่านตารางแนะนำแล้วกดปุ่มแยก
+ *
+ * ─── ทำไมเปลี่ยนมาเป็นกริดวัน×คาบ ───
+ * รูปแบบเดิม (เลือกกลุ่ม → กด "หาคาบว่าง" → อ่านตารางผลลัพธ์เป็นแถว [วัน, คาบ]
+ * → กดปุ่ม "วาง" ทีละแถว) บังคับให้แปลตัวเลขวัน/คาบกลับเป็นภาพตารางในหัวเอง
+ * ทุกครั้ง ทั้งที่ปฏิทินทั่วไป (Google Calendar/Outlook) และโปรแกรมจัดตาราง
+ * สอนของสถานศึกษา (เช่น ASC Timetables, FET) ใช้กริดวัน×คาบเป็นมาตรฐานอยู่
+ * แล้ว เพราะคนอ่านตารางสอนเป็นภาพสองมิติอยู่แล้วในชีวิตจริง — ให้คลิกช่อง
+ * สีเขียวตรง ๆ ตัดขั้นตอน "อ่านแถว → แปลงเป็นภาพ → หาปุ่ม" ทิ้งไปทั้งหมด
+ * คาบว่างคำนวณใหม่อัตโนมัติทันทีที่เปลี่ยนกลุ่มเรียน/จำนวนคาบ/ห้อง ไม่ต้อง
+ * กดปุ่ม "หาคาบว่าง" เองอีกต่อไป
+ */
+function SectionScheduleGrid({
+  sections, rooms, termId, onChanged,
+}: { sections: Section[]; rooms: Room[]; termId: string; onChanged: () => void }) {
+  const periodsCatalog = useAsync(fetchPeriods, []);
+  const periodLabel = usePeriodLabel();
+  const [sectionId, setSectionId] = useState('');
+  const [span, setSpan] = useState('2');
+  const [roomId, setRoomId] = useState('');
+  const [selected, setSelected] = useState<Timeslot | null>(null);
+
+  const slots = useAsync(
+    () => (sectionId ? api.get<Timeslot[]>(`/academic/sections/${sectionId}/timeslots`) : Promise.resolve([])),
+    [sectionId],
+  );
+  const suggestions = useAsync(
+    () =>
+      sectionId
+        ? api.get<Suggestion[]>(
+            `/timetable/suggest?classSectionId=${sectionId}&periods=${span}` +
+              (roomId ? `&roomId=${roomId}` : '') +
+              (termId ? `&termId=${termId}` : ''),
+          )
+        : Promise.resolve([]),
+    [sectionId, span, roomId, termId],
+  );
+
+  useEffect(() => setSelected(null), [sectionId]);
+
+  const reload = () => {
+    slots.reload();
+    suggestions.reload();
+    onChanged();
+    setSelected(null);
+  };
+
+  const maxPeriod = Math.max(10, ...(periodsCatalog.data ?? []).map((p) => p.ordinal));
+  const days = [1, 2, 3, 4, 5, 6];
+
+  // ช่อง (วัน-คาบ) ที่มีคาบอยู่แล้ว — เก็บเฉพาะคาบแรกของบล็อกไว้ทำ rowSpan
+  const busyStart = new Map<string, Timeslot & { span: number }>();
+  const busyCovered = new Set<string>();
+  for (const s of slots.data ?? []) {
+    busyStart.set(`${s.day_of_week}-${s.period_from}`, { ...s, span: s.period_to - s.period_from + 1 });
+    for (let p = s.period_from; p <= s.period_to; p++) busyCovered.add(`${s.day_of_week}-${p}`);
+  }
+
+  const suggestStart = new Map<string, Suggestion>();
+  const suggestCovered = new Set<string>();
+  for (const s of suggestions.data ?? []) {
+    suggestStart.set(`${s.day_of_week}-${s.period_from}`, s);
+    for (let p = s.period_from; p <= s.period_to; p++) suggestCovered.add(`${s.day_of_week}-${p}`);
+  }
+
+  return (
+    <Card title="วางคาบให้กลุ่มเรียน — คลิกช่องว่างเพื่อวางทันที">
+      <div className="row">
+        <label className="field" style={{ flex: 2 }}>
+          <span>กลุ่มเรียน</span>
+          <select value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
+            <option value="">— เลือกกลุ่มเรียน —</option>
+            {sections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.code} {s.name_th} · กลุ่ม {s.section_no} · {s.teacher_name || 'ยังไม่มีครู'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field" style={{ maxWidth: 140 }}>
+          <span>จำนวนคาบติดกัน</span>
+          <select value={span} onChange={(e) => setSpan(e.target.value)}>
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>{n} คาบ</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>ห้อง (ถ้าระบุ)</span>
+          <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+            <option value="">— ไม่ระบุห้อง —</option>
+            {rooms.map((r) => (
+              <option key={r.id} value={r.id}>{r.code} {r.name_th}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {!sectionId ? (
+        <div className="empty">เลือกกลุ่มเรียนก่อน — ช่องสีเขียวจะปรากฏเป็นคาบว่างที่วางได้ทันที</div>
+      ) : (
+        <>
+          <div className="week-grid-legend">
+            <span><i className="week-swatch busy" /> มีคาบแล้ว (คลิกเพื่อย้าย/ยกเลิก)</span>
+            <span><i className="week-swatch suggest" /> ว่าง วางได้ทันที</span>
+            <span><i className="week-swatch avoid" /> ว่างแต่ครูขอเลี่ยง</span>
+          </div>
+          <div className="week-grid-wrap">
+            <table className="week-grid">
+              <thead>
+                <tr>
+                  <th style={{ width: 90 }}>คาบ</th>
+                  {days.map((d) => <th key={d}>{DAY[d]}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: maxPeriod }, (_, i) => i + 1).map((p) => (
+                  <tr key={p}>
+                    <th className="week-grid-period">{periodLabel(p, p)}</th>
+                    {days.map((d) => {
+                      const key = `${d}-${p}`;
+                      if (busyCovered.has(key) && !busyStart.has(key)) return null;
+                      const busy = busyStart.get(key);
+                      if (busy) {
+                        return (
+                          <td
+                            key={d}
+                            rowSpan={busy.span}
+                            className={`week-cell busy${selected?.id === busy.id ? ' selected' : ''}`}
+                            onClick={() => setSelected(busy)}
+                          >
+                            {busy.room_code ?? 'ไม่ระบุห้อง'}
+                          </td>
+                        );
+                      }
+                      if (suggestCovered.has(key) && !suggestStart.has(key)) return null;
+                      const sug = suggestStart.get(key);
+                      if (sug) {
+                        return (
+                          <td key={d} rowSpan={Number(span)} className={`week-cell suggest${sug.avoids ? ' avoid' : ''}`}>
+                            <ActionButton
+                              className="week-cell-place"
+                              onRun={() =>
+                                api.post('/timetable/slots', {
+                                  classSectionId: sectionId,
+                                  dayOfWeek: sug.day_of_week,
+                                  periodFrom: sug.period_from,
+                                  periodTo: sug.period_to,
+                                  ...(roomId ? { roomId } : {}),
+                                })
+                              }
+                              onDone={reload}
+                            >
+                              {sug.avoids ? '+ ครูขอเลี่ยง' : '+ ว่าง'}
+                            </ActionButton>
+                          </td>
+                        );
+                      }
+                      return <td key={d} className="week-cell" />;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {suggestions.data?.length === 0 && (
+            <Notice kind="warn">ไม่มีคาบว่างที่วางได้เลย — ลองลดจำนวนคาบติดกัน หรือไม่ระบุห้อง</Notice>
+          )}
+
+          {selected && (
+            <SelectedSlotPanel slot={selected} rooms={rooms} onDone={reload} onClose={() => setSelected(null)} />
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+/** แผงแก้ไข/ยกเลิกคาบที่คลิกเลือกจากกริด — เปิดขึ้นแทนการค้นแถวในตารางแยก */
+function SelectedSlotPanel({
+  slot, rooms, onDone, onClose,
+}: { slot: Timeslot; rooms: Room[]; onDone: () => void; onClose: () => void }) {
+  const periodLabel = usePeriodLabel();
+  const [dayOfWeek, setDayOfWeek] = useState(String(slot.day_of_week));
+  const [periodFrom, setPeriodFrom] = useState(String(slot.period_from));
+  const [periodTo, setPeriodTo] = useState(String(slot.period_to));
+  const [roomId, setRoomId] = useState(slot.room_id ?? '');
+
+  return (
+    <Card
+      title={`คาบที่เลือก — ${DAY[slot.day_of_week]} ${periodLabel(slot.period_from, slot.period_to)}`}
+      actions={<button className="ghost" onClick={onClose}>ปิด</button>}
+    >
+      <div className="row">
+        <Field label="วัน">
+          <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)} style={{ maxWidth: 130 }}>
+            {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+              <option key={d} value={d}>{DAY[d]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="คาบเริ่ม">
+          <input type="number" min={1} max={20} value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={{ maxWidth: 80 }} />
+        </Field>
+        <Field label="คาบสิ้นสุด">
+          <input type="number" min={1} max={20} value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={{ maxWidth: 80 }} />
+        </Field>
+        <label className="field">
+          <span>ห้อง (ถ้ามี)</span>
+          <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+            <option value="">— ไม่ระบุห้อง —</option>
+            {rooms.map((r) => (
+              <option key={r.id} value={r.id}>{r.code} {r.name_th}</option>
+            ))}
+          </select>
+        </label>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() =>
+              api.post(`/timetable/slots/${slot.id}/move`, {
+                dayOfWeek: Number(dayOfWeek),
+                periodFrom: Number(periodFrom),
+                periodTo: Number(periodTo),
+                ...(roomId ? { roomId } : {}),
+              })
+            }
+            onDone={onDone}
+          >
+            ย้ายคาบนี้
+          </ActionButton>
+        </div>
+        <div className="shrink">
+          <ActionButton
+            className="ghost"
+            confirm="ยกเลิกคาบนี้ ยืนยันหรือไม่"
+            onRun={() => api.post(`/timetable/slots/${slot.id}/remove`)}
+            onDone={onDone}
+          >
+            ยกเลิกคาบนี้
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function TransferSectionForm({
   sections, rooms, staff,
 }: { sections: Section[]; rooms: Room[]; staff: StaffRow[] }) {
@@ -412,10 +661,6 @@ export function TimetableScreen() {
     [termId],
   );
 
-  const [sectionId, setSectionId] = useState('');
-  const [periods, setPeriods] = useState('2');
-  const [roomId, setRoomId] = useState('');
-  const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [autoResult, setAutoResult] = useState<unknown>(null);
 
   const [roomCode, setRoomCode] = useState('');
@@ -425,8 +670,6 @@ export function TimetableScreen() {
   const [roomBuilding, setRoomBuilding] = useState('');
 
   useEffect(() => {
-    setSectionId('');
-    setSuggestions(null);
     setAutoResult(null);
   }, [termId]);
 
@@ -474,120 +717,12 @@ export function TimetableScreen() {
         )}
       </Card>
 
-      <Card title="วางคาบให้กลุ่มเรียนทีละกลุ่ม">
-        <div className="row">
-          <label className="field" style={{ flex: 2 }}>
-            <span>กลุ่มเรียน</span>
-            <AsyncView state={sections} empty="ภาคเรียนนี้ยังไม่มีกลุ่มเรียน">
-              {(rows) => (
-                <select value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
-                  <option value="">— เลือกกลุ่มเรียน —</option>
-                  {rows.map((s: Section) => (
-                    <option key={s.id} value={s.id}>
-                      {s.code} {s.name_th} · กลุ่ม {s.section_no} · {s.teacher_name || 'ยังไม่มีครู'}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </AsyncView>
-          </label>
-          <label className="field" style={{ maxWidth: 140 }}>
-            <span>จำนวนคาบติดกัน</span>
-            <select value={periods} onChange={(e) => setPeriods(e.target.value)}>
-              {[1, 2, 3, 4].map((n) => (
-                <option key={n} value={n}>{n} คาบ</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>ห้อง (ถ้าระบุ)</span>
-            <AsyncView state={rooms}>
-              {(list) => (
-                <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
-                  <option value="">— ไม่ระบุห้อง —</option>
-                  {list.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.code} {r.name_th}
-                      {r.capacity ? ` (${r.capacity} ที่)` : ''}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </AsyncView>
-          </label>
-          <div className="shrink">
-            <ActionButton
-              onRun={() =>
-                api.get<Suggestion[]>(
-                  `/timetable/suggest?classSectionId=${sectionId}&periods=${periods}` +
-                    (roomId ? `&roomId=${roomId}` : '') +
-                    (termId ? `&termId=${termId}` : ''),
-                )
-              }
-              onDone={(r) => setSuggestions(r as Suggestion[])}
-            >
-              หาคาบว่าง
-            </ActionButton>
-          </div>
-        </div>
-
-        {suggestions && (
-          suggestions.length === 0 ? (
-            <Notice kind="warn">
-              ไม่มีคาบว่างที่วางได้เลย — ลองลดจำนวนคาบติดกัน หรือไม่ระบุห้อง
-            </Notice>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 130 }}>วัน</th>
-                  <th style={{ width: 120 }}>คาบ</th>
-                  <th style={{ width: 150 }}>เลี่ยงคำขอครู</th>
-                  <th>หมายเหตุ</th>
-                  <th style={{ width: 110 }}>วางคาบนี้</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suggestions.map((s, i) => (
-                  <tr key={i}>
-                    <td>{DAY[s.day_of_week]}</td>
-                    <td>
-                      {periodLabel(s.period_from, s.period_to)}
-                    </td>
-                    <td>
-                      {s.avoids ? (
-                        <Badge kind="warn">ครูขอเลี่ยง</Badge>
-                      ) : (
-                        <Badge kind="ok">ไม่ติดคำขอ</Badge>
-                      )}
-                    </td>
-                    <td style={{ whiteSpace: 'normal' }}>{s.note ?? '—'}</td>
-                    <td>
-                      <ActionButton
-                        onRun={() =>
-                          api.post('/timetable/slots', {
-                            classSectionId: sectionId,
-                            dayOfWeek: s.day_of_week,
-                            periodFrom: s.period_from,
-                            periodTo: s.period_to,
-                            ...(roomId ? { roomId } : {}),
-                          })
-                        }
-                        onDone={() => {
-                          setSuggestions(null);
-                          conflicts.reload();
-                        }}
-                      >
-                        วาง
-                      </ActionButton>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )
-        )}
-      </Card>
+      <SectionScheduleGrid
+        sections={sections.data ?? []}
+        rooms={rooms.data ?? []}
+        termId={termId}
+        onChanged={() => conflicts.reload()}
+      />
 
       <TransferSectionForm sections={sections.data ?? []} rooms={rooms.data ?? []} staff={staff.data?.items ?? []} />
 
