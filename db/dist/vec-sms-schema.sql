@@ -3,7 +3,7 @@
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
 -- migration ล่าสุด  0088
--- ลายนิ้วมือต้นทาง  55d219d13a7a171c
+-- ลายนิ้วมือต้นทาง  b2b36fd37154c056
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์นี้มีเฉพาะโครงสร้าง ไม่มีข้อมูลใด ๆ ใช้กับระบบจริง
@@ -23007,6 +23007,16 @@ begin
       v_errors := array_append(v_errors, 'เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก');
     elsif not thai_national_id_valid(v_nat) then
       v_errors := array_append(v_errors, format('เลขประจำตัวประชาชน %s ไม่ผ่านการตรวจหลักที่ 13', v_nat));
+    -- ตรวจซ้ำกับนักศึกษาที่มีอยู่แล้ว — ไม่งั้น apply_student_import() จะไป
+    -- ชน unique constraint ของ person.national_id_hash เอาตอน insert จริง
+    -- ซึ่ง PostgreSQL คืนแค่ชื่อ constraint กลับมา ("person_institution_id_
+    -- national_id_hash_key") ไม่ใช่ข้อความที่อ่านรู้เรื่อง แล้วล้มทั้งรอบ
+    -- นำเข้าเพราะแถวเดียว (ทั้งที่ผ่านขั้นตรวจไปแล้วโดยไม่มีอะไรฟ้อง)
+    elsif p_payload ? 'national_id_hash_hex'
+      and exists (select 1 from person p
+                   where p.institution_id = p_institution_id
+                     and p.national_id_hash = decode(p_payload->>'national_id_hash_hex', 'hex')) then
+      v_errors := array_append(v_errors, format('เลขประจำตัวประชาชน %s ซ้ำกับคนที่มีอยู่แล้วในระบบ', v_nat));
     end if;
   end if;
 
@@ -23020,6 +23030,16 @@ begin
 
   if v_guardian_nat is not null and not (v_guardian_nat ~ '^\d{13}$' and thai_national_id_valid(v_guardian_nat)) then
     v_errors := array_append(v_errors, format('เลขประจำตัวประชาชนของผู้ปกครอง %s ไม่ผ่านการตรวจหลักที่ 13', v_guardian_nat));
+  end if;
+
+  -- ผู้ปกครองลงเป็นแถวใน `person` (คนละตารางกับบิดา/มารดาที่ลงใน
+  -- `student_parent` ซึ่ง last_name_th เว้นว่างได้) และ `person.last_name_th`
+  -- เป็น NOT NULL — เจอจริงว่าไฟล์บางแถวมีแค่ชื่อผู้ปกครองไม่มีนามสกุล
+  -- ถ้าไม่ตรวจตรงนี้ apply_student_import() จะไป insert ชน constraint นั้น
+  -- แล้วล้มทั้งรอบนำเข้าเพราะแถวเดียว (ตระกูลเดียวกับเลขบัตรซ้ำด้านบน)
+  if nullif(btrim(p_payload->>'guardian_first_name_th'), '') is not null
+     and nullif(btrim(p_payload->>'guardian_last_name_th'), '') is null then
+    v_errors := array_append(v_errors, 'มีชื่อผู้ปกครองแต่ไม่มีนามสกุลผู้ปกครอง');
   end if;
 
   if p_payload ? 'status'

@@ -217,6 +217,61 @@ export class ImportService {
       );
     }
 
+    // เลขประจำตัวประชาชนซ้ำกันเองภายในไฟล์เดียว (คนละแถว คนละ student_code)
+    // — validate_student_row() ตรวจได้แค่ "ซ้ำกับที่มีอยู่แล้วในฐานข้อมูล"
+    // เพราะมองทีละแถว ไม่เห็นแถวอื่นในไฟล์เดียวกัน ถ้าไม่ตรวจตรงนี้ ทั้งสอง
+    // แถวจะผ่านการตรวจแล้วไปชน unique constraint ตอน apply_student_import()
+    // insert จริง ซึ่งจะโยน error ดิบของ PostgreSQL (ชื่อ constraint ล้วน)
+    // แล้วล้มทั้งรอบนำเข้า ทั้งที่เพิ่งบอกผู้ใช้ว่า "ตรวจผ่านครบ" ไปหยก ๆ
+    if (kind === 'student') {
+      // ตรวจเงื่อนไขที่ฐานข้อมูลบังคับไว้ แต่ validator SQL รุ่นเก่าไม่รู้จัก
+      // ไว้ชั้น API เพื่อให้ migration ที่เคย deploy แล้วไม่ต้องถูกแก้ย้อนหลัง
+      // และผู้ใช้เห็นปัญหาก่อนกดนำเข้าจริง ไม่ใช่เจอชื่อ unique constraint ดิบ ๆ
+      await c.query(
+        `update import_row r
+            set errors = array_append(r.errors, 'เลขประจำตัวประชาชนซ้ำกับคนที่มีอยู่แล้วในระบบ'),
+                ok = false
+           from import_batch b
+          where b.id = r.batch_id and r.batch_id = $1
+            and r.payload ? 'national_id_hash_hex'
+            and exists (
+              select 1 from person p
+               where p.institution_id = b.institution_id
+                 and p.national_id_hash = decode(r.payload->>'national_id_hash_hex', 'hex')
+            )`,
+        [batchId],
+      );
+
+      await c.query(
+        `update import_row r
+            set errors = array_append(r.errors, 'มีชื่อผู้ปกครองแต่ไม่มีนามสกุลผู้ปกครอง'),
+                ok = false
+           where r.batch_id = $1
+             and nullif(btrim(r.payload->>'guardian_first_name_th'), '') is not null
+             and nullif(btrim(r.payload->>'guardian_last_name_th'), '') is null`,
+        [batchId],
+      );
+
+      await c.query(
+        `with dup as (
+           select row_no, national_id_hash_hex,
+                  array_agg(row_no) over (partition by national_id_hash_hex) as rows_with_same_id
+             from (select row_no, payload->>'national_id_hash_hex' as national_id_hash_hex
+                     from import_row where batch_id = $1) t
+            where national_id_hash_hex is not null
+         )
+         update import_row r
+            set errors = array_append(r.errors,
+                  format('เลขประจำตัวประชาชนซ้ำกับแถวที่ %s ในไฟล์เดียวกัน',
+                         array_to_string(array_remove(d.rows_with_same_id, d.row_no), ', '))),
+                ok = false
+           from dup d
+          where r.batch_id = $1 and r.row_no = d.row_no
+            and cardinality(d.rows_with_same_id) > 1`,
+        [batchId],
+      );
+    }
+
     await c.query(
       `update import_batch b
           set ok_rows    = s.ok_rows,
@@ -322,6 +377,17 @@ export class ImportService {
       if (!fn) {
         throw new UnprocessableEntityException(
           `ยังไม่รองรับการนำเข้าชนิด "${kind}" — ตอนนี้มีนักศึกษา บุคลากร ประวัติการเรียนเดิม และผลการเรียน`,
+        );
+      }
+
+      // ตรวจซ้ำทันทีใน transaction เดียวกับการนำเข้าจริงด้วย เพราะผลตรวจเดิม
+      // อาจล้าสมัยหลังผู้ใช้อัปโหลดไฟล์ (เช่น มีคนอื่นเพิ่มเลขบัตรเดียวกันแล้ว)
+      // และ apply_student_import() รุ่นที่ deploy อยู่ตรวจทีละแถว จึงมองไม่เห็น
+      // เลขบัตรซ้ำกันภายใน batch เอง
+      const checked = await this.validateInTx(c, batchId, kind);
+      if (Number(checked.error_rows) > 0) {
+        throw new BadRequestException(
+          `รอบนำเข้านี้มี ${checked.error_rows} แถวที่ต้องแก้ไขก่อนนำเข้าจริง`,
         );
       }
 
