@@ -6,6 +6,7 @@ import {
   Injectable,
   Module,
   NotFoundException,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
@@ -140,6 +141,18 @@ export class RegistrationService {
       blocked: results.filter((r) => r.blockers.length > 0).length,
       results,
     };
+  }
+
+  /**
+   * วิชาที่นักศึกษาคนหนึ่งยังไม่ผ่าน — ใช้กรองรายวิชาในหน้าลงทะเบียนรายคน
+   * ให้เห็นเฉพาะวิชาที่ต้องเรียนเสริม/เรียนซ้ำจริง ๆ ดูเหตุผลที่ 0089
+   */
+  async failedCourses(studentId: string) {
+    return this.db.query(
+      `select course_id, course_code, course_name, grade_symbol, term_label
+         from student_failed_courses($1)`,
+      [studentId],
+    );
   }
 
   /** หลักสูตรไหนลงทะเบียนไปแล้วกี่เปอร์เซ็นต์ — เรียงจากน้อยไปมากเพื่อให้ห้องที่ตกหล่นอยู่บนสุด */
@@ -478,6 +491,12 @@ class RegistrationController {
   @Get('progress')
   progress(@Query('termId', ParseUuidPipe) termId: string) {
     return this.svc.progress(termId);
+  }
+
+  @Roles('registrar', 'academic', 'director', 'admin')
+  @Get('students/:id/failed-courses')
+  failedCourses(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.failedCourses(id);
   }
 
   @Roles('registrar', 'academic', 'director', 'admin')

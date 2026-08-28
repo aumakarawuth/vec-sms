@@ -98,6 +98,14 @@ interface StudentRow {
   group_code: string | null;
 }
 
+interface FailedCourse {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  grade_symbol: string;
+  term_label: string;
+}
+
 interface BulkResult {
   requested: number;
   succeeded: number;
@@ -742,9 +750,18 @@ function PerStudentTab({ termId }: { termId: string }) {
   const [typed, setTyped] = useState('');
   const [q, setQ] = useState('');
   const [courseQ, setCourseQ] = useState('');
+  /*
+   * เริ่มต้นแสดงเฉพาะวิชาที่นักศึกษายังไม่ผ่าน เพราะแท็บนี้ใช้ลงทะเบียน
+   * เรียนเสริม/เรียนซ้ำเป็นหลัก — ปิดตัวกรองได้เมื่อเป็นกรณีตกค้าง/เทียบโอน
+   * ที่ยังไม่เคยลงทะเบียนวิชานั้นมาก่อนเลย ซึ่ง student_failed_courses()
+   * หาไม่เจอ (ไม่มีผลการเรียนให้ดู)
+   */
+  const [failedOnly, setFailedOnly] = useState(true);
 
+  // ไม่โหลดรายชื่อจนกว่าจะพิมพ์ค้นหา — เดิมโหลด 50 คนแรกมาให้เลือกทันที
+  // ซึ่งใช้ไม่ได้กับวิทยาลัยที่มีนักศึกษาเป็นพันคน (รูปเดียวกับ RoomList)
   const students = useAsync(
-    () => api.get<StudentRow[]>(`/students${qs({ q, limit: 50 })}`),
+    () => (q ? api.get<StudentRow[]>(`/students${qs({ q, limit: 50 })}`) : Promise.resolve([])),
     [q],
   );
   const sections = useAsync(
@@ -760,6 +777,15 @@ function PerStudentTab({ termId }: { termId: string }) {
   const [busy, setBusy] = useState(false);
 
   const student = (students.data ?? []).find((s) => s.id === studentId);
+
+  const failed = useAsync(
+    () => (studentId ? api.get<FailedCourse[]>(`/registration/students/${studentId}/failed-courses`) : Promise.resolve([])),
+    [studentId],
+  );
+  const failedByCourse = new Map((failed.data ?? []).map((f) => [f.course_id, f]));
+  const visibleSections = (sections.data ?? []).filter(
+    (s) => !failedOnly || !studentId || failedByCourse.has(s.course_id),
+  );
 
   async function run(kind: 'check' | 'register') {
     if (!termId || !studentId) return;
@@ -814,104 +840,143 @@ function PerStudentTab({ termId }: { termId: string }) {
             </form>
           }
         >
-          <AsyncView state={students} empty="ไม่พบนักศึกษาที่ตรงกับคำค้น">
-            {(rows) => (
-              <div style={{ maxHeight: 380, overflowY: 'auto' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 34 }} />
-                      <th style={{ width: 130 }}>รหัสนักศึกษา</th>
-                      <th>ชื่อ — นามสกุล</th>
-                      <th style={{ width: 90 }}>ห้อง</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((s) => (
-                      <tr key={s.id}>
-                        <td>
-                          <input
-                            type="radio"
-                            name="student"
-                            style={{ width: 'auto' }}
-                            checked={studentId === s.id}
-                            onChange={() => setStudentId(s.id)}
-                          />
-                        </td>
-                        <td className="mono">{s.student_code}</td>
-                        <td>{s.full_name}</td>
-                        <td>{s.group_code ?? '—'}</td>
+          {!q ? (
+            <div className="empty">พิมพ์รหัส ชื่อ หรือนามสกุลแล้วกด Enter เพื่อค้นหา</div>
+          ) : (
+            <AsyncView state={students} empty="ไม่พบนักศึกษาที่ตรงกับคำค้น">
+              {(rows) => (
+                <div style={{ maxHeight: 380, overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 34 }} />
+                        <th style={{ width: 130 }}>รหัสนักศึกษา</th>
+                        <th>ชื่อ — นามสกุล</th>
+                        <th style={{ width: 90 }}>ห้อง</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </AsyncView>
+                    </thead>
+                    <tbody>
+                      {rows.map((s) => (
+                        <tr key={s.id}>
+                          <td>
+                            <input
+                              type="radio"
+                              name="student"
+                              style={{ width: 'auto' }}
+                              checked={studentId === s.id}
+                              onChange={() => setStudentId(s.id)}
+                            />
+                          </td>
+                          <td className="mono">{s.student_code}</td>
+                          <td>{s.full_name}</td>
+                          <td>{s.group_code ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </AsyncView>
+          )}
         </TableCard>
 
         <TableCard
           title={`กลุ่มเรียน — เลือกแล้ว ${pickedSections.size} วิชา`}
           actions={
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-              }}
-            >
-              <Field label="">
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', fontSize: 13 }}>
                 <input
-                  placeholder="ค้นรหัส/ชื่อวิชา"
-                  value={courseQ}
-                  onChange={(e) => setCourseQ(e.target.value)}
-                  style={{ width: 200 }}
+                  type="checkbox"
+                  checked={failedOnly}
+                  onChange={(e) => setFailedOnly(e.target.checked)}
                 />
-              </Field>
-            </form>
+                เฉพาะวิชาที่ยังไม่ผ่าน
+              </label>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                }}
+              >
+                <Field label="">
+                  <input
+                    placeholder="ค้นรหัส/ชื่อวิชา"
+                    value={courseQ}
+                    onChange={(e) => setCourseQ(e.target.value)}
+                    style={{ width: 180 }}
+                  />
+                </Field>
+              </form>
+            </div>
           }
         >
-          <AsyncView state={sections} empty="ภาคเรียนนี้ยังไม่มีกลุ่มเรียน">
-            {(rows) => (
-              <div style={{ maxHeight: 380, overflowY: 'auto' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 34 }} />
-                      <th style={{ width: 110 }}>รหัสวิชา</th>
-                      <th>ชื่อวิชา</th>
-                      <th style={{ width: 70 }}>กลุ่ม</th>
-                      <th className="num" style={{ width: 80 }}>ลงแล้ว</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((s: Section) => (
-                      <tr key={s.id}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            style={{ width: 'auto' }}
-                            checked={pickedSections.has(s.id)}
-                            disabled={s.is_locked}
-                            onChange={() => setPickedSections((p) => toggle(p, s.id))}
-                          />
-                        </td>
-                        <td className="mono">{s.code}</td>
-                        <td>
-                          {s.name_th}
-                          {s.is_locked && ' (ล็อกแล้ว)'}
-                        </td>
-                        <td>{s.section_no}</td>
-                        <td className="num">
-                          <Badge kind={Number(s.enrolled) >= s.capacity ? 'danger' : 'default'}>
-                            {s.enrolled}/{s.capacity}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </AsyncView>
+          {!studentId ? (
+            <div className="empty">เลือกนักศึกษาก่อน — วิชาที่ยังไม่ผ่านของคนนั้นจะปรากฏที่นี่</div>
+          ) : failedOnly && failed.loading && failed.data === null ? (
+            <div className="loading">กำลังโหลดวิชาที่ยังไม่ผ่าน…</div>
+          ) : failedOnly && failed.data?.length === 0 ? (
+            <div className="empty">
+              นักศึกษาคนนี้ไม่มีวิชาที่ยังไม่ผ่านในระบบ — ถ้าจะลงทะเบียนกรณีตกค้างหรือเทียบโอน (ที่ยังไม่เคยมีผลการเรียน) ให้ปิดตัวกรอง “เฉพาะวิชาที่ยังไม่ผ่าน” ด้านบน
+            </div>
+          ) : (
+            <AsyncView state={sections} empty="ภาคเรียนนี้ยังไม่มีกลุ่มเรียน">
+              {() =>
+                visibleSections.length === 0 ? (
+                  <div className="empty">ไม่พบวิชาตามตัวกรอง</div>
+                ) : (
+                  <div style={{ maxHeight: 380, overflowY: 'auto' }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 34 }} />
+                          <th style={{ width: 110 }}>รหัสวิชา</th>
+                          <th>ชื่อวิชา</th>
+                          <th style={{ width: 70 }}>กลุ่ม</th>
+                          <th className="num" style={{ width: 80 }}>ลงแล้ว</th>
+                          {failedOnly && <th style={{ width: 150 }}>ผลเดิม</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleSections.map((s: Section) => {
+                          const fail = failedByCourse.get(s.course_id);
+                          return (
+                            <tr key={s.id}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  style={{ width: 'auto' }}
+                                  checked={pickedSections.has(s.id)}
+                                  disabled={s.is_locked}
+                                  onChange={() => setPickedSections((p) => toggle(p, s.id))}
+                                />
+                              </td>
+                              <td className="mono">{s.code}</td>
+                              <td>
+                                {s.name_th}
+                                {s.is_locked && ' (ล็อกแล้ว)'}
+                              </td>
+                              <td>{s.section_no}</td>
+                              <td className="num">
+                                <Badge kind={Number(s.enrolled) >= s.capacity ? 'danger' : 'default'}>
+                                  {s.enrolled}/{s.capacity}
+                                </Badge>
+                              </td>
+                              {failedOnly && (
+                                <td>
+                                  {fail && (
+                                    <Badge kind="warn">{fail.grade_symbol} · {fail.term_label}</Badge>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              }
+            </AsyncView>
+          )}
         </TableCard>
       </div>
 
