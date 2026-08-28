@@ -18,7 +18,12 @@ import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { fetchTerms } from '../core/catalog';
 import { num, thaiDate } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
+
+const ADMISSIONS_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface Round {
   id: string;
@@ -464,26 +469,30 @@ function ApplicationDetailCard({ id }: { id: string }) {
 }
 
 export function AdmissionsScreen() {
-  const rounds = useAsync(() => api.get<Round[]>('/admissions/rounds'), []);
-  const terms = useAsync(fetchTerms, []);
-  const versions = useAsync(() => api.get<VersionOption[]>('/curriculum/versions'), []);
+  const canUse = useCan(...ADMISSIONS_ROLES);
+  const rounds = useAsync(() => (canUse ? api.get<Round[]>('/admissions/rounds') : Promise.resolve([])), [canUse]);
+  const terms = useAsync(() => (canUse ? fetchTerms() : Promise.resolve([])), [canUse]);
+  const versions = useAsync(
+    () => (canUse ? api.get<VersionOption[]>('/curriculum/versions') : Promise.resolve([])),
+    [canUse],
+  );
   const [roundId, setRoundId] = useState('');
   const [status, setStatus] = useState('');
   const [detailId, setDetailId] = useState('');
 
   const applications = useAsync(
     () =>
-      roundId
+      canUse && roundId
         ? api.get<Application[]>(`/admissions/applications${qs({ roundId, status })}`)
         : Promise.resolve([]),
-    [roundId, status],
+    [canUse, roundId, status],
   );
   const summary = useAsync(
     () =>
-      roundId
+      canUse && roundId
         ? api.get<Record<string, unknown>[]>(`/admissions/rounds/${roundId}/summary`)
         : Promise.resolve([]),
-    [roundId],
+    [canUse, roundId],
   );
 
   const round = rounds.data?.find((r) => r.id === roundId);
@@ -495,6 +504,10 @@ export function AdmissionsScreen() {
     <>
       <PageHead title="งานรับสมัคร" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={ADMISSIONS_ROLES} />
+      ) : (
+      <>
       <Notice kind="info">
         ทุกขั้นตอนที่นี่เป็นงานของเจ้าหน้าที่ — ยังไม่เปิดให้ผู้สมัครกรอกใบสมัครเอง
         เพราะต้องออกแบบการยืนยันตัวตนและการกันบอทก่อน
@@ -726,6 +739,8 @@ export function AdmissionsScreen() {
             และสร้างระเบียนถาวรทันที
           </Notice>
         </>
+      )}
+      </>
       )}
     </>
   );

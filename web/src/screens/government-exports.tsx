@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
-import { AsyncView, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import { AsyncView, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
+
+const EXPORTS_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface ExportFormat {
   id: string;
@@ -36,11 +39,19 @@ const DATASETS = [
 ];
 
 export function GovernmentExportsScreen() {
-  const catalog = useAsync(() => api.get<Catalog>('/government-exports/catalog'), []);
+  const canUse = useCan(...EXPORTS_ROLES);
+  const catalog = useAsync(
+    () => (canUse ? api.get<Catalog>('/government-exports/catalog') : Promise.resolve(null as unknown as Catalog)),
+    [canUse],
+  );
   return (
     <>
       <PageHead title="ส่งออกข้อมูลให้หน่วยงานรัฐ" />
-      <AsyncView state={catalog}>{(data) => <ExportForm catalog={data} />}</AsyncView>
+      {!canUse ? (
+        <RestrictedNotice roles={EXPORTS_ROLES} />
+      ) : (
+        <AsyncView state={catalog}>{(data) => <ExportForm catalog={data} />}</AsyncView>
+      )}
     </>
   );
 }

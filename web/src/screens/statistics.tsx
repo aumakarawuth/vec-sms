@@ -7,7 +7,11 @@
  */
 import { api } from '../core/api';
 import { num } from '../core/fmt';
-import { AsyncView, Card, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import { AsyncView, Card, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
+
+/** /reports/* ผูก @Roles ไว้ทั้งคอนโทรลเลอร์ — เช็คเดียวกับ /grade-reports */
+const REPORTS_ROLES: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin'];
 
 interface Summary {
   students: { total: number; active: number; onLeave: number; suspended: number; graduated: number; withdrawn: number };
@@ -35,13 +39,25 @@ function Stat({ title, value, note, tone }: { title: string; value: string; note
 }
 
 export function StatisticsScreen() {
-  const summary = useAsync(() => api.get<Summary>('/reports/summary'), []);
-  const byCurriculum = useAsync(() => api.get<CurriculumRow[]>('/reports/by-curriculum'), []);
+  const canUse = useCan(...REPORTS_ROLES);
+  // ไม่ยิงถ้าไม่มีสิทธิ์ — คืนค่าหลอกเมื่อ !canUse เพราะไม่มีวันถูก AsyncView อ่านจริง (อยู่นอกกิ่งที่เรนเดอร์)
+  const summary = useAsync(
+    () => (canUse ? api.get<Summary>('/reports/summary') : Promise.resolve(null as unknown as Summary)),
+    [canUse],
+  );
+  const byCurriculum = useAsync(
+    () => (canUse ? api.get<CurriculumRow[]>('/reports/by-curriculum') : Promise.resolve([])),
+    [canUse],
+  );
 
   return (
     <>
       <PageHead title="ข้อมูลสถิติ" sub="ภาพรวมของทั้งวิทยาลัย ณ ขณะนี้ — ตัวเลขจากฐานข้อมูลจริง ไม่ใช่ตัวอย่าง" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={REPORTS_ROLES} />
+      ) : (
+      <>
       <AsyncView state={summary}>
         {(s) => (
           <>
@@ -119,6 +135,8 @@ export function StatisticsScreen() {
           )}
         </AsyncView>
       </TableCard>
+      </>
+      )}
     </>
   );
 }

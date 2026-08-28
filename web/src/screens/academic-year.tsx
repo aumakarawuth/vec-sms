@@ -12,13 +12,21 @@
  * ฟังก์ชันจึงคืนผลรายคนแทนการ raise เหมือนการลงทะเบียนเป็นกลุ่ม
  */
 import { useState } from 'react';
-import { api, qs } from '../core/api';
+import { api, emptyPage, qs } from '../core/api';
 import { href } from '../core/router';
 import { useScope } from '../core/scope';
 import { termLabel, type Term } from '../core/catalog';
 import { TERM_STATUS, thaiDate, thaiDateTime } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
 import { useTermPicker } from '../ui/term-picker';
+
+/** /rollover ผูก registrar/director/admin (ไม่มี academic) — เข้มกว่า /academic/* ทั่วไป */
+const ACADEMIC_YEAR_ROLES: Role[] = ['registrar', 'director', 'admin'];
+/** /timetable/rooms, /staff, /class-groups ผูก registrar/academic/director/admin เหมือนกันหมด */
+const OFFICE_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface RolloverLog {
   id: string;
@@ -866,9 +874,13 @@ function CopyGradebooksCard({ terms }: { terms: Term[] }) {
 }
 
 export function AcademicYearScreen() {
+  const canUse = useCan(...ACADEMIC_YEAR_ROLES);
   const { terms } = useTermPicker();
-  const rollovers = useAsync(() => api.get<RolloverLog[]>('/rollover'), []);
-  const academicYears = useAsync(() => api.get<AcademicYear[]>('/academic/years'), []);
+  const rollovers = useAsync(() => (canUse ? api.get<RolloverLog[]>('/rollover') : Promise.resolve([])), [canUse]);
+  const academicYears = useAsync(
+    () => (canUse ? api.get<AcademicYear[]>('/academic/years') : Promise.resolve([])),
+    [canUse],
+  );
 
   const [fromYear, setFromYear] = useState('2569');
   const [toYear, setToYear] = useState('2570');
@@ -889,6 +901,10 @@ export function AcademicYearScreen() {
         }
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={ACADEMIC_YEAR_ROLES} />
+      ) : (
+      <>
       <TableCard title="ภาคเรียนทั้งหมด">
         <AsyncView state={terms} empty="ยังไม่มีภาคเรียนในระบบ">
           {(rows) => (
@@ -1045,6 +1061,8 @@ export function AcademicYearScreen() {
           <a href={href('/academic-year/classes')} className="button">ไปหน้าจัดห้องเรียน →</a>
         </div>
       </Card>
+      </>
+      )}
     </>
   );
 }
@@ -1059,10 +1077,17 @@ export function AcademicYearScreen() {
  * กลุ่มเรียนจริง ๆ
  */
 export function AcademicSectionsScreen() {
+  const canUse = useCan(...OFFICE_ROLES);
   const { terms } = useTermPicker();
-  const courses = useAsync(() => api.get<CourseRow[]>('/curriculum/courses'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
-  const rooms = useAsync(() => api.get<RoomRow[]>('/timetable/rooms'), []);
+  const courses = useAsync(
+    () => (canUse ? api.get<CourseRow[]>('/curriculum/courses') : Promise.resolve([])),
+    [canUse],
+  );
+  const staff = useAsync(
+    () => (canUse ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canUse],
+  );
+  const rooms = useAsync(() => (canUse ? api.get<RoomRow[]>('/timetable/rooms') : Promise.resolve([])), [canUse]);
 
   return (
     <>
@@ -1072,6 +1097,10 @@ export function AcademicSectionsScreen() {
         actions={<a href={href('/academic-year')}>← งานวิชาการรายปี</a>}
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={OFFICE_ROLES} />
+      ) : (
+      <>
       <CreateSectionForm
         terms={terms.data ?? []}
         courses={courses.data ?? []}
@@ -1088,6 +1117,8 @@ export function AcademicSectionsScreen() {
           <a href={href('/timetable')} className="button">ไปหน้าจัดตารางสอน →</a>
         </div>
       </Card>
+      </>
+      )}
     </>
   );
 }
@@ -1096,10 +1127,20 @@ export function AcademicSectionsScreen() {
  * หน้าจอแยก: เปิดรอบสอบซ่อม/เรียนปรับเกรด — ดูเหตุผลการแยกที่ AcademicSectionsScreen
  */
 export function RemedialScreen() {
+  const canUse = useCan(...OFFICE_ROLES);
   const { terms } = useTermPicker();
-  const courses = useAsync(() => api.get<CourseRow[]>('/curriculum/courses'), []);
-  const gradeSymbols = useAsync(() => api.get<GradeSymbol[]>('/gradebook/grade-symbols'), []);
-  const sessions = useAsync(() => api.get<RegradeSession[]>('/regrade/sessions'), []);
+  const courses = useAsync(
+    () => (canUse ? api.get<CourseRow[]>('/curriculum/courses') : Promise.resolve([])),
+    [canUse],
+  );
+  const gradeSymbols = useAsync(
+    () => (canUse ? api.get<GradeSymbol[]>('/gradebook/grade-symbols') : Promise.resolve([])),
+    [canUse],
+  );
+  const sessions = useAsync(
+    () => (canUse ? api.get<RegradeSession[]>('/regrade/sessions') : Promise.resolve([])),
+    [canUse],
+  );
   const [sessionId, setSessionId] = useState('');
 
   return (
@@ -1110,6 +1151,10 @@ export function RemedialScreen() {
         actions={<a href={href('/academic-year')}>← งานวิชาการรายปี</a>}
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={OFFICE_ROLES} />
+      ) : (
+      <>
       <CreateRegradeSessionForm terms={terms.data ?? []} onDone={() => sessions.reload()} />
 
       <TableCard title="รอบสอบซ่อมและเรียนปรับเกรด">
@@ -1169,15 +1214,21 @@ export function RemedialScreen() {
         ยื่นเป็นคำร้องผ่านทางเดิมที่ต้องมีผู้อนุมัติสองคน ดูที่หน้า “คำร้องขอแก้เกรด”
         ถ้าเปิดทางที่สอง ใครที่สร้างรอบสอบซ่อมได้จะแก้เกรดใครก็ได้โดยไม่ต้องผ่านใครเลย
       </Notice>
+      </>
+      )}
     </>
   );
 }
 
 /** หน้าจอแยก: สร้างห้องก่อน แล้วจึงนำรายชื่อนักศึกษาเข้าห้องในอีกหน้าหนึ่ง */
 export function AcademicClassroomScreen() {
-  const years = useAsync(() => api.get<AcademicYear[]>('/academic/years'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
-  const groups = useAsync(() => api.get<ClassGroup[]>('/class-groups'), []);
+  const canUse = useCan(...OFFICE_ROLES);
+  const years = useAsync(() => (canUse ? api.get<AcademicYear[]>('/academic/years') : Promise.resolve([])), [canUse]);
+  const staff = useAsync(
+    () => (canUse ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canUse],
+  );
+  const groups = useAsync(() => (canUse ? api.get<ClassGroup[]>('/class-groups') : Promise.resolve([])), [canUse]);
   const [academicYearId, setAcademicYearId] = useState('');
   const [level, setLevel] = useState('PVC');
   const [studyYear, setStudyYear] = useState('1');
@@ -1188,6 +1239,10 @@ export function AcademicClassroomScreen() {
 
   return <>
     <PageHead title="จัดชั้นปีและห้อง" sub="สร้างห้องประจำชั้น เช่น ปวช.1 / CA.1/1 แยกจากห้องกายภาพสำหรับตารางสอน" actions={<a href={href('/academic-year/placements')}>จัดนักศึกษาเข้าห้อง →</a>} />
+    {!canUse ? (
+      <RestrictedNotice roles={OFFICE_ROLES} />
+    ) : (
+    <>
     <Card title="สร้างห้องประจำชั้นใหม่">
       <div className="row">
         <Field label="ปีการศึกษา"><select value={academicYearId} onChange={(e) => setAcademicYearId(e.target.value)}><option value="">— เลือกปีการศึกษา —</option>{(years.data ?? []).map((year) => <option key={year.id} value={year.id}>{year.year_be}</option>)}</select></Field>
@@ -1208,6 +1263,8 @@ export function AcademicClassroomScreen() {
         {items.map((group) => <ClassGroupRow key={group.id} group={group} onDone={() => groups.reload()} />)}
       </tbody></table>}</AsyncView>
     </TableCard>
+    </>
+    )}
   </>;
 }
 
@@ -1267,15 +1324,20 @@ function ClassGroupRow({ group, onDone }: { group: ClassGroup; onDone: () => voi
 
 /** หน้าจอแยก: จัดรายชื่อนักศึกษาเข้าชั้นปี/ห้องหลังจากสร้างห้องแล้ว */
 export function AcademicPlacementScreen() {
+  const canUse = useCan(...ACADEMIC_YEAR_ROLES);
   const scope = useScope();
   const ayId = scope.yearId;
   const placements = useAsync(
-    () => ayId ? api.get<Placement[]>(`/rollover/placements${qs({ academicYearId: ayId })}`) : Promise.resolve([]),
-    [ayId],
+    () => (canUse && ayId ? api.get<Placement[]>(`/rollover/placements${qs({ academicYearId: ayId })}`) : Promise.resolve([])),
+    [canUse, ayId],
   );
 
   return <>
     <PageHead title="จัดห้องเรียน" sub="ค้นหารายชื่อ เลือกนักศึกษา แล้วกำหนดชั้นปีและห้องเรียน" actions={<a href={href('/academic-year/classes')}>จัดการห้องประจำชั้น</a>} />
+    {!canUse ? (
+      <RestrictedNotice roles={ACADEMIC_YEAR_ROLES} />
+    ) : (
+    <>
     {!ayId && <Notice kind="info">ยังไม่มีปีการศึกษาในส่วนหัวของระบบ ให้ผู้ดูแลเพิ่มปีการศึกษาก่อนจึงจะจัดห้องได้</Notice>}
     {ayId && <PlaceStudentsForm academicYearId={ayId} onDone={() => placements.reload()} />}
     {ayId && <RenumberClassNumbersCard academicYearId={ayId} placements={placements.data ?? []} onDone={() => placements.reload()} />}
@@ -1286,6 +1348,8 @@ export function AcademicPlacementScreen() {
         </tbody></table>}
       </AsyncView>
     </TableCard>}
+    </>
+    )}
   </>;
 }
 

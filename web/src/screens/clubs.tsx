@@ -5,10 +5,13 @@
  * กิจกรรม — ที่นี่บันทึกได้แค่ชื่อชมรม ผู้ดูแล และสมาชิกรายปีการศึกษา
  */
 import { useState } from 'react';
-import { api, qs } from '../core/api';
+import { api, emptyPage, qs } from '../core/api';
 import { fetchTerms } from '../core/catalog';
 import { thaiDate } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import { ActionButton, AsyncView, Badge, Card, Field, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
+
+const CLUBS_ROLES: Role[] = ['registrar', 'academic', 'student_affairs', 'director', 'admin'];
 
 interface Club {
   id: string;
@@ -150,9 +153,13 @@ function AddMemberCard({
 }
 
 export function ClubsScreen() {
-  const clubs = useAsync(() => api.get<Club[]>('/clubs'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
-  const terms = useAsync(fetchTerms, []);
+  const canUse = useCan(...CLUBS_ROLES);
+  const clubs = useAsync(() => (canUse ? api.get<Club[]>('/clubs') : Promise.resolve([])), [canUse]);
+  const staff = useAsync(
+    () => (canUse ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canUse],
+  );
+  const terms = useAsync(() => (canUse ? fetchTerms() : Promise.resolve([])), [canUse]);
   const [clubId, setClubId] = useState('');
   const [academicYearId, setAcademicYearId] = useState('');
 
@@ -161,8 +168,8 @@ export function ClubsScreen() {
   ).values()].sort((a, b) => b.year_be - a.year_be);
 
   const members = useAsync(
-    () => (clubId ? api.get<Member[]>(`/clubs/${clubId}/members${qs({ academicYearId })}`) : Promise.resolve([])),
-    [clubId, academicYearId],
+    () => (canUse && clubId ? api.get<Member[]>(`/clubs/${clubId}/members${qs({ academicYearId })}`) : Promise.resolve([])),
+    [canUse, clubId, academicYearId],
   );
 
   const club = clubs.data?.find((c) => c.id === clubId);
@@ -171,6 +178,10 @@ export function ClubsScreen() {
     <>
       <PageHead title="วิชาชุมนุม/ชมรม" sub="บันทึกพื้นฐาน — ชื่อชมรม ผู้ดูแล และสมาชิกรายปีการศึกษา" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={CLUBS_ROLES} />
+      ) : (
+      <>
       <AsyncView state={staff}>
         {(page) => <CreateClubCard staff={page.items} onDone={() => clubs.reload()} />}
       </AsyncView>
@@ -270,6 +281,8 @@ export function ClubsScreen() {
             </AsyncView>
           </TableCard>
         </>
+      )}
+      </>
       )}
     </>
   );

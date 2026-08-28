@@ -8,7 +8,10 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
 import { num } from '../core/fmt';
-import { Card, Field, Notice, PageHead, TableCard } from '../ui/kit';
+import type { Role } from '../core/session';
+import { Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useCan } from '../ui/kit';
+
+const ONET_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface ResultRow {
   studentCode: string;
@@ -50,6 +53,7 @@ function parse(text: string): { rows: ResultRow[]; bad: number } {
 }
 
 export function OnetScreen() {
+  const canUse = useCan(...ONET_ROLES);
   const [text, setText] = useState('');
   const [examYearBe, setExamYearBe] = useState('2569');
   const [result, setResult] = useState<BulkOutcome | null>(null);
@@ -86,6 +90,10 @@ export function OnetScreen() {
     <>
       <PageHead title="ผลสอบ O-NET / V-NET" sub="โครงตารางทั่วไป — ยังไม่ได้เทียบกับรูปแบบไฟล์จริงที่หน่วยงานส่งมา" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={ONET_ROLES} />
+      ) : (
+      <>
       <Notice kind="info">
         รูปแบบยังเป็นแบบทั่วไป (รหัสนักศึกษา + ปีที่สอบ + รหัส/ชื่อวิชา + คะแนน) เมื่อมีไฟล์ผลสอบจริงจาก
         สอศ./สทศ. ให้ปรับตัวอ่านให้ตรงกับคอลัมน์ในไฟล์นั้นแทน
@@ -187,6 +195,8 @@ export function OnetScreen() {
           )
         )}
       </TableCard>
+      </>
+      )}
     </>
   );
 }

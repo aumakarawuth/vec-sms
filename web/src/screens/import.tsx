@@ -20,7 +20,12 @@ import { mapGradeImportRow } from '../core/grade-import-template';
 import { useScope } from '../core/scope';
 import { isBlankSisaCsvRow, mapSisaCsvRow } from '../core/student-import-sisa-csv-template';
 import { isBlankStudentRow, mapStudentImportRow, STUDENT_IMPORT_DATA_START_ROW } from '../core/student-import-template';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
+
+const IMPORT_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 import { readXlsxFirstSheet } from '../core/xlsx';
 
 interface Problem {
@@ -68,6 +73,7 @@ const TEMPLATE: Record<string, string> = {
 type ImportRow = { rowNo: number; payload: Record<string, string> };
 
 export function ImportScreen() {
+  const canUse = useCan(...IMPORT_ROLES);
   const scope = useScope();
   const admittedYearBe = scope.year ? String(scope.year.year_be) : '';
   const [kind, setKind] = useState('student');
@@ -83,7 +89,10 @@ export function ImportScreen() {
   const [skippedGradeRows, setSkippedGradeRows] = useState(0);
   const [lastFileUsedScopeYear, setLastFileUsedScopeYear] = useState(false);
 
-  const batches = useAsync(() => api.get<Batch[]>(`/import${qs({ kind })}`), [kind]);
+  const batches = useAsync(
+    () => (canUse ? api.get<Batch[]>(`/import${qs({ kind })}`) : Promise.resolve([])),
+    [canUse, kind],
+  );
 
   const rows = excelRows;
   const fileDisabled = fileBusy;
@@ -214,6 +223,10 @@ export function ImportScreen() {
     <>
       <PageHead title="นำเข้าข้อมูล" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={IMPORT_ROLES} />
+      ) : (
+      <>
       <Card title="วางข้อมูลจากตาราง">
         <div className="row">
           <Field label="ชนิดข้อมูล">
@@ -430,6 +443,8 @@ export function ImportScreen() {
           )}
         </AsyncView>
       </TableCard>
+      </>
+      )}
     </>
   );
 }

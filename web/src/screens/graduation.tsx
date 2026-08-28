@@ -12,9 +12,14 @@
  * แม้ผลการเรียนจะถูกแก้ภายหลังด้วยคำร้อง (หลักข้อ 5)
  */
 import { useState } from 'react';
-import { api } from '../core/api';
+import { api, emptyPage } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
+
+const GRADUATION_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface Approval {
   id: string;
@@ -299,10 +304,23 @@ function CompletedOnEditor({ studentId }: { studentId: string }) {
 }
 
 export function GraduationScreen() {
-  const approvals = useAsync(() => api.get<Approval[]>('/graduation/approvals'), []);
-  const students = useAsync(() => api.get<StudentRow[]>('/students?limit=200'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
-  const versions = useAsync(() => api.get<VersionOption[]>('/curriculum/versions'), []);
+  const canUse = useCan(...GRADUATION_ROLES);
+  const approvals = useAsync(
+    () => (canUse ? api.get<Approval[]>('/graduation/approvals') : Promise.resolve([])),
+    [canUse],
+  );
+  const students = useAsync(
+    () => (canUse ? api.get<StudentRow[]>('/students?limit=200') : Promise.resolve([])),
+    [canUse],
+  );
+  const staff = useAsync(
+    () => (canUse ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canUse],
+  );
+  const versions = useAsync(
+    () => (canUse ? api.get<VersionOption[]>('/curriculum/versions') : Promise.resolve([])),
+    [canUse],
+  );
 
   const [studentId, setStudentId] = useState('');
   const [approvedOn, setApprovedOn] = useState(new Date().toISOString().slice(0, 10));
@@ -312,12 +330,18 @@ export function GraduationScreen() {
   const [surveyFor, setSurveyFor] = useState('');
   const [approvalId, setApprovalId] = useState('');
 
-  const surveyCandidates = useAsync(() => api.get<SurveyCandidate[]>('/graduation/survey/candidates'), []);
-  const surveySummary = useAsync(() => api.get<SurveySummaryRow[]>('/graduation/survey/summary'), []);
+  const surveyCandidates = useAsync(
+    () => (canUse ? api.get<SurveyCandidate[]>('/graduation/survey/candidates') : Promise.resolve([])),
+    [canUse],
+  );
+  const surveySummary = useAsync(
+    () => (canUse ? api.get<SurveySummaryRow[]>('/graduation/survey/summary') : Promise.resolve([])),
+    [canUse],
+  );
 
   const rules = useAsync(
-    () => (studentId ? api.get<Rule[]>(`/students/${studentId}/graduation`) : Promise.resolve([])),
-    [studentId],
+    () => (canUse && studentId ? api.get<Rule[]>(`/students/${studentId}/graduation`) : Promise.resolve([])),
+    [canUse, studentId],
   );
 
   const blocking = (rules.data ?? []).filter((r) => r.is_blocking && !r.satisfied);
@@ -326,6 +350,10 @@ export function GraduationScreen() {
     <>
       <PageHead title="สำเร็จการศึกษา" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={GRADUATION_ROLES} />
+      ) : (
+      <>
       <Card title="ตรวจเกณฑ์การจบรายคน">
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
@@ -598,6 +626,8 @@ export function GraduationScreen() {
           candidate={surveyCandidates.data.find((c) => c.student_id === surveyFor)!}
           onDone={() => { setSurveyFor(''); surveyCandidates.reload(); surveySummary.reload(); }}
         />
+      )}
+      </>
       )}
     </>
   );

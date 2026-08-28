@@ -14,11 +14,14 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
+import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead,
-  PrintButton, PrintPaperControl, printQuery, readPrintPaper, TableCard,
-  useAsync, type PrintPaper,
+  PrintButton, PrintPaperControl, printQuery, readPrintPaper, RestrictedNotice, TableCard,
+  useAsync, useCan, type PrintPaper,
 } from '../ui/kit';
+
+const DOCUMENTS_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 const KIND: Record<string, string> = {
   transcript: 'ระเบียนแสดงผลการเรียน (รบ.)',
@@ -45,6 +48,7 @@ interface Doc {
 }
 
 export function DocumentsScreen() {
+  const canUse = useCan(...DOCUMENTS_ROLES);
   const [q, setQ] = useState('');
   const [studentId, setStudentId] = useState('');
   const [kind, setKind] = useState('transcript');
@@ -52,12 +56,12 @@ export function DocumentsScreen() {
   const [paper, setPaper] = useState<PrintPaper>(readPrintPaper);
 
   const students = useAsync(
-    () => api.get<StudentRow[]>(`/students?limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`),
-    [q],
+    () => (canUse ? api.get<StudentRow[]>(`/students?limit=200${q ? `&q=${encodeURIComponent(q)}` : ''}`) : Promise.resolve([])),
+    [canUse, q],
   );
   const docs = useAsync(
-    () => (studentId ? api.get<Doc[]>(`/documents/students/${studentId}`) : Promise.resolve([])),
-    [studentId],
+    () => (canUse && studentId ? api.get<Doc[]>(`/documents/students/${studentId}`) : Promise.resolve([])),
+    [canUse, studentId],
   );
 
   const student = students.data?.find((s) => s.id === studentId);
@@ -66,6 +70,10 @@ export function DocumentsScreen() {
     <>
       <PageHead title="ออกเอกสารการศึกษา" />
 
+      {!canUse ? (
+        <RestrictedNotice roles={DOCUMENTS_ROLES} />
+      ) : (
+      <>
       <Card>
         <div className="row">
           <Field label="ค้นหานักศึกษา">
@@ -183,6 +191,8 @@ export function DocumentsScreen() {
             แม้ผลการเรียนจะเปลี่ยนภายหลัง
           </Notice>
         </>
+      )}
+      </>
       )}
     </>
   );

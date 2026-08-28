@@ -16,8 +16,14 @@
 import { Fragment, useState } from 'react';
 import { api, qs } from '../core/api';
 import { fetchSections, termLabel, type Section, type Term } from '../core/catalog';
-import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync, type Async } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  AsyncView, Badge, Card, Notice, PageHead, PrintButton, RestrictedNotice, TableCard, useAsync, useCan, type Async,
+} from '../ui/kit';
 import { useTermPicker } from '../ui/term-picker';
+
+/** ทั้งคอนโทรลเลอร์ /reports/* (รวม /grades /failing-students /curriculum-check /weekly-attendance) ผูก @Roles ไว้ทั้งชุด */
+const REPORTS_ROLES: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin'];
 
 interface GradeRow {
   student_code: string;
@@ -278,6 +284,7 @@ function WeeklyAttendanceCard({ terms }: { terms: Async<Term[]> }) {
 type Scope = 'term' | 'year' | 'all';
 
 export function GradeReportsScreen() {
+  const canUse = useCan(...REPORTS_ROLES);
   const { terms, termId, term, setTerm } = useTermPicker();
   const [scope, setScope] = useState<Scope>('term');
   const [onlyFailed, setOnlyFailed] = useState(false);
@@ -294,17 +301,25 @@ export function GradeReportsScreen() {
 
   const grades = useAsync(
     () =>
-      scopeReady
+      canUse && scopeReady
         ? api.get<GradeRow[]>(`/reports/grades${qs({ ...scopeQuery, onlyFailed: onlyFailed ? 'true' : undefined })}`)
         : Promise.resolve([]),
-    [scope, termId, term?.academic_year_id, onlyFailed],
+    [canUse, scope, termId, term?.academic_year_id, onlyFailed],
   );
 
-  const failing = useAsync(() => api.get<FailingRow[]>('/reports/failing-students'), []);
+  const failing = useAsync(
+    () => (canUse ? api.get<FailingRow[]>('/reports/failing-students') : Promise.resolve([])),
+    [canUse],
+  );
 
   return (
     <>
       <PageHead title="รายงานผลการเรียน" sub="ดูผลการเรียนตามขอบเขตที่เลือก และรายชื่อนักศึกษาที่ยังไม่ผ่านเกณฑ์" />
+
+      {!canUse ? (
+        <RestrictedNotice roles={REPORTS_ROLES} />
+      ) : (
+      <>
 
       <Card title="เลือกขอบเขต">
         <div className="row" style={{ alignItems: 'end' }}>
@@ -471,6 +486,8 @@ export function GradeReportsScreen() {
       <CurriculumCheckCard />
 
       <WeeklyAttendanceCard terms={terms} />
+      </>
+      )}
     </>
   );
 }
