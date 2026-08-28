@@ -11,11 +11,17 @@
  * ไว้ตั้งแต่ก่อนบันทึกเสมอ (exam_conflicts() — ดู 0075/0076)
  */
 import { useState } from 'react';
-import { api, qs } from '../core/api';
+import { api, emptyPage, qs } from '../core/api';
 import { fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { thaiDate } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync, useCan,
+} from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
+
+/** สร้าง/แก้/ยกเลิกตารางสอบและจัดกรรมการคุมสอบเป็นงานของทะเบียน/วิชาการเท่านั้น — ดู GET ที่เปิดกว้างกว่านี้ */
+const EXAM_WRITE_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
 interface Room {
   id: string;
@@ -140,8 +146,8 @@ function CreateExamForm({
 }
 
 function ProctorList({
-  session, staff, onDone,
-}: { session: ExamSession; staff: StaffRow[]; onDone: () => void }) {
+  session, staff, canWrite, onDone,
+}: { session: ExamSession; staff: StaffRow[]; canWrite: boolean; onDone: () => void }) {
   const [staffId, setStaffId] = useState('');
   const assigned = new Set(session.proctors.map((p) => p.staffId));
   const available = staff.filter((s) => !assigned.has(s.id));
@@ -151,32 +157,38 @@ function ProctorList({
       {session.proctors.map((p) => (
         <span key={p.staffId} className="badge default" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
           {p.fullName}
-          <ActionButton
-            className="ghost"
-            confirm={`เอา ${p.fullName} ออกจากกรรมการคุมสอบนี้ ยืนยันหรือไม่`}
-            onRun={() => api.del(`/exam-schedule/${session.id}/proctors/${p.staffId}`)}
-            onDone={onDone}
-          >
-            ×
-          </ActionButton>
+          {canWrite && (
+            <ActionButton
+              className="ghost"
+              confirm={`เอา ${p.fullName} ออกจากกรรมการคุมสอบนี้ ยืนยันหรือไม่`}
+              onRun={() => api.del(`/exam-schedule/${session.id}/proctors/${p.staffId}`)}
+              onDone={onDone}
+            >
+              ×
+            </ActionButton>
+          )}
         </span>
       ))}
       {session.proctors.length === 0 && <span className="hint">ยังไม่มีกรรมการคุมสอบ</span>}
-      <select value={staffId} onChange={(e) => setStaffId(e.target.value)} style={{ maxWidth: 220 }}>
-        <option value="">— เพิ่มกรรมการ —</option>
-        {available.map((s) => (
-          <option key={s.id} value={s.id}>{s.full_name} ({s.staff_code})</option>
-        ))}
-      </select>
-      <ActionButton
-        onRun={() => {
-          if (!staffId) throw new Error('เลือกกรรมการก่อน');
-          return api.post(`/exam-schedule/${session.id}/proctors`, { staffId });
-        }}
-        onDone={() => { setStaffId(''); onDone(); }}
-      >
-        เพิ่ม
-      </ActionButton>
+      {canWrite && (
+        <>
+          <select value={staffId} onChange={(e) => setStaffId(e.target.value)} style={{ maxWidth: 220 }}>
+            <option value="">— เพิ่มกรรมการ —</option>
+            {available.map((s) => (
+              <option key={s.id} value={s.id}>{s.full_name} ({s.staff_code})</option>
+            ))}
+          </select>
+          <ActionButton
+            onRun={() => {
+              if (!staffId) throw new Error('เลือกกรรมการก่อน');
+              return api.post(`/exam-schedule/${session.id}/proctors`, { staffId });
+            }}
+            onDone={() => { setStaffId(''); onDone(); }}
+          >
+            เพิ่ม
+          </ActionButton>
+        </>
+      )}
     </div>
   );
 }
@@ -248,8 +260,8 @@ function ExamEditRow({
 }
 
 function ExamRow({
-  session, rooms, staff, onDone,
-}: { session: ExamSession; rooms: Room[]; staff: StaffRow[]; onDone: () => void }) {
+  session, rooms, staff, canWrite, onDone,
+}: { session: ExamSession; rooms: Room[]; staff: StaffRow[]; canWrite: boolean; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
   const periodLabel = usePeriodLabel();
 
@@ -274,27 +286,36 @@ function ExamRow({
         {session.note && <div className="hint">{session.note}</div>}
       </td>
       <td>{session.room_code ? `${session.room_code} ${session.room_name}` : <span className="hint">— ไม่ระบุห้อง —</span>}</td>
-      <td><ProctorList session={session} staff={staff} onDone={onDone} /></td>
+      <td><ProctorList session={session} staff={staff} canWrite={canWrite} onDone={onDone} /></td>
       <td>
-        <button className="ghost" onClick={() => setEditing(true)}>แก้ไข</button>{' '}
-        <ActionButton
-          className="ghost"
-          confirm={`ยกเลิกตารางสอบวิชา ${session.course_code} วันที่ ${thaiDate(session.exam_date)} ยืนยันหรือไม่`}
-          onRun={() => api.del(`/exam-schedule/${session.id}`)}
-          onDone={onDone}
-        >
-          ยกเลิก
-        </ActionButton>
+        {canWrite ? (
+          <>
+            <button className="ghost" onClick={() => setEditing(true)}>แก้ไข</button>{' '}
+            <ActionButton
+              className="ghost"
+              confirm={`ยกเลิกตารางสอบวิชา ${session.course_code} วันที่ ${thaiDate(session.exam_date)} ยืนยันหรือไม่`}
+              onRun={() => api.del(`/exam-schedule/${session.id}`)}
+              onDone={onDone}
+            >
+              ยกเลิก
+            </ActionButton>
+          </>
+        ) : '—'}
       </td>
     </tr>
   );
 }
 
 export function ExamScheduleScreen() {
+  const canWrite = useCan(...EXAM_WRITE_ROLES);
   const { terms, termId, term, setTerm } = useTermPicker();
   const sections = useAsync(() => (termId ? fetchSections(termId) : Promise.resolve([])), [termId]);
-  const rooms = useAsync(() => api.get<Room[]>('/timetable/rooms'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
+  // /timetable/rooms กับ /staff ต้องใช้แค่ตอนสร้าง/แก้ตารางสอบ — ไม่ยิงถ้าดูได้อย่างเดียว เพราะรู้อยู่แล้วว่าจะโดน 403
+  const rooms = useAsync(() => (canWrite ? api.get<Room[]>('/timetable/rooms') : Promise.resolve([])), [canWrite]);
+  const staff = useAsync(
+    () => (canWrite ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canWrite],
+  );
   const exams = useAsync(
     () => (termId ? api.get<ExamSession[]>(`/exam-schedule${qs({ termId })}`) : Promise.resolve([])),
     [termId],
@@ -310,13 +331,15 @@ export function ExamScheduleScreen() {
 
       {!termId && <Notice kind="info">เลือกภาคเรียนก่อน</Notice>}
 
-      {termId && (
+      {termId && (canWrite ? (
         <CreateExamForm
           sections={sections.data ?? []}
           rooms={rooms.data ?? []}
           onDone={() => exams.reload()}
         />
-      )}
+      ) : (
+        <Notice kind="info">การจัดตารางสอบเป็นงานของทะเบียน/วิชาการ — ดูตารางสอบที่จัดไว้แล้วได้ตามปกติด้านล่าง</Notice>
+      ))}
 
       {termId && (
         <TableCard title={`ตารางสอบที่จัดไว้แล้ว${term ? ` — ภาคเรียนที่ ${term.ordinal}/${term.year_be}` : ''}`}>
@@ -341,6 +364,7 @@ export function ExamScheduleScreen() {
                       session={x}
                       rooms={rooms.data ?? []}
                       staff={staff.data?.items ?? []}
+                      canWrite={canWrite}
                       onDone={() => exams.reload()}
                     />
                   ))}

@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { ApiError, api } from '../core/api';
+import { ROLE_LABEL, useSession, type Role } from '../core/session';
 
 /* ─── การโหลดข้อมูล ─────────────────────────────────────────────── */
 
@@ -262,6 +263,33 @@ export function ActionButton({
   );
 }
 
+/* ─── สิทธิ์ตามบทบาท ────────────────────────────────────────────── */
+
+/**
+ * ซ่อนฟอร์มที่ผู้ใช้กดแล้วได้ 403 แน่ ๆ
+ *
+ * ─── นี่ไม่ใช่มาตรการความปลอดภัย ───
+ * สิทธิ์จริงบังคับที่ `@Roles` ของ API และนโยบาย RLS ของฐานข้อมูล ซึ่ง
+ * ทำงานต่อให้ยิงตรงข้ามหน้าจอไปเลย ที่ทำตรงนี้คือไม่วางฟอร์มที่กดแล้วล้ม
+ * เสมอไว้ให้ผู้ใช้ — เดิมมีแค่สำเนาเดียวใน student-record.tsx จนหน้า
+ * ตารางสอน/ตารางสอบ/ภาระงานเปิดให้ทุกบทบาทเห็นฟอร์มแบบเดียวกัน แล้วปล่อยให้
+ * ข้อความ 403 ดิบจาก API หลุดออกมาแทนตาราง (หรือแย่กว่านั้นคือเงียบเป็น 0
+ * โดยไม่บอกเหตุผล) — ย้ายมาไว้ที่นี่ที่เดียวเพื่อให้ทุกหน้าจอเรียกซ้ำได้
+ */
+export function useCan(...roles: Role[]): boolean {
+  const { role } = useSession();
+  return role != null && roles.includes(role);
+}
+
+/** ข้อความแทนฟอร์ม/ตารางที่บทบาทปัจจุบันใช้ไม่ได้ — บอกว่าใครทำได้แทนการโชว์ 403 ดิบ */
+export function RestrictedNotice({ roles, children }: { roles: Role[]; children?: ReactNode }) {
+  return (
+    <Notice kind="info">
+      {children ?? `หน้านี้เป็นงานของ${roles.map((r) => ROLE_LABEL[r]).join(' · ')} — บทบาทของคุณใช้ฟังก์ชันนี้ไม่ได้`}
+    </Notice>
+  );
+}
+
 /* ─── การพิมพ์ ───────────────────────────────────────────────────── */
 
 /**
@@ -310,7 +338,7 @@ export interface PrintPaper {
    * เก็บรวมกับค่ากระดาษเพราะเป็นค่าที่ตั้งครั้งเดียวแล้วใช้ทั้งวันเหมือนกัน
    * — วิทยาลัยหนึ่งแห่งยื่นให้หน่วยงานเดิมเป็นประจำ ไม่ได้สลับรายใบ
    */
-  form: '62' | 'sorsor';
+  form: '62' | 'sorsor' | 'en-landscape';
 }
 
 const PRINT_KEY = 'vecsms.print';
@@ -324,7 +352,7 @@ export function readPrintPaper(): PrintPaper {
         paper: v.paper === 'letterhead' ? 'letterhead' : 'plain',
         dx: Number(v.dx) || 0,
         dy: Number(v.dy) || 0,
-        form: v.form === 'sorsor' ? 'sorsor' : '62',
+        form: v.form === 'sorsor' ? 'sorsor' : v.form === 'en-landscape' ? 'en-landscape' : '62',
       };
     }
   } catch {
@@ -339,7 +367,7 @@ export function printQuery(p: PrintPaper): string {
   if (p.paper === 'letterhead') q.set('paper', 'letterhead');
   if (p.dx) q.set('offsetX', String(p.dx));
   if (p.dy) q.set('offsetY', String(p.dy));
-  if (p.form === 'sorsor') q.set('form', 'sorsor');
+  if (p.form !== '62') q.set('form', p.form);
   const s = q.toString();
   return s ? `?${s}` : '';
 }
@@ -375,6 +403,7 @@ export function PrintPaperControl({
         >
           <option value="62">แบบ 62 (สรุปรายภาคในตาราง)</option>
           <option value="sorsor">แบบ สอศ. (ตารางสรุปหน้า 2)</option>
+          <option value="en-landscape">แบบอังกฤษแนวนอน (เฉพาะฉบับอังกฤษ)</option>
         </select>
       </Field>
       <Field label="เลื่อนขวา (pt)">

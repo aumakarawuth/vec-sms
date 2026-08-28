@@ -12,10 +12,13 @@
  * ของการลงทะเบียนซึ่งเกิดทีหลัง — จึงต้องตรวจซ้ำหลังตารางนิ่งแล้ว
  */
 import { useEffect, useState } from 'react';
-import { api } from '../core/api';
+import { api, emptyPage } from '../core/api';
 import { fetchPeriods, fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { href } from '../core/router';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const DAY = ['', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
@@ -642,11 +645,25 @@ function TransferSectionForm({
   );
 }
 
+/**
+ * ทั้งคอนโทรลเลอร์ /timetable/* (ห้อง คาบว่าง วางคาบ ตรวจชน ภาระงาน) และ
+ * /staff ผูก @Roles('registrar','academic','director','admin') ไว้ทั้งชุด —
+ * ครูเปิดหน้านี้แล้วใช้ไม่ได้เลยสักส่วน (ดูตารางสอนของตัวเองที่ /my-schedule
+ * แทน) เดิมหน้านี้ไม่เช็คบทบาทเลย ปล่อยให้ทุกฟอร์มโชว์ตามปกติแล้วให้ 403 ดิบ
+ * จาก API หลุดออกมาแทนตาราง — เช็คไว้ที่นี่ที่เดียวเพื่อไม่ยิง fetch ที่รู้
+ * อยู่แล้วว่าถูกปฏิเสธ และโชว์คำอธิบายแทนฟอร์มที่กดแล้วล้มแน่ ๆ
+ */
+const TIMETABLE_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
+
 export function TimetableScreen() {
+  const canUse = useCan(...TIMETABLE_ROLES);
   const { terms, termId, setTerm } = useTermPicker();
   const periodLabel = usePeriodLabel();
-  const rooms = useAsync(() => api.get<Room[]>('/timetable/rooms'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
+  const rooms = useAsync(() => (canUse ? api.get<Room[]>('/timetable/rooms') : Promise.resolve([])), [canUse]);
+  const staff = useAsync(
+    () => (canUse ? api.getPage<StaffRow>('/staff?limit=100') : Promise.resolve(emptyPage<StaffRow>())),
+    [canUse],
+  );
   const sections = useAsync(
     () => (termId ? fetchSections(termId) : Promise.resolve([])),
     [termId],
@@ -654,12 +671,12 @@ export function TimetableScreen() {
   // เส้นทางนี้คืน { total, conflicts } ไม่ใช่อาร์เรย์เปล่า
   const conflicts = useAsync(
     () =>
-      termId
+      canUse && termId
         ? api.get<{ total: number; conflicts: Conflict[] }>(
             `/timetable/terms/${termId}/conflicts`,
           )
         : Promise.resolve({ total: 0, conflicts: [] }),
-    [termId],
+    [canUse, termId],
   );
 
   const [autoResult, setAutoResult] = useState<unknown>(null);
@@ -687,6 +704,13 @@ export function TimetableScreen() {
         }
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={TIMETABLE_ROLES}>
+          หน้านี้เป็นงานของทะเบียน/วิชาการ — ดูตารางสอนของตัวเองได้ที่{' '}
+          <a href={href('/my-schedule')}>ตารางสอนของฉัน</a>
+        </RestrictedNotice>
+      ) : (
+      <>
       <TeacherAvailabilityCard staff={staff.data?.items ?? []} termId={termId} />
 
       <Card title="จัดตารางอัตโนมัติทั้งภาคเรียน">
@@ -850,6 +874,8 @@ export function TimetableScreen() {
           <a href={href('/workload')} className="button">ไปหน้าภาระงานสอน →</a>
         </div>
       </Card>
+      </>
+      )}
     </>
   );
 }

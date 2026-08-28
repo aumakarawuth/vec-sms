@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
 import { href } from '../core/router';
-import { AsyncView, Badge, Card, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import { AsyncView, Badge, Card, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 import { TermDates, TermSelect, useTermPicker } from '../ui/term-picker';
 
 interface WorkloadRow {
@@ -20,13 +21,17 @@ interface WorkloadRow {
 
 const n = (value: string | number) => Number(value) || 0;
 
+/** /timetable/terms/:id/workload อยู่ใต้คอนโทรลเลอร์เดียวกับ /timetable — registrar/academic/director/admin เท่านั้น */
+const WORKLOAD_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
+
 export function WorkloadScreen() {
+  const canUse = useCan(...WORKLOAD_ROLES);
   const { terms, termId, term, setTerm } = useTermPicker();
   const workload = useAsync(
-    () => termId
+    () => canUse && termId
       ? api.get<WorkloadRow[]>(`/timetable/terms/${termId}/workload`)
       : Promise.resolve([]),
-    [termId],
+    [canUse, termId],
   );
   const [query, setQuery] = useState('');
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -54,6 +59,10 @@ export function WorkloadScreen() {
         actions={<a href={href('/timetable-center')}>← ศูนย์งานตารางเรียน</a>}
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={WORKLOAD_ROLES} />
+      ) : (
+      <>
       <Card>
         <div className="row">
           <label className="field" style={{ minWidth: 260 }}>
@@ -138,6 +147,8 @@ export function WorkloadScreen() {
         “คาบ/สัปดาห์” นับจากคาบประจำสัปดาห์ที่จัดไว้จริง ส่วน “คาบทั้งภาค” เป็นแผนที่ใช้คำนวณเวลาเรียน
         จึงเป็นคนละหน่วยและไม่ควรนำมาเปรียบเทียบกันโดยตรง
       </p>
+      </>
+      )}
     </>
   );
 }
