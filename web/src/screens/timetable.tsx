@@ -14,6 +14,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import { fetchPeriods, fetchSections, usePeriodLabel, type Section } from '../core/catalog';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -843,49 +844,12 @@ export function TimetableScreen() {
         </AsyncView>
       </TableCard>
 
-      <TableCard title="ภาระงานสอนของอาจารย์ — ภาคเรียนนี้">
-        <AsyncView state={sections} empty="ยังไม่มีกลุ่มเรียนในภาคเรียนนี้">
-          {(rows) => {
-            const byTeacher = new Map<string, { name: string; courses: number; periods: number; students: number }>();
-            for (const s of rows) {
-              const key = s.teacher_id ?? '';
-              const name = s.teacher_name || 'ยังไม่ระบุผู้สอน';
-              const entry = byTeacher.get(key) ?? { name, courses: 0, periods: 0, students: 0 };
-              entry.courses += 1;
-              entry.periods += Number(s.planned_periods) || 0;
-              entry.students += Number(s.enrolled) || 0;
-              byTeacher.set(key, entry);
-            }
-            const summary = [...byTeacher.entries()].sort((a, b) => b[1].periods - a[1].periods);
-            return (
-              <table>
-                <thead>
-                  <tr>
-                    <th>ผู้สอน</th>
-                    <th className="num" style={{ width: 100 }}>รายวิชา</th>
-                    <th className="num" style={{ width: 140 }}>คาบ/สัปดาห์รวม</th>
-                    <th className="num" style={{ width: 120 }}>นักศึกษารวม</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.map(([id, v]) => (
-                    <tr key={id || 'none'}>
-                      <td>{v.name}</td>
-                      <td className="num">{v.courses}</td>
-                      <td className="num">{v.periods}</td>
-                      <td className="num">{v.students}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            );
-          }}
-        </AsyncView>
-        <div style={{ color: 'var(--ink-soft)', fontSize: 12, marginTop: 6 }}>
-          นับจากคาบที่วางแผนไว้ต่อสัปดาห์ของแต่ละกลุ่มเรียน — วิชาที่ยังไม่ได้วางคาบยังนับรวมด้วย
-          เพราะเป็นภาระที่รับไว้แล้วแม้จะยังไม่ได้ลงตาราง
+      <Card>
+        <div className="row" style={{ alignItems: 'center' }}>
+          <span>ดูภาระงานสอนของอาจารย์ทุกคนแบบละเอียด (คาบ/สัปดาห์ vs คาบทั้งภาค แยกคอลัมน์)</span>
+          <a href={href('/workload')} className="button">ไปหน้าภาระงานสอน →</a>
         </div>
-      </TableCard>
+      </Card>
     </>
   );
 }
