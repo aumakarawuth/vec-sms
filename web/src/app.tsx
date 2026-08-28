@@ -10,7 +10,9 @@
 import { ROLE_LABEL, useSession, type Role } from './core/session';
 import { href, useRoute } from './core/router';
 import { ScopeProvider, useScope } from './core/scope';
-import { AcademicClassroomScreen, AcademicPlacementScreen, AcademicYearScreen } from './screens/academic-year';
+import {
+  AcademicClassroomScreen, AcademicPlacementScreen, AcademicSectionsScreen, AcademicYearScreen, RemedialScreen,
+} from './screens/academic-year';
 import { AdmissionsScreen } from './screens/admissions';
 import { AttendanceScreen } from './screens/attendance';
 import { BehaviorScreen } from './screens/behavior';
@@ -243,6 +245,8 @@ function Routes() {
   if (head === 'academic-year') {
     if (second === 'classes') return <AcademicClassroomScreen />;
     if (second === 'placements') return <AcademicPlacementScreen />;
+    if (second === 'sections') return <AcademicSectionsScreen />;
+    if (second === 'remedial') return <RemedialScreen />;
     return <AcademicYearScreen />;
   }
   if (head === 'finance') return <FinanceScreen />;

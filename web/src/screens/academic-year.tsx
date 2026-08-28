@@ -868,32 +868,26 @@ function CopyGradebooksCard({ terms }: { terms: Term[] }) {
 export function AcademicYearScreen() {
   const { terms } = useTermPicker();
   const rollovers = useAsync(() => api.get<RolloverLog[]>('/rollover'), []);
-  const sessions = useAsync(() => api.get<RegradeSession[]>('/regrade/sessions'), []);
   const academicYears = useAsync(() => api.get<AcademicYear[]>('/academic/years'), []);
-  const courses = useAsync(() => api.get<CourseRow[]>('/curriculum/courses'), []);
-  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
-  const rooms = useAsync(() => api.get<RoomRow[]>('/timetable/rooms'), []);
-  const gradeSymbols = useAsync(() => api.get<GradeSymbol[]>('/gradebook/grade-symbols'), []);
 
   const [fromYear, setFromYear] = useState('2569');
   const [toYear, setToYear] = useState('2570');
-  const [ayId, setAyId] = useState('');
   const [rolloverResult, setRolloverResult] = useState<unknown>(null);
   const [feeScheduleResult, setFeeScheduleResult] = useState<{ linesCopied: number; note: string } | null>(null);
-  const [sessionId, setSessionId] = useState('');
-
-  const years = [...new Set((terms.data ?? []).map((t) => t.academic_year_id))];
-  const placements = useAsync(
-    () =>
-      ayId
-        ? api.get<Placement[]>(`/rollover/placements${qs({ academicYearId: ayId })}`)
-        : Promise.resolve([]),
-    [ayId],
-  );
 
   return (
     <>
-      <PageHead title="งานวิชาการรายปี" />
+      <PageHead
+        title="งานวิชาการรายปี"
+        sub="เปิดปีการศึกษา ตั้งภาคเรียน และเลื่อนชั้นทั้งรุ่น"
+        actions={
+          <div className="row" style={{ gap: 8 }}>
+            <a href={href('/academic-year/sections')}>เปิดกลุ่มเรียน →</a>
+            <a href={href('/academic-year/classes')}>จัดห้องเรียน →</a>
+            <a href={href('/academic-year/remedial')}>สอบซ่อม/ปรับเกรด →</a>
+          </div>
+        }
+      />
 
       <TableCard title="ภาคเรียนทั้งหมด">
         <AsyncView state={terms} empty="ยังไม่มีภาคเรียนในระบบ">
@@ -946,16 +940,6 @@ export function AcademicYearScreen() {
 
       <CreateYearForm onDone={() => academicYears.reload()} />
       <CreateTermForm years={academicYears.data ?? []} onDone={() => terms.reload()} />
-
-      <CreateSectionForm
-        terms={terms.data ?? []}
-        courses={courses.data ?? []}
-        staff={staff.data?.items ?? []}
-        rooms={rooms.data ?? []}
-        onDone={() => {}}
-      />
-
-      <CopyGradebooksCard terms={terms.data ?? []} />
 
       <Card title="เลื่อนชั้นปีการศึกษา">
         <div className="row">
@@ -1055,55 +1039,76 @@ export function AcademicYearScreen() {
         )}
       </Card>
 
-      <Card title="การจัดห้องเรียนของปีการศึกษา">
-        <div className="row">
-          <label className="field" style={{ maxWidth: 320 }}>
-            <span>ปีการศึกษา</span>
-            <select value={ayId} onChange={(e) => setAyId(e.target.value)}>
-              <option value="">— เลือกปีการศึกษา —</option>
-              {years.map((id) => {
-                const t = (terms.data ?? []).find((x) => x.academic_year_id === id);
-                return (
-                  <option key={id} value={id}>
-                    ปีการศึกษา {t?.year_be}
-                  </option>
-                );
-              })}
-            </select>
-          </label>
+      <Card title="จัดห้องเรียน">
+        <div className="row" style={{ alignItems: 'center' }}>
+          <span>สร้างห้องประจำชั้น และนำรายชื่อนักศึกษาเข้าห้องอยู่ที่หน้าแยก</span>
+          <a href={href('/academic-year/classes')} className="button">ไปหน้าจัดห้องเรียน →</a>
         </div>
       </Card>
+    </>
+  );
+}
 
-      {ayId && <PlaceStudentsForm academicYearId={ayId} onDone={() => placements.reload()} />}
+/**
+ * หน้าจอแยก: เปิดกลุ่มเรียน + คัดลอกโครงสร้างสมุดคะแนนข้ามภาคเรียน
+ *
+ * เดิมทั้งสองเรื่องนี้อยู่รวมในหน้า "งานวิชาการรายปี" เดียวกับที่การ์ด
+ * "เรียนเสริม/สอบซ่อม/ปรับเกรด" ในศูนย์งานตารางเรียนก็ชี้ไปที่เดียวกัน —
+ * สองปุ่มที่อธิบายงานคนละอย่างเปิดมาแล้วเห็นฟอร์มเดียวกันทั้งหมด แยกที่นี่
+ * เพื่อให้ "กำหนดอาจารย์ผู้สอนและเปิดกลุ่มเรียน" เปิดมาแล้วเจอเฉพาะงานเปิด
+ * กลุ่มเรียนจริง ๆ
+ */
+export function AcademicSectionsScreen() {
+  const { terms } = useTermPicker();
+  const courses = useAsync(() => api.get<CourseRow[]>('/curriculum/courses'), []);
+  const staff = useAsync(() => api.getPage<StaffRow>('/staff?limit=100'), []);
+  const rooms = useAsync(() => api.get<RoomRow[]>('/timetable/rooms'), []);
 
-      {ayId && (
-        <TableCard title="นักศึกษาแยกตามชั้นปีและห้อง">
-          <AsyncView state={placements} empty="ยังไม่ได้จัดห้องให้ปีการศึกษานี้">
-            {(rows) => (
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 100 }}>ชั้นปี</th>
-                    <th style={{ width: 120 }}>ห้อง</th>
-                    <th style={{ width: 150 }}>รหัสนักศึกษา</th>
-                    <th>ชื่อ — นามสกุล</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((p) => (
-                    <tr key={p.student_code}>
-                      <td>ปวช. {p.study_year}</td>
-                      <td>{p.group_code ?? '—'}</td>
-                      <td className="mono">{p.student_code}</td>
-                      <td>{p.full_name}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </AsyncView>
-        </TableCard>
-      )}
+  return (
+    <>
+      <PageHead
+        title="กำหนดอาจารย์ผู้สอนและเปิดกลุ่มเรียน"
+        sub="เปิดกลุ่มเรียนพร้อมเลือกผู้สอนประจำรายวิชา แล้วคัดลอกโครงสร้างสมุดคะแนนจากภาคก่อนได้ทันที"
+        actions={<a href={href('/academic-year')}>← งานวิชาการรายปี</a>}
+      />
+
+      <CreateSectionForm
+        terms={terms.data ?? []}
+        courses={courses.data ?? []}
+        staff={staff.data?.items ?? []}
+        rooms={rooms.data ?? []}
+        onDone={() => {}}
+      />
+
+      <CopyGradebooksCard terms={terms.data ?? []} />
+
+      <Card>
+        <div className="row" style={{ alignItems: 'center' }}>
+          <span>วางคาบเรียนและตรวจคาบชนกันได้ที่หน้าจัดตารางสอน</span>
+          <a href={href('/timetable')} className="button">ไปหน้าจัดตารางสอน →</a>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+/**
+ * หน้าจอแยก: เปิดรอบสอบซ่อม/เรียนปรับเกรด — ดูเหตุผลการแยกที่ AcademicSectionsScreen
+ */
+export function RemedialScreen() {
+  const { terms } = useTermPicker();
+  const courses = useAsync(() => api.get<CourseRow[]>('/curriculum/courses'), []);
+  const gradeSymbols = useAsync(() => api.get<GradeSymbol[]>('/gradebook/grade-symbols'), []);
+  const sessions = useAsync(() => api.get<RegradeSession[]>('/regrade/sessions'), []);
+  const [sessionId, setSessionId] = useState('');
+
+  return (
+    <>
+      <PageHead
+        title="เรียนเสริม/สอบซ่อม/ปรับเกรด"
+        sub="เปิดรอบแก้ผล บันทึกผลสอบซ่อม และลงทะเบียนผู้มีสิทธิ์"
+        actions={<a href={href('/academic-year')}>← งานวิชาการรายปี</a>}
+      />
 
       <CreateRegradeSessionForm terms={terms.data ?? []} onDone={() => sessions.reload()} />
 
@@ -1199,11 +1204,65 @@ export function AcademicClassroomScreen() {
       </div>
     </Card>
     <TableCard title="ห้องประจำชั้นที่สร้างแล้ว">
-      <AsyncView state={groups} empty="ยังไม่มีห้องประจำชั้น">{(items) => <table><thead><tr><th>เกรด</th><th>ห้อง</th><th>รุ่นที่</th><th className="num">นักศึกษา</th><th>ข้อมูล</th></tr></thead><tbody>
-        {items.map((group) => <tr key={group.id}><td>{LEVEL_LABEL[group.level]} {group.study_year}</td><td>{group.code}</td><td>{group.cohort ?? '—'}</td><td className="num">{group.students}</td><td>{group.advisors.map((advisor) => advisor.nameTh).join(', ') || '—'}{group.finance_group_th ? ` · ${group.finance_group_th}` : ''}</td></tr>)}
+      <AsyncView state={groups} empty="ยังไม่มีห้องประจำชั้น">{(items) => <table><thead><tr><th>เกรด</th><th>ห้อง</th><th>รุ่นที่</th><th className="num">นักศึกษา</th><th>ข้อมูล</th><th></th></tr></thead><tbody>
+        {items.map((group) => <ClassGroupRow key={group.id} group={group} onDone={() => groups.reload()} />)}
       </tbody></table>}</AsyncView>
     </TableCard>
   </>;
+}
+
+function ClassGroupRow({ group, onDone }: { group: ClassGroup; onDone: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [code, setCode] = useState(group.code);
+  const [cohort, setCohort] = useState(group.cohort ?? '');
+  const [financeGroupTh, setFinanceGroupTh] = useState(group.finance_group_th ?? '');
+
+  if (!editing) {
+    return <tr>
+      <td>{LEVEL_LABEL[group.level]} {group.study_year}</td>
+      <td>{group.code}</td>
+      <td>{group.cohort ?? '—'}</td>
+      <td className="num">{group.students}</td>
+      <td>{group.advisors.map((advisor) => advisor.nameTh).join(', ') || '—'}{group.finance_group_th ? ` · ${group.finance_group_th}` : ''}</td>
+      <td className="row" style={{ gap: 6 }}>
+        <button onClick={() => setEditing(true)}>แก้ไข</button>
+        <ActionButton
+          confirm={`ปิดใช้งานห้อง ${group.code} — นักศึกษาที่จัดไว้แล้วไม่ถูกย้ายออก แต่ห้องนี้จะไม่ขึ้นให้เลือกอีก ยืนยันหรือไม่`}
+          onRun={() => api.del(`/class-groups/${group.id}`)}
+          onDone={onDone}
+        >
+          ปิดใช้งาน
+        </ActionButton>
+      </td>
+    </tr>;
+  }
+
+  return <tr>
+    <td>{LEVEL_LABEL[group.level]} {group.study_year}</td>
+    <td><input value={code} onChange={(e) => setCode(e.target.value)} style={{ width: 100 }} /></td>
+    <td><input value={cohort} onChange={(e) => setCohort(e.target.value)} style={{ width: 90 }} /></td>
+    <td className="num">{group.students}</td>
+    <td><input value={financeGroupTh} onChange={(e) => setFinanceGroupTh(e.target.value)} placeholder="กลุ่มการเงิน" style={{ width: 140 }} /></td>
+    <td className="row" style={{ gap: 6 }}>
+      <ActionButton
+        className="primary"
+        onRun={() => {
+          if (!code.trim()) throw new Error('กรอกรหัสห้องก่อน');
+          return api.patch(`/class-groups/${group.id}`, {
+            level: group.level,
+            studyYear: group.study_year,
+            code: code.trim(),
+            ...(cohort.trim() ? { cohort: cohort.trim() } : {}),
+            ...(financeGroupTh.trim() ? { financeGroupTh: financeGroupTh.trim() } : {}),
+          });
+        }}
+        onDone={() => { setEditing(false); onDone(); }}
+      >
+        บันทึก
+      </ActionButton>
+      <button onClick={() => setEditing(false)}>ยกเลิก</button>
+    </td>
+  </tr>;
 }
 
 /** หน้าจอแยก: จัดรายชื่อนักศึกษาเข้าชั้นปี/ห้องหลังจากสร้างห้องแล้ว */
