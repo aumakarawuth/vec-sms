@@ -76,6 +76,23 @@ interface StaffRow {
   full_name: string;
 }
 
+interface AutoScheduleResult {
+  sections: number;
+  scheduled: number;
+  alreadyFull: number;
+  partial: number;
+  skipped: number;
+  periodsPlaced: number;
+  needsAttention: { section: string; action: string; note: string | null }[];
+}
+
+const AUTO_SCHEDULE_ACTION_LABEL: Record<string, string> = {
+  scheduled: 'วางครบแล้ว',
+  already_full: 'เต็มอยู่แล้ว',
+  partial: 'วางได้บางส่วน',
+  skipped: 'ข้าม',
+};
+
 interface Availability {
   id: string;
   day_of_week: number;
@@ -679,7 +696,7 @@ export function TimetableScreen() {
     [canUse, termId],
   );
 
-  const [autoResult, setAutoResult] = useState<unknown>(null);
+  const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
 
   const [roomCode, setRoomCode] = useState('');
   const [roomName, setRoomName] = useState('');
@@ -719,9 +736,9 @@ export function TimetableScreen() {
             <ActionButton
               className="primary"
               confirm="ตัวจัดจะวางคาบให้กลุ่มเรียนที่ยังไม่มีตาราง ยืนยันหรือไม่"
-              onRun={() => api.post(`/timetable/terms/${termId}/auto-schedule`)}
+              onRun={() => api.post<AutoScheduleResult>(`/timetable/terms/${termId}/auto-schedule`)}
               onDone={(r) => {
-                setAutoResult(r);
+                setAutoResult(r as AutoScheduleResult);
                 conflicts.reload();
               }}
             >
@@ -734,10 +751,35 @@ export function TimetableScreen() {
           </div>
         </div>
         {autoResult !== null && (
-          <Notice kind="info">
-            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
-              {JSON.stringify(autoResult, null, 2)}
-            </pre>
+          <Notice kind={autoResult.needsAttention.length === 0 ? 'ok' : 'warn'}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: autoResult.needsAttention.length > 0 ? 10 : 0 }}>
+              <span>ทั้งหมด <b>{autoResult.sections}</b> กลุ่ม</span>
+              <span>วางครบ <b>{autoResult.scheduled}</b></span>
+              {autoResult.partial > 0 && <span>วางได้บางส่วน <b>{autoResult.partial}</b></span>}
+              {autoResult.alreadyFull > 0 && <span>เต็มอยู่แล้ว <b>{autoResult.alreadyFull}</b></span>}
+              {autoResult.skipped > 0 && <span>ข้าม <b>{autoResult.skipped}</b></span>}
+              <span>วางคาบไปทั้งหมด <b>{autoResult.periodsPlaced}</b> คาบ</span>
+            </div>
+            {autoResult.needsAttention.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>กลุ่มเรียน</th>
+                    <th style={{ width: 140 }}>สถานะ</th>
+                    <th>หมายเหตุ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {autoResult.needsAttention.map((n, i) => (
+                    <tr key={`${n.section}-${i}`}>
+                      <td>{n.section}</td>
+                      <td><Badge kind="warn">{AUTO_SCHEDULE_ACTION_LABEL[n.action] ?? n.action}</Badge></td>
+                      <td style={{ whiteSpace: 'normal' }}>{n.note ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </Notice>
         )}
       </Card>
