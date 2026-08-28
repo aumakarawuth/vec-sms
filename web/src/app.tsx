@@ -46,9 +46,11 @@ import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
+import { AdvisorsScreen } from './screens/advisors';
 import { StudentCenterScreen } from './screens/student-center';
 import { SubjectDataScreen } from './screens/subject-data';
 import { SubjectGroupsScreen } from './screens/subject-groups';
+import { CompetenciesScreen } from './screens/competencies';
 import { TermCategoriesScreen } from './screens/term-categories';
 import { TimetableScreen } from './screens/timetable';
 import { TimetableCenterScreen } from './screens/timetable-center';
@@ -204,6 +206,7 @@ function Routes() {
   if (head === 'registry') return <RegistryCenterScreen />;
   if (head === 'subject-data') return <SubjectDataScreen />;
   if (head === 'subject-groups') return <SubjectGroupsScreen />;
+  if (head === 'competencies') return <CompetenciesScreen />;
   if (head === 'student-center') return <StudentCenterScreen />;
   if (head === 'personnel-center') return <PersonnelCenterScreen />;
   if (head === 'personnel-search') return <PersonnelSearchScreen staffId={second} />;
@@ -250,6 +253,7 @@ function Routes() {
   if (head === 'dual') return <DualScreen />;
   if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'workload') return <WorkloadScreen />;
+  if (head === 'advisors') return <AdvisorsScreen />;
   if (head === 'statistics') return <StatisticsScreen />;
   if (head === 'clubs') return <ClubsScreen />;
   if (head === 'onet') return <OnetScreen />;
