@@ -18,14 +18,25 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
+import type { Role } from '../core/session';
 import {
-  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync,
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
   PrintPaperControl,
   printQuery,
   readPrintPaper,
   type PrintPaper,
 } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
+
+/**
+ * POST /documents/letters (ออกหนังสือ) ผูก registrar/academic/student_affairs/
+ * director/admin — GET /documents/absence-candidates เปิดกว้างกว่า (มี teacher
+ * ด้วย) แต่ GET /documents/students/:id (ประวัติที่เคยออก) ไม่มี student_affairs
+ * เลยด้วยซ้ำ หน้านี้จึงกันด้วยชุดที่ "ออกหนังสือได้จริง" ซึ่งเป็นจุดประสงค์หลัก
+ * ของหน้านี้ — teacher เห็นได้แค่รายชื่อผู้ที่เวลาเรียนต่ำกว่าเกณฑ์แต่ออก
+ * หนังสือไม่ได้อยู่แล้ว จึงไม่ได้เสียฟังก์ชันที่เคยใช้ได้จริง
+ */
+const LETTERS_ROLES: Role[] = ['registrar', 'academic', 'student_affairs', 'director', 'admin'];
 
 interface Candidate {
   student_id: string;
@@ -61,15 +72,16 @@ const ALL_KIND: Record<string, string> = {
 };
 
 export function LettersScreen() {
+  const canUse = useCan(...LETTERS_ROLES);
   const { terms, termId, setTerm } = useTermPicker();
   const [result, setResult] = useState<string | null>(null);
 
   const candidates = useAsync(
     () =>
-      termId
+      canUse && termId
         ? api.get<Candidate[]>(`/documents/absence-candidates/${termId}`)
         : Promise.resolve([]),
-    [termId],
+    [canUse, termId],
   );
 
   // นักศึกษาที่กำลังทำงานด้วย — เลือกจากรายชื่อหรือจากผลค้นหา
@@ -77,10 +89,10 @@ export function LettersScreen() {
   const [studentLabel, setStudentLabel] = useState('');
   const issued = useAsync(
     () =>
-      studentId
+      canUse && studentId
         ? api.get<IssuedLetter[]>(`/documents/students/${studentId}`)
         : Promise.resolve([]),
-    [studentId],
+    [canUse, studentId],
   );
 
   const [kind, setKind] = useState('guardian_invitation');
@@ -118,6 +130,10 @@ export function LettersScreen() {
         }
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={LETTERS_ROLES} />
+      ) : (
+      <>
       <Notice kind="info">
         ตัวเลขเวลาเรียนและคะแนนความประพฤติบนหนังสือ <strong>ตรึง ณ วันที่ออก</strong> —
         พิมพ์ซ้ำจะได้ใบเดิมเสมอ ถ้าตัวเลขเปลี่ยนไปแล้วต้องออกใบใหม่
@@ -344,6 +360,8 @@ export function LettersScreen() {
             ใบที่พิมพ์วันนี้จึงตรงกับกระดาษที่ผู้ปกครองถืออยู่เสมอ
           </Notice>
         </TableCard>
+      )}
+      </>
       )}
     </>
   );

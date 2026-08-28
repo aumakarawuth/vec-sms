@@ -11,7 +11,11 @@
  */
 import { useState } from 'react';
 import { api } from '../core/api';
-import { ActionButton, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import { ActionButton, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
+
+/** อ่านได้กว้างกว่านี้ แต่แก้/ลบผูก academic/registrar/director/admin — หน้านี้มีไว้แก้อย่างเดียว */
+const EDUCATION_LEVELS_ROLES: Role[] = ['academic', 'registrar', 'director', 'admin'];
 
 export interface QualificationLevelLabelRow {
   id: string;
@@ -26,12 +30,17 @@ const DEFAULT_TITLE: Record<string, string> = { PVC: 'ประกาศนี�
 const fetchLabels = () => api.get<QualificationLevelLabelRow[]>('/academic/qualification-levels');
 
 export function EducationLevelsScreen() {
-  const labels = useAsync(fetchLabels, []);
+  const canUse = useCan(...EDUCATION_LEVELS_ROLES);
+  const labels = useAsync(() => (canUse ? fetchLabels() : Promise.resolve([])), [canUse]);
   const rows = LEVELS.map((level) => labels.data?.find((r) => r.level === level) ?? { id: '', level, title: DEFAULT_TITLE[level] ?? level, sort_order: 0 });
 
   return (
     <>
       <PageHead title="ระดับการศึกษา" sub="ตั้งชื่อที่ใช้เรียกแต่ละระดับการศึกษาในระบบ" />
+      {!canUse ? (
+        <RestrictedNotice roles={EDUCATION_LEVELS_ROLES} />
+      ) : (
+      <>
       <Notice kind="info">ระดับการศึกษา (ปวช./ปวส./ทล.บ.) เป็นค่าคงที่ของระบบ หน้านี้แก้ได้เฉพาะชื่อที่แสดงผล — ฉบับหลักสูตรของแต่ละระดับดูที่เมนู "หลักสูตร"</Notice>
       <TableCard title="ชื่อระดับการศึกษา">
         {/*
@@ -48,6 +57,8 @@ export function EducationLevelsScreen() {
               <tbody>{rows.map((r) => <LevelLabelRow key={r.level} row={r} onDone={() => labels.reload()} />)}</tbody>
             </table>}
       </TableCard>
+      </>
+      )}
     </>
   );
 }

@@ -12,8 +12,14 @@ import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
 import { href } from '../core/router';
 import { useScope } from '../core/scope';
-import { ActionButton, AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
 import { CourseEntry } from './course-entry';
+
+/** GET เปิดกว้าง (มี teacher/student ด้วย) แต่ทุกจุดเขียนผูก academic/registrar/director/admin — หน้านี้มีไว้แก้โครงสร้างเป็นหลัก */
+const CURRICULUM_ROLES: Role[] = ['academic', 'registrar', 'director', 'admin'];
 
 interface Version {
   id: string;
@@ -37,6 +43,19 @@ interface CourseInVersion {
   credits?: string;
   suggested_year?: number | null;
   suggested_term?: number | null;
+}
+
+interface CourseCatalogRow {
+  id: string;
+  code: string;
+  name_th: string;
+  name_en: string | null;
+  theory_hours: string;
+  practice_hours: string;
+  credits: string;
+  total_hours: string;
+  weekly_periods: string;
+  active: boolean;
 }
 
 /**
@@ -777,9 +796,19 @@ const MODE_TITLE: Record<CurriculumMode, { title: string; sub: string }> = {
 };
 
 export function CurriculumScreen({ mode }: { mode: CurriculumMode }) {
-  const programs = useAsync(() => api.get<ProgramRow[]>('/curriculum/programs'), []);
-  const gradeSchemes = useAsync(() => api.get<GradeScheme[]>('/curriculum/grade-schemes'), []);
-  const versions = useAsync(() => api.get<Version[]>('/curriculum/versions'), []);
+  const canUse = useCan(...CURRICULUM_ROLES);
+  const programs = useAsync(
+    () => (canUse ? api.get<ProgramRow[]>('/curriculum/programs') : Promise.resolve([])),
+    [canUse],
+  );
+  const gradeSchemes = useAsync(
+    () => (canUse ? api.get<GradeScheme[]>('/curriculum/grade-schemes') : Promise.resolve([])),
+    [canUse],
+  );
+  const versions = useAsync(
+    () => (canUse ? api.get<Version[]>('/curriculum/versions') : Promise.resolve([])),
+    [canUse],
+  );
   const [versionId, setVersionId] = useState('');
   const [q, setQ] = useState('');
 
@@ -790,16 +819,14 @@ export function CurriculumScreen({ mode }: { mode: CurriculumMode }) {
 
   const structure = useAsync(
     () =>
-      versionId
+      canUse && versionId
         ? api.get<Structure>(`/curriculum/versions/${versionId}`)
         : Promise.resolve(null as unknown as Structure),
-    [versionId],
+    [canUse, versionId],
   );
   const courses = useAsync(
-    () => api.get<{ id: string; code: string; name_th: string; credits: string }[]>(
-      `/curriculum/courses${qs({ q })}`,
-    ),
-    [q],
+    () => (canUse ? api.get<CourseCatalogRow[]>(`/curriculum/courses${qs({ q, all: 'true' })}`) : Promise.resolve([])),
+    [canUse, q],
   );
 
   return (
@@ -810,6 +837,10 @@ export function CurriculumScreen({ mode }: { mode: CurriculumMode }) {
         actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
       />
 
+      {!canUse ? (
+        <RestrictedNotice roles={CURRICULUM_ROLES} />
+      ) : (
+      <>
       {mode === 'programs' && <>
         <ProgramCascade rows={rows} onDone={reloadTree} />
       </>}
@@ -1004,40 +1035,155 @@ export function CurriculumScreen({ mode }: { mode: CurriculumMode }) {
         </AsyncView>
       )}
 
-      {mode === 'courses' && <TableCard title="คลังรายวิชาของวิทยาลัย">
-        <div style={{ padding: 12, borderBottom: '1px solid var(--line-soft)' }}>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="ค้นหาด้วยรหัสหรือชื่อวิชา"
-            style={{ maxWidth: 320 }}
-          />
-        </div>
-        <AsyncView state={courses} empty="ไม่พบรายวิชา">
-          {(rows) => (
-            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 120 }}>รหัสวิชา</th>
-                    <th>ชื่อวิชา</th>
-                    <th className="num" style={{ width: 80 }}>หน่วยกิต</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((c) => (
-                    <tr key={c.id}>
-                      <td className="mono">{c.code}</td>
-                      <td>{c.name_th}</td>
-                      <td className="num">{num(c.credits)}</td>
+      {mode === 'courses' && <>
+        <NewCourseCard onDone={() => courses.reload()} />
+        <TableCard title="คลังรายวิชาของวิทยาลัย">
+          <div style={{ padding: 12, borderBottom: '1px solid var(--line-soft)' }}>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="ค้นหาด้วยรหัสหรือชื่อวิชา"
+              style={{ maxWidth: 320 }}
+            />
+          </div>
+          <AsyncView state={courses} empty="ไม่พบรายวิชา">
+            {(rows) => (
+              <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 110 }}>รหัสวิชา</th>
+                      <th>ชื่อวิชา</th>
+                      <th className="num" style={{ width: 60 }}>ท</th>
+                      <th className="num" style={{ width: 60 }}>ป</th>
+                      <th className="num" style={{ width: 60 }}>น</th>
+                      <th className="num" style={{ width: 90 }}>คาบ/สัปดาห์</th>
+                      <th style={{ width: 70 }}>สถานะ</th>
+                      <th></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </AsyncView>
-      </TableCard>}
+                  </thead>
+                  <tbody>
+                    {rows.map((c) => (
+                      <CourseCatalogEditRow key={c.id} course={c} onDone={() => courses.reload()} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </AsyncView>
+        </TableCard>
+      </>}
+      </>
+      )}
     </>
+  );
+}
+
+const nowBe = new Date().getFullYear() + 543;
+
+function NewCourseCard({ onDone }: { onDone: () => void }) {
+  const [code, setCode] = useState('');
+  const [nameTh, setNameTh] = useState('');
+  const [nameEn, setNameEn] = useState('');
+  const [editionBe, setEditionBe] = useState(String(nowBe));
+  const [theoryHours, setTheoryHours] = useState('');
+  const [practiceHours, setPracticeHours] = useState('');
+  const [credits, setCredits] = useState('');
+
+  return (
+    <Card title="เพิ่มรายวิชาใหม่">
+      <div className="row">
+        <Field label="รหัสวิชา"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="เช่น 20101-2003" style={{ width: 140 }} /></Field>
+        <Field label="ชื่อวิชา (ไทย)"><input value={nameTh} onChange={(e) => setNameTh(e.target.value)} style={{ width: 240 }} /></Field>
+        <Field label="ชื่อวิชา (อังกฤษ, ถ้ามี)"><input value={nameEn} onChange={(e) => setNameEn(e.target.value)} style={{ width: 200 }} /></Field>
+        <Field label="ปีหลักสูตร (พ.ศ.)"><input value={editionBe} onChange={(e) => setEditionBe(e.target.value)} style={{ width: 90 }} /></Field>
+        <Field label="ท (ทฤษฎี)"><input value={theoryHours} onChange={(e) => setTheoryHours(e.target.value)} style={{ width: 60 }} /></Field>
+        <Field label="ป (ปฏิบัติ)"><input value={practiceHours} onChange={(e) => setPracticeHours(e.target.value)} style={{ width: 60 }} /></Field>
+        <Field label="น (หน่วยกิต)"><input value={credits} onChange={(e) => setCredits(e.target.value)} style={{ width: 60 }} /></Field>
+        <div className="shrink">
+          <ActionButton
+            className="primary"
+            onRun={() => {
+              if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสวิชาและชื่อวิชาให้ครบ');
+              const t = Number(theoryHours), p = Number(practiceHours), n = Number(credits), ed = Number(editionBe);
+              if (!Number.isFinite(t) || !Number.isFinite(p) || !Number.isFinite(n) || !Number.isFinite(ed)) {
+                throw new Error('ท / ป / น / ปีหลักสูตร ต้องเป็นตัวเลข');
+              }
+              return api.post('/curriculum/catalog', {
+                code: code.trim(), nameTh: nameTh.trim(), nameEn: nameEn.trim() || undefined,
+                editionBe: ed, theoryHours: t, practiceHours: p, credits: n,
+              });
+            }}
+            onDone={() => { setCode(''); setNameTh(''); setNameEn(''); setTheoryHours(''); setPracticeHours(''); setCredits(''); onDone(); }}
+          >
+            เพิ่มรายวิชา
+          </ActionButton>
+        </div>
+      </div>
+      <p className="hint">
+        เก็บ ท-ป-น แยกกันตามที่พิมพ์บนหนังสือหลักสูตร — คาบ/สัปดาห์และประเภทวิชาคำนวณให้เองจากค่านี้
+      </p>
+    </Card>
+  );
+}
+
+function CourseCatalogEditRow({ course, onDone }: { course: CourseCatalogRow; onDone: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [nameTh, setNameTh] = useState(course.name_th);
+  const [theoryHours, setTheoryHours] = useState(course.theory_hours);
+  const [practiceHours, setPracticeHours] = useState(course.practice_hours);
+  const [credits, setCredits] = useState(course.credits);
+
+  if (!editing) {
+    return (
+      <tr>
+        <td className="mono">{course.code}</td>
+        <td>{course.name_th}</td>
+        <td className="num">{num(course.theory_hours)}</td>
+        <td className="num">{num(course.practice_hours)}</td>
+        <td className="num">{num(course.credits)}</td>
+        <td className="num">{num(course.weekly_periods)}</td>
+        <td>{course.active ? <Badge kind="ok">ใช้งาน</Badge> : <Badge>ปิดใช้งาน</Badge>}</td>
+        <td><button onClick={() => setEditing(true)}>แก้ไข</button></td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr>
+      <td className="mono">{course.code}</td>
+      <td><input value={nameTh} onChange={(e) => setNameTh(e.target.value)} style={{ width: 200 }} /></td>
+      <td className="num"><input value={theoryHours} onChange={(e) => setTheoryHours(e.target.value)} style={{ width: 44 }} /></td>
+      <td className="num"><input value={practiceHours} onChange={(e) => setPracticeHours(e.target.value)} style={{ width: 44 }} /></td>
+      <td className="num"><input value={credits} onChange={(e) => setCredits(e.target.value)} style={{ width: 44 }} /></td>
+      <td className="num">—</td>
+      <td>
+        <ActionButton
+          confirm={course.active ? undefined : 'เปิดใช้งานรายวิชานี้กลับหรือไม่'}
+          onRun={() => api.patch(`/curriculum/catalog/${course.id}`, { active: !course.active })}
+          onDone={onDone}
+        >
+          {course.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
+        </ActionButton>
+      </td>
+      <td className="row" style={{ gap: 6 }}>
+        <ActionButton
+          className="primary"
+          onRun={() => {
+            const t = Number(theoryHours), p = Number(practiceHours), n = Number(credits);
+            if (!nameTh.trim() || !Number.isFinite(t) || !Number.isFinite(p) || !Number.isFinite(n)) {
+              throw new Error('กรอกชื่อวิชาและ ท/ป/น ให้ครบและเป็นตัวเลข');
+            }
+            return api.patch(`/curriculum/catalog/${course.id}`, {
+              nameTh: nameTh.trim(), theoryHours: t, practiceHours: p, credits: n,
+            });
+          }}
+          onDone={() => { setEditing(false); onDone(); }}
+        >
+          บันทึก
+        </ActionButton>
+        <button onClick={() => setEditing(false)}>ยกเลิก</button>
+      </td>
+    </tr>
   );
 }

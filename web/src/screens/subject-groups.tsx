@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
 import { href } from '../core/router';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import type { Role } from '../core/session';
+import {
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+} from '../ui/kit';
+
+/** เขียนผูก academic/registrar/director/admin เหมือน curriculum.tsx — หน้านี้มีไว้แก้กลุ่มวิชาเป็นหลัก */
+const SUBJECT_GROUPS_ROLES: Role[] = ['academic', 'registrar', 'director', 'admin'];
 
 type Version = { id: string; edition_be: number; effective_from_year_be: number; effective_to_year_be: number | null; status: string; courses: string | number };
 type Category = { id: string; parent_id: string | null; code: string; name_th: string; kind: string; min_credits: string | null; max_credits: string | null; courses: unknown[] };
@@ -32,13 +38,21 @@ function flatten(categories: Category[]) {
 }
 
 export function SubjectGroupsScreen() {
-  const versions = useAsync(() => api.get<Version[]>('/curriculum/versions'), []);
+  const canUse = useCan(...SUBJECT_GROUPS_ROLES);
+  const versions = useAsync(() => (canUse ? api.get<Version[]>('/curriculum/versions') : Promise.resolve([])), [canUse]);
   const [versionId, setVersionId] = useState('');
-  const structure = useAsync(() => versionId ? api.get<Structure>(`/curriculum/versions/${versionId}`) : Promise.resolve(null), [versionId]);
+  const structure = useAsync(
+    () => (canUse && versionId ? api.get<Structure>(`/curriculum/versions/${versionId}`) : Promise.resolve(null)),
+    [canUse, versionId],
+  );
   const rows = useMemo(() => flatten(structure.data?.categories ?? []), [structure.data]);
 
   return <>
     <PageHead title="กลุ่มวิชา" sub="กำหนดกลุ่มวิชาในแต่ละฉบับหลักสูตร แล้วนำไปผูกรายวิชาและแผนการเรียน" actions={<a href={href('/subject-data')}>← ข้อมูลวิชา</a>} />
+    {!canUse ? (
+      <RestrictedNotice roles={SUBJECT_GROUPS_ROLES} />
+    ) : (
+    <>
     <Card title="เลือกฉบับหลักสูตร">
       <Field label="ฉบับหลักสูตร"><select value={versionId} onChange={(e) => setVersionId(e.target.value)}>
         <option value="">— เลือกฉบับหลักสูตร —</option>
@@ -52,19 +66,74 @@ export function SubjectGroupsScreen() {
         <SubjectGroupForm versionId={versionId} categories={data.categories} onDone={structure.reload} />
         <TableCard title={`กลุ่มวิชาในหลักสูตรฉบับ ${data.edition_be}`}>
           {rows.length === 0 ? <div className="empty">ยังไม่มีกลุ่มวิชา — เพิ่มกลุ่มแรกจากแบบฟอร์มด้านบน</div> : <table>
-            <thead><tr><th style={{ width: 105 }}>รหัส</th><th>หัวข้อ</th><th style={{ width: 170 }}>ประเภท</th><th className="num" style={{ width: 100 }}>รายวิชา</th><th className="num" style={{ width: 130 }}>หน่วยกิต</th></tr></thead>
-            <tbody>{rows.map(({ category, depth }) => <tr key={category.id}>
-              <td className="mono">{category.code}</td>
-              <td style={{ paddingLeft: 16 + depth * 26 }}><span aria-hidden="true">{depth ? '↳ ' : ''}</span>{category.name_th}</td>
-              <td><Badge kind="info">{KIND[category.kind] ?? category.kind}</Badge></td>
-              <td className="num">{category.courses.length}</td>
-              <td className="num">{category.min_credits ?? '—'}{category.max_credits ? `–${category.max_credits}` : ''}</td>
-            </tr>)}</tbody>
+            <thead><tr><th style={{ width: 105 }}>รหัส</th><th>หัวข้อ</th><th style={{ width: 170 }}>ประเภท</th><th className="num" style={{ width: 100 }}>รายวิชา</th><th className="num" style={{ width: 130 }}>หน่วยกิต</th><th style={{ width: 140 }}></th></tr></thead>
+            <tbody>{rows.map(({ category, depth }) => <SubjectGroupRow key={category.id} category={category} depth={depth} onDone={structure.reload} />)}</tbody>
           </table>}
         </TableCard>
       </>}
     </AsyncView>}
+    </>
+    )}
   </>;
+}
+
+function SubjectGroupRow({ category, depth, onDone }: { category: Category; depth: number; onDone: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [code, setCode] = useState(category.code);
+  const [nameTh, setNameTh] = useState(category.name_th);
+  const [minCredits, setMinCredits] = useState(category.min_credits ?? '');
+  const [maxCredits, setMaxCredits] = useState(category.max_credits ?? '');
+
+  if (!editing) {
+    return <tr>
+      <td className="mono">{category.code}</td>
+      <td style={{ paddingLeft: 16 + depth * 26 }}><span aria-hidden="true">{depth ? '↳ ' : ''}</span>{category.name_th}</td>
+      <td><Badge kind="info">{KIND[category.kind] ?? category.kind}</Badge></td>
+      <td className="num">{category.courses.length}</td>
+      <td className="num">{category.min_credits ?? '—'}{category.max_credits ? `–${category.max_credits}` : ''}</td>
+      <td className="row" style={{ gap: 6 }}>
+        <button onClick={() => setEditing(true)}>แก้ไข</button>
+        <ActionButton
+          toast
+          confirm={`ลบกลุ่มวิชา "${category.name_th}" — ลบได้เฉพาะกลุ่มที่ไม่มีรายวิชาหรือกลุ่มย่อยผูกอยู่ ยืนยันหรือไม่`}
+          onRun={() => api.del(`/curriculum/categories/${category.id}`)}
+          onDone={onDone}
+        >
+          ลบ
+        </ActionButton>
+      </td>
+    </tr>;
+  }
+
+  return <tr>
+    <td><input value={code} onChange={(e) => setCode(e.target.value)} style={{ width: 90 }} /></td>
+    <td style={{ paddingLeft: 16 + depth * 26 }}><input value={nameTh} onChange={(e) => setNameTh(e.target.value)} style={{ width: 220 }} /></td>
+    <td><Badge kind="info">{KIND[category.kind] ?? category.kind}</Badge></td>
+    <td className="num">{category.courses.length}</td>
+    <td className="num row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+      <input type="number" min="0" value={minCredits} onChange={(e) => setMinCredits(e.target.value)} style={{ width: 60 }} />
+      –
+      <input type="number" min="0" value={maxCredits} onChange={(e) => setMaxCredits(e.target.value)} style={{ width: 60 }} />
+    </td>
+    <td className="row" style={{ gap: 6 }}>
+      <ActionButton
+        className="primary"
+        toast
+        onRun={() => {
+          if (!code.trim() || !nameTh.trim()) throw new Error('กรอกรหัสและชื่อกลุ่มวิชาให้ครบ');
+          return api.patch(`/curriculum/categories/${category.id}`, {
+            code: code.trim(), nameTh: nameTh.trim(),
+            ...(minCredits !== '' ? { minCredits: Number(minCredits) } : {}),
+            ...(maxCredits !== '' ? { maxCredits: Number(maxCredits) } : { maxCredits: null }),
+          });
+        }}
+        onDone={() => { setEditing(false); onDone(); }}
+      >
+        บันทึก
+      </ActionButton>
+      <button onClick={() => setEditing(false)}>ยกเลิก</button>
+    </td>
+  </tr>;
 }
 
 function SubjectGroupForm({ versionId, categories, onDone }: { versionId: string; categories: Category[]; onDone: () => void }) {
