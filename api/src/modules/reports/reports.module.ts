@@ -13,7 +13,15 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
-/** โครงกระดาษพิมพ์ของรายงาน — ตารางล้วน ไม่ใช่เอกสารราชการที่ต้องวัดกระดาษ */
+/**
+ * โครงกระดาษพิมพ์ของรายงาน — ตารางล้วน ไม่ใช่เอกสารราชการที่ต้องวัดกระดาษ
+ *
+ * ─── ทำไมเส้นแนวนอนบาง ๆ แทนกรอบตารางทึบ ───
+ * กรอบดำทุกช่อง (0.7pt solid ทั้งตาราง) ทำให้ตาต้องแยกเส้นตารางออกจาก
+ * ตัวเลขก่อนอ่านได้ ยิ่งคอลัมน์เยอะยิ่งเป็นเส้นตาหมากรุกที่ล้าตา — เปลี่ยน
+ * เป็นเส้นคั่นแถวบาง ๆ สีเทาอ่อน (ตามแบบตารางบนหน้าจอที่ใช้อยู่แล้วทั้งระบบ
+ * ใน styles.css) กับแถบสีสลับบาง ๆ ให้ตามองเห็นแนวแถวได้โดยไม่ต้องมีเส้น
+ */
 function reportSheet(title: string, sub: string, body: string): string {
   return `<!doctype html>
 <html lang="th">
@@ -21,28 +29,40 @@ function reportSheet(title: string, sub: string, body: string): string {
 <meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
-  @page { size: A4 landscape; margin: 12mm; }
+  @page { size: A4 landscape; margin: 14mm; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: 'TH Sarabun New', 'Sarabun', 'Leelawadee UI', Tahoma, sans-serif;
-         font-size: 13pt; color: #000; }
-  .title { font-size: 17pt; font-weight: 700; text-align: center; margin: 0 0 2pt; }
-  .sub { text-align: center; font-size: 12.5pt; color: #333; margin-bottom: 8pt; }
-  table { width: 100%; border-collapse: collapse; margin-top: 6pt; }
-  th, td { border: 0.7pt solid #000; padding: 2.5pt 4pt; }
-  th { background: #eee; font-weight: 700; font-size: 12pt; }
-  td.num { text-align: right; }
-  td.mid { text-align: center; }
-  .foot { margin-top: 10pt; font-size: 11pt; color: #444; }
+         font-size: 13pt; color: #1c1c24; }
+  header.report-head { display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12pt; padding-bottom: 8pt; margin-bottom: 10pt; border-bottom: 1.4pt solid #1c1c24; }
+  .title { font-size: 18pt; font-weight: 700; margin: 0; }
+  .sub { font-size: 11.5pt; color: #6b6f7d; margin: 2pt 0 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 5pt 8pt; text-align: left; }
+  th { font-weight: 700; font-size: 10.5pt; letter-spacing: .2pt; color: #6b6f7d;
+       border-bottom: 1pt solid #1c1c24; }
+  tbody tr { border-bottom: 0.5pt solid #e3e5ec; }
+  tbody tr:nth-child(even) { background: #f7f8fb; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mid, th.mid { text-align: center; }
+  tr.group-row td { border-bottom: 1pt solid #1c1c24; padding-top: 10pt; font-weight: 700; background: #fff; }
+  .tag { display: inline-block; padding: 1.5pt 7pt; margin: 1pt 3pt 1pt 0; border-radius: 999pt;
+         font-size: 10pt; background: #eef0f7; color: #444a5c; }
+  .tag.danger { background: #fbe7e5; color: #a4342b; }
+  .foot { margin-top: 12pt; font-size: 10pt; color: #8b8f9c; }
   @media screen {
-    body { background: #f4f4f4; padding: 16px; }
-    .sheet { background: #fff; margin: 0 auto; padding: 12mm; max-width: 297mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+    body { background: #eef1f6; padding: 24px; }
+    .sheet { background: #fff; margin: 0 auto; padding: 16mm; max-width: 297mm;
+             border-radius: 10px; box-shadow: 0 4px 24px rgba(30,34,54,.1); }
   }
 </style>
 </head>
 <body>
 <div class="sheet">
-<div class="title">${esc(title)}</div>
-<div class="sub">${esc(sub)}</div>
+<header class="report-head">
+  <h1 class="title">${esc(title)}</h1>
+  <p class="sub">${esc(sub)}</p>
+</header>
 ${body}
 <div class="foot">พิมพ์เมื่อ ${esc(new Date().toLocaleString('th-TH'))} — รายงานนี้แสดงข้อมูล ณ เวลาที่พิมพ์</div>
 </div>
@@ -172,7 +192,7 @@ export class ReportsService {
               trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '')
                    || ' ' || coalesce(p.last_name_th, '')) as full_name,
               count(*) as failed_count,
-              string_agg(f.course_code || ' ' || f.course_name, ', ' order by f.course_code) as failed_courses
+              array_agg(f.course_code order by f.course_code) as failed_course_codes
          from student s
          join person p on p.id = s.person_id
          cross join lateral student_failed_courses(s.id) f
@@ -331,37 +351,34 @@ export class ReportsController {
       onlyFailed: onlyFailed === 'true',
     });
 
-    const body = `<table>
-  <thead>
-    <tr>
-      <th style="width:5%">ที่</th>
-      <th style="width:12%">รหัสนักศึกษา</th>
-      <th style="width:20%">ชื่อ — นามสกุล</th>
-      <th style="width:10%">รหัสวิชา</th>
-      <th>ชื่อวิชา</th>
-      <th style="width:8%">นก.</th>
-      <th style="width:8%">ผลการเรียน</th>
-      <th style="width:14%">ภาคเรียน</th>
-    </tr>
-  </thead>
-  <tbody>${
-    rows.length === 0
-      ? '<tr><td colspan="8" class="mid">— ไม่มีข้อมูลตามเงื่อนไขที่เลือก —</td></tr>'
-      : rows
-          .map(
-            (r: Record<string, unknown>, i: number) => `<tr>
-      <td class="mid">${i + 1}</td>
-      <td>${esc(r.student_code)}</td>
-      <td>${esc(r.full_name)}</td>
+    // จัดกลุ่มตามนักศึกษา — แถวหัวกลุ่มคั่นแทนการพิมพ์รหัส/ชื่อซ้ำทุกแถววิชา
+    let groupsHtml = '';
+    let currentStudent = '';
+    for (const r of rows as Record<string, unknown>[]) {
+      if (r.student_code !== currentStudent) {
+        currentStudent = r.student_code as string;
+        groupsHtml += `<tr class="group-row"><td colspan="5">${esc(r.student_code)} — ${esc(r.full_name)}</td></tr>`;
+      }
+      groupsHtml += `<tr>
       <td>${esc(r.course_code)}</td>
       <td>${esc(r.course_name)}</td>
       <td class="num">${esc(r.credits)}</td>
-      <td class="mid">${esc(r.grade_symbol)}</td>
+      <td class="mid">${r.earns_credit ? esc(r.grade_symbol) : `<span class="tag danger">${esc(r.grade_symbol)}</span>`}</td>
       <td>${esc(r.term_label)}</td>
-    </tr>`,
-          )
-          .join('')
-  }</tbody>
+    </tr>`;
+    }
+
+    const body = `<table>
+  <thead>
+    <tr>
+      <th style="width:12%">รหัสวิชา</th>
+      <th>ชื่อวิชา</th>
+      <th style="width:8%">นก.</th>
+      <th style="width:10%">ผลการเรียน</th>
+      <th style="width:16%">ภาคเรียน</th>
+    </tr>
+  </thead>
+  <tbody>${rows.length === 0 ? '<tr><td colspan="5" class="mid">— ไม่มีข้อมูลตามเงื่อนไขที่เลือก —</td></tr>' : groupsHtml}</tbody>
 </table>`;
 
     return reportSheet(
@@ -396,7 +413,7 @@ export class ReportsController {
       <td>${esc(r.student_code)}</td>
       <td>${esc(r.full_name)}</td>
       <td class="num">${esc(r.failed_count)}</td>
-      <td>${esc(r.failed_courses)}</td>
+      <td>${(r.failed_course_codes as string[]).map((c) => `<span class="tag danger">${esc(c)}</span>`).join('')}</td>
     </tr>`,
           )
           .join('')
@@ -431,18 +448,18 @@ export class ReportsController {
       <th style="width:16%">หมวดวิชา</th>
       <th style="width:6%">นก.</th>
       <th style="width:8%">ปี/ภาคที่แนะนำ</th>
-      <th style="width:10%">สถานะ</th>
-      <th style="width:10%">ผลการเรียน</th>
+      <th style="width:16%">สถานะ</th>
     </tr>
   </thead>
   <tbody>${
     rows.length === 0
-      ? '<tr><td colspan="8" class="mid">— นักศึกษาคนนี้ยังไม่ได้ผูกหลักสูตร —</td></tr>'
+      ? '<tr><td colspan="7" class="mid">— นักศึกษาคนนี้ยังไม่ได้ผูกหลักสูตร —</td></tr>'
       : rows
           .map((r: Record<string, unknown>, i: number) => {
             const status = r.grade_symbol
               ? (r.earns_credit ? 'ผ่านแล้ว' : 'ไม่ผ่าน')
               : (STATUS_LABEL[r.enrollment_status as string] ?? 'ยังไม่ลง');
+            const tagKind = r.grade_symbol && !r.earns_credit ? 'danger' : '';
             return `<tr>
       <td class="mid">${i + 1}</td>
       <td>${esc(r.course_code)}</td>
@@ -450,8 +467,7 @@ export class ReportsController {
       <td>${esc(r.category_name)}</td>
       <td class="num">${esc(r.credits)}</td>
       <td class="mid">${r.suggested_year ? `${esc(r.suggested_year)}/${esc(r.suggested_term ?? '—')}` : '—'}</td>
-      <td class="mid">${esc(status)}</td>
-      <td class="mid">${esc(r.grade_symbol ?? '—')}</td>
+      <td><span class="tag ${tagKind}">${esc(status)}${r.grade_symbol ? ` (${esc(r.grade_symbol)})` : ''}</span></td>
     </tr>`;
           })
           .join('')
@@ -477,21 +493,26 @@ export class ReportsController {
     const body = `<table>
   <thead>
     <tr>
-      <th style="width:10%">สัปดาห์ที่</th>
-      <th style="width:20%">ช่วงวันที่</th>
-      <th style="width:12%">คาบที่สอน</th>
-      <th style="width:14%">มาเรียน</th>
-      <th style="width:14%">มาสาย</th>
-      <th style="width:14%">ขาดเรียน</th>
-      <th>ลา</th>
+      <th style="width:9%">สัปดาห์ที่</th>
+      <th style="width:19%">ช่วงวันที่</th>
+      <th style="width:10%">คาบที่สอน</th>
+      <th style="width:11%">มาเรียน</th>
+      <th style="width:11%">มาสาย</th>
+      <th style="width:11%">ขาดเรียน</th>
+      <th style="width:9%">ลา</th>
+      <th>อัตรามาเรียน</th>
     </tr>
   </thead>
   <tbody>${
     rows.length === 0
-      ? '<tr><td colspan="7" class="mid">— กลุ่มเรียนนี้ยังไม่มีคาบที่สอนจริง —</td></tr>'
+      ? '<tr><td colspan="8" class="mid">— กลุ่มเรียนนี้ยังไม่มีคาบที่สอนจริง —</td></tr>'
       : rows
-          .map(
-            (r: Record<string, unknown>) => `<tr>
+          .map((r: Record<string, unknown>) => {
+            const present = Number(r.present_count);
+            const total = present + Number(r.late_count) + Number(r.absent_count) + Number(r.leave_count);
+            const pct = total > 0 ? Math.round((present / total) * 100) : null;
+            const tagKind = pct === null ? '' : pct >= 80 ? '' : 'danger';
+            return `<tr>
       <td class="mid">${esc(r.week_no)}</td>
       <td class="mid">${esc(thaiDate(r.starts_on as string))} – ${esc(thaiDate(r.ends_on as string))}</td>
       <td class="num">${esc(r.meetings_held)}</td>
@@ -499,8 +520,9 @@ export class ReportsController {
       <td class="num">${esc(r.late_count)}</td>
       <td class="num">${esc(r.absent_count)}</td>
       <td class="num">${esc(r.leave_count)}</td>
-    </tr>`,
-          )
+      <td>${pct === null ? '—' : `<span class="tag ${tagKind}">${pct}%</span>`}</td>
+    </tr>`;
+          })
           .join('')
   }</tbody>
 </table>`;

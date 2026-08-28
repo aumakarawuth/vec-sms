@@ -13,7 +13,7 @@
  * เขียนตรรกะ "ไม่ผ่านเกณฑ์" ซ้ำเป็นชุดที่สอง ซึ่งเสี่ยงนิยามเพี้ยนไปจากที่
  * หน้าลงทะเบียนใช้จริง
  */
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { api, qs } from '../core/api';
 import { fetchSections, termLabel, type Section, type Term } from '../core/catalog';
 import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync, type Async } from '../ui/kit';
@@ -34,7 +34,7 @@ interface FailingRow {
   student_code: string;
   full_name: string;
   failed_count: string;
-  failed_courses: string;
+  failed_course_codes: string[];
 }
 
 interface CurriculumRow {
@@ -81,6 +81,16 @@ function courseStatus(r: CurriculumRow): { label: string; kind: 'ok' | 'warn' | 
     return { label: ENROLLMENT_STATUS_LABEL[r.enrollment_status] ?? r.enrollment_status, kind: 'default' };
   }
   return { label: 'ยังไม่ลง', kind: 'warn' };
+}
+
+/** สรุปตัวเลขสั้น ๆ เหนือรายงาน — ตัวเดียวกับที่การ์ดศูนย์งานต่าง ๆ ใช้อยู่แล้ว */
+function Stat({ label, value, tone = 'primary' }: { label: string; value: string | number; tone?: string }) {
+  return (
+    <div className={`registry-stat ${tone}`} style={{ minHeight: 76, padding: '12px 14px' }}>
+      <span>{label}</span>
+      <strong style={{ fontSize: 22 }}>{value}</strong>
+    </div>
+  );
 }
 
 function CurriculumCheckCard() {
@@ -228,27 +238,34 @@ function WeeklyAttendanceCard({ terms }: { terms: Async<Term[]> }) {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: 90 }}>สัปดาห์ที่</th>
-                  <th style={{ width: 180 }}>ช่วงวันที่</th>
-                  <th className="num" style={{ width: 90 }}>คาบที่สอน</th>
-                  <th className="num" style={{ width: 90 }}>มาเรียน</th>
-                  <th className="num" style={{ width: 90 }}>มาสาย</th>
-                  <th className="num" style={{ width: 90 }}>ขาดเรียน</th>
-                  <th className="num" style={{ width: 80 }}>ลา</th>
+                  <th style={{ width: 80 }}>สัปดาห์ที่</th>
+                  <th style={{ width: 170 }}>ช่วงวันที่</th>
+                  <th className="num" style={{ width: 80 }}>คาบที่สอน</th>
+                  <th className="num" style={{ width: 80 }}>มาเรียน</th>
+                  <th className="num" style={{ width: 80 }}>มาสาย</th>
+                  <th className="num" style={{ width: 80 }}>ขาดเรียน</th>
+                  <th className="num" style={{ width: 70 }}>ลา</th>
+                  <th style={{ width: 100 }}>อัตรามาเรียน</th>
                 </tr>
               </thead>
               <tbody>
-                {list.map((r) => (
-                  <tr key={r.week_no}>
-                    <td>{r.week_no}</td>
-                    <td>{r.starts_on} – {r.ends_on}</td>
-                    <td className="num">{r.meetings_held}</td>
-                    <td className="num">{r.present_count}</td>
-                    <td className="num">{r.late_count}</td>
-                    <td className="num">{r.absent_count}</td>
-                    <td className="num">{r.leave_count}</td>
-                  </tr>
-                ))}
+                {list.map((r) => {
+                  const present = Number(r.present_count);
+                  const total = present + Number(r.late_count) + Number(r.absent_count) + Number(r.leave_count);
+                  const pct = total > 0 ? Math.round((present / total) * 100) : null;
+                  return (
+                    <tr key={r.week_no}>
+                      <td>{r.week_no}</td>
+                      <td>{r.starts_on} – {r.ends_on}</td>
+                      <td className="num">{r.meetings_held}</td>
+                      <td className="num">{r.present_count}</td>
+                      <td className="num">{r.late_count}</td>
+                      <td className="num">{r.absent_count}</td>
+                      <td className="num">{r.leave_count}</td>
+                      <td>{pct === null ? '—' : <Badge kind={pct >= 80 ? 'ok' : pct >= 60 ? 'warn' : 'danger'}>{pct}%</Badge>}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -344,34 +361,59 @@ export function GradeReportsScreen() {
       ) : (
         <TableCard title={`ผลการเรียน — ${scopeLabel}${onlyFailed ? ' (เฉพาะที่ไม่ผ่าน)' : ''}`}>
           <AsyncView state={grades} empty="ไม่มีข้อมูลตามเงื่อนไขที่เลือก">
-            {(rows) => (
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 130 }}>รหัสนักศึกษา</th>
-                    <th>ชื่อ — นามสกุล</th>
-                    <th style={{ width: 110 }}>รหัสวิชา</th>
-                    <th>ชื่อวิชา</th>
-                    <th className="num" style={{ width: 60 }}>นก.</th>
-                    <th style={{ width: 90 }}>ผลการเรียน</th>
-                    <th style={{ width: 150 }}>ภาคเรียน</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={`${r.student_code}-${r.course_code}-${i}`}>
-                      <td className="mono">{r.student_code}</td>
-                      <td>{r.full_name}</td>
-                      <td className="mono">{r.course_code}</td>
-                      <td>{r.course_name}</td>
-                      <td className="num">{r.credits}</td>
-                      <td style={{ color: r.earns_credit ? undefined : 'var(--danger, #c0392b)' }}>{r.grade_symbol}</td>
-                      <td>{r.term_label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            {(rows) => {
+              const studentCount = new Set(rows.map((r) => r.student_code)).size;
+              const failedCount = rows.filter((r) => !r.earns_credit).length;
+              let lastStudent = '';
+              return (
+                <>
+                  <div className="registry-summary" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', marginBottom: 12 }}>
+                    <Stat label="นักศึกษา" value={studentCount} tone="primary" />
+                    <Stat label="รายวิชาทั้งหมด" value={rows.length} tone="primary" />
+                    <Stat label="ไม่ผ่าน" value={failedCount} tone={failedCount > 0 ? 'warning' : 'success'} />
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 110 }}>รหัสวิชา</th>
+                        <th>ชื่อวิชา</th>
+                        <th className="num" style={{ width: 60 }}>นก.</th>
+                        <th style={{ width: 90 }}>ผลการเรียน</th>
+                        <th style={{ width: 150 }}>ภาคเรียน</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => {
+                        const newGroup = r.student_code !== lastStudent;
+                        lastStudent = r.student_code;
+                        return (
+                          <Fragment key={`${r.student_code}-${r.course_code}-${i}`}>
+                            {newGroup && (
+                              <tr style={{ background: 'var(--line-soft)' }}>
+                                <td colSpan={5} style={{ fontWeight: 600 }}>
+                                  <span className="mono">{r.student_code}</span> — {r.full_name}
+                                </td>
+                              </tr>
+                            )}
+                            <tr>
+                              <td className="mono">{r.course_code}</td>
+                              <td>{r.course_name}</td>
+                              <td className="num">{r.credits}</td>
+                              <td>
+                                {r.earns_credit
+                                  ? r.grade_symbol
+                                  : <Badge kind="danger">{r.grade_symbol}</Badge>}
+                              </td>
+                              <td>{r.term_label}</td>
+                            </tr>
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              );
+            }}
           </AsyncView>
         </TableCard>
       )}
@@ -384,26 +426,38 @@ export function GradeReportsScreen() {
       >
         <AsyncView state={failing} empty="ไม่มีนักศึกษาที่ผลการเรียนไม่ผ่านเกณฑ์ในขณะนี้">
           {(rows) => (
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 130 }}>รหัสนักศึกษา</th>
-                  <th style={{ width: 220 }}>ชื่อ — นามสกุล</th>
-                  <th className="num" style={{ width: 110 }}>จำนวนวิชาที่ตก</th>
-                  <th>รายวิชาที่ยังไม่ผ่าน</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.student_code}>
-                    <td className="mono">{r.student_code}</td>
-                    <td>{r.full_name}</td>
-                    <td className="num">{r.failed_count}</td>
-                    <td style={{ whiteSpace: 'normal' }}>{r.failed_courses}</td>
+            <>
+              <div className="registry-summary" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', marginBottom: 12 }}>
+                <Stat label="นักศึกษาที่ไม่ผ่านเกณฑ์" value={rows.length} tone="warning" />
+                <Stat label="รวมวิชาที่ตก" value={rows.reduce((sum, r) => sum + Number(r.failed_count), 0)} tone="warning" />
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 130 }}>รหัสนักศึกษา</th>
+                    <th style={{ width: 220 }}>ชื่อ — นามสกุล</th>
+                    <th className="num" style={{ width: 110 }}>จำนวนวิชาที่ตก</th>
+                    <th>รายวิชาที่ยังไม่ผ่าน</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.student_code}>
+                      <td className="mono">{r.student_code}</td>
+                      <td>{r.full_name}</td>
+                      <td className="num">{r.failed_count}</td>
+                      <td style={{ whiteSpace: 'normal' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {r.failed_course_codes.map((c) => (
+                            <Badge key={c} kind="danger">{c}</Badge>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </AsyncView>
       </TableCard>
