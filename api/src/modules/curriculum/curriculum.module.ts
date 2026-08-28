@@ -155,6 +155,38 @@ class CategoryDto {
   @IsOptional() @IsInt() sortOrder?: number;
 }
 
+/** แก้กลุ่มวิชา — ย้ายกลุ่มแม่ไม่ได้ตรงนี้ เพราะโครงสร้างต้นไม้ทั้งแฉกต้องคิดผลกระทบต่อเกณฑ์จบก่อนเสมอ */
+class UpdateCategoryDto {
+  @IsString() @MaxLength(40) code: string;
+  @IsString() nameTh: string;
+  @IsOptional() @IsNumber() @Min(0) minCredits?: number;
+  @IsOptional() @IsNumber() @Min(0) maxCredits?: number;
+  @IsOptional() @IsInt() sortOrder?: number;
+}
+
+/**
+ * สมรรถนะ — ข้อความสมรรถนะของฉบับหลักสูตรหนึ่ง (`competency`) แล้วผูกกับ
+ * รายวิชาที่ฝึกสมรรถนะนั้นผ่าน `course_competency` (0004) ตารางทั้งคู่มีอยู่
+ * ในสคีมาตั้งแต่ 0003/0004 แต่ไม่เคยมีเส้นทาง API ให้เรียกเลยสักเส้นทาง
+ */
+class CompetencyDto {
+  @IsString() @MaxLength(40) code: string;
+  @IsString() statementTh: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+}
+
+class UpdateCompetencyDto {
+  @IsString() @MaxLength(40) code: string;
+  @IsString() statementTh: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+}
+
+class MapCourseCompetencyDto {
+  @IsUuid() courseId: string;
+  @IsUuid() competencyId: string;
+  @IsOptional() @IsBoolean() isPrimary?: boolean;
+}
+
 const QUALIFICATION_LEVEL = ['PVC', 'PVS', 'TVB'] as const;
 const CLASS_SHIFT = ['morning', 'afternoon', 'evening', 'weekend'] as const;
 
@@ -685,6 +717,128 @@ export class CurriculumService {
     );
   }
 
+  async updateCategory(id: string, dto: UpdateCategoryDto) {
+    const row = await this.db.queryOne(
+      `update curriculum_category set
+         code = $2, name_th = $3,
+         min_credits = coalesce($4, min_credits), max_credits = $5,
+         sort_order = coalesce($6, sort_order)
+       where id = $1
+       returning id, code, name_th, kind, min_credits, max_credits`,
+      [id, dto.code.trim(), dto.nameTh.trim(), dto.minCredits ?? null, dto.maxCredits ?? null, dto.sortOrder ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบกลุ่มวิชานี้');
+    return row;
+  }
+
+  /**
+   * ลบกลุ่มวิชา — ปฏิเสธถ้ายังมีรายวิชาหรือกลุ่มย่อยผูกอยู่
+   *
+   * `curriculum_category` ↔ `curriculum_course`/`parent_id` เป็น `on delete
+   * cascade` ที่ชั้นฐานข้อมูล ถ้าปล่อยให้ลบตรง ๆ กลุ่มที่มีรายวิชาอยู่ 20 ตัว
+   * จะหายไปพร้อมรายวิชาที่ผูกไว้ทั้งหมดโดยไม่มีอะไรเตือน ต้องย้าย/ถอดรายวิชา
+   * และกลุ่มย่อยออกให้หมดก่อน ระบบจึงจะยอมลบกลุ่มที่ว่างจริง ๆ
+   */
+  async removeCategory(id: string) {
+    const row = await this.db.queryOne<{ courses: string; children: string }>(
+      `select
+         (select count(*) from curriculum_course where curriculum_category_id = $1) as courses,
+         (select count(*) from curriculum_category where parent_id = $1) as children`,
+      [id],
+    );
+    if (!row) throw new NotFoundException('ไม่พบกลุ่มวิชานี้');
+    if (Number(row.courses) > 0) {
+      throw new BadRequestException(`ลบไม่ได้ — กลุ่มนี้ยังมีรายวิชาผูกอยู่ ${row.courses} วิชา ถอดออกให้หมดก่อน`);
+    }
+    if (Number(row.children) > 0) {
+      throw new BadRequestException(`ลบไม่ได้ — กลุ่มนี้ยังมีกลุ่มย่อยอยู่ ${row.children} กลุ่ม ลบกลุ่มย่อยให้หมดก่อน`);
+    }
+    await this.db.query(`delete from curriculum_category where id = $1`, [id]);
+    return { deleted: true };
+  }
+
+  /** สมรรถนะของฉบับหลักสูตรหนึ่ง พร้อมรายวิชาที่ผูกไว้แล้ว */
+  async listCompetencies(versionId: string) {
+    return this.db.query(
+      `select cp.id, cp.code, cp.statement_th, cp.sort_order,
+              coalesce(
+                jsonb_agg(
+                  jsonb_build_object('mappingId', cc.id, 'courseId', co.id, 'code', co.code, 'nameTh', co.name_th, 'isPrimary', cc.is_primary)
+                  order by co.code
+                ) filter (where co.id is not null),
+                '[]'
+              ) as courses
+         from competency cp
+         left join course_competency cc on cc.competency_id = cp.id
+         left join course co on co.id = cc.course_id
+        where cp.curriculum_version_id = $1
+        group by cp.id, cp.code, cp.statement_th, cp.sort_order
+        order by cp.sort_order, cp.code`,
+      [versionId],
+    );
+  }
+
+  async createCompetency(versionId: string, dto: CompetencyDto) {
+    return this.db.queryOne(
+      `insert into competency (curriculum_version_id, code, statement_th, sort_order)
+       values ($1, $2, $3, coalesce($4, 0))
+       returning id, code, statement_th, sort_order`,
+      [versionId, dto.code.trim(), dto.statementTh.trim(), dto.sortOrder ?? null],
+    );
+  }
+
+  async updateCompetency(id: string, dto: UpdateCompetencyDto) {
+    const row = await this.db.queryOne(
+      `update competency set code = $2, statement_th = $3, sort_order = coalesce($4, sort_order)
+       where id = $1
+       returning id, code, statement_th, sort_order`,
+      [id, dto.code.trim(), dto.statementTh.trim(), dto.sortOrder ?? null],
+    );
+    if (!row) throw new NotFoundException('ไม่พบสมรรถนะนี้');
+    return row;
+  }
+
+  /** ลบสมรรถนะ — ปฏิเสธถ้ายังผูกกับรายวิชาอยู่ เหตุผลเดียวกับ removeCategory */
+  async removeCompetency(id: string) {
+    const row = await this.db.queryOne<{ mapped: string }>(
+      `select count(*) as mapped from course_competency where competency_id = $1`,
+      [id],
+    );
+    if (!row) throw new NotFoundException('ไม่พบสมรรถนะนี้');
+    if (Number(row.mapped) > 0) {
+      throw new BadRequestException(`ลบไม่ได้ — สมรรถนะนี้ยังผูกกับรายวิชาอยู่ ${row.mapped} วิชา ถอดออกให้หมดก่อน`);
+    }
+    const del = await this.db.queryOne(`delete from competency where id = $1 returning id`, [id]);
+    if (!del) throw new NotFoundException('ไม่พบสมรรถนะนี้');
+    return { deleted: true };
+  }
+
+  /**
+   * ผูกรายวิชากับสมรรถนะ — `curriculum_version_id` ต้องอ่านจากสมรรถนะเอง
+   * ไม่ใช่รับจากผู้เรียก มิฉะนั้นจะผูกรายวิชากับสมรรถนะของคนละฉบับได้
+   */
+  async mapCourseCompetency(dto: MapCourseCompetencyDto) {
+    const competency = await this.db.queryOne<{ curriculum_version_id: string }>(
+      `select curriculum_version_id from competency where id = $1`,
+      [dto.competencyId],
+    );
+    if (!competency) throw new NotFoundException('ไม่พบสมรรถนะนี้');
+
+    return this.db.queryOne(
+      `insert into course_competency (curriculum_version_id, course_id, competency_id, is_primary)
+       values ($1, $2, $3, coalesce($4, false))
+       on conflict (curriculum_version_id, course_id, competency_id) do update set is_primary = excluded.is_primary
+       returning id, course_id, competency_id, is_primary`,
+      [competency.curriculum_version_id, dto.courseId, dto.competencyId, dto.isPrimary ?? null],
+    );
+  }
+
+  async unmapCourseCompetency(id: string) {
+    const row = await this.db.queryOne(`delete from course_competency where id = $1 returning id`, [id]);
+    if (!row) throw new NotFoundException('ไม่พบการผูกรายวิชากับสมรรถนะนี้');
+    return { deleted: true };
+  }
+
   /**
    * สร้างรายวิชาในคลัง
    *
@@ -1100,6 +1254,53 @@ class CurriculumController {
   @Post('versions/:id/categories')
   addCategory(@Param('id', ParseUuidPipe) id: string, @Body() dto: CategoryDto) {
     return this.svc.addCategory(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('categories/:id')
+  updateCategory(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateCategoryDto) {
+    return this.svc.updateCategory(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('categories/:id')
+  removeCategory(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.removeCategory(id);
+  }
+
+  @Get('versions/:id/competencies')
+  listCompetencies(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.listCompetencies(id);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('versions/:id/competencies')
+  createCompetency(@Param('id', ParseUuidPipe) id: string, @Body() dto: CompetencyDto) {
+    return this.svc.createCompetency(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Patch('competencies/:id')
+  updateCompetency(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateCompetencyDto) {
+    return this.svc.updateCompetency(id, dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('competencies/:id')
+  removeCompetency(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.removeCompetency(id);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Post('course-competencies')
+  mapCourseCompetency(@Body() dto: MapCourseCompetencyDto) {
+    return this.svc.mapCourseCompetency(dto);
+  }
+
+  @Roles('academic', 'registrar', 'director', 'admin')
+  @Delete('course-competencies/:id')
+  unmapCourseCompetency(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.unmapCourseCompetency(id);
   }
 
   @Roles('academic', 'registrar', 'director', 'admin')

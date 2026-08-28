@@ -13,6 +13,7 @@ import { LEVEL, STUDENT_STATUS, thaiDate, money, pct } from '../core/fmt';
 import { href, navigate, useRoute } from '../core/router';
 import { AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
 import {
+  AchievementTab,
   AddressTab,
   AdvisorTab,
   GeneralTab,
@@ -169,16 +170,17 @@ const TABS = [
   { key: 'sensitive', label: 'สุขภาพ' },
   { key: 'prior', label: 'การศึกษา' },
   { key: 'advisor', label: 'อาจารย์ที่ปรึกษา' },
+  { key: 'achievement', label: 'ผลงาน/เกียรติประวัติ' },
   { key: 'study', label: 'ตารางเรียน / การเงิน' },
   { key: 'status', label: 'สถานะการศึกษา' },
 ];
 
 const TAB_HINT: Record<string, string> = {
-  general: 'ข้อมูลติดต่อ ครอบครัว และข้อมูลส่วนตัว', address: 'ที่อยู่ตามทะเบียนบ้านและที่อยู่ปัจจุบัน', parent: 'ข้อมูลบิดา มารดา และผู้ดูแล', sensitive: 'ข้อมูลสุขภาพที่มีการควบคุมสิทธิ์', prior: 'ประวัติการศึกษาก่อนเข้าเรียน', advisor: 'อาจารย์ที่ปรึกษาและสิทธิ์ผู้ปกครอง', study: 'เวลาเรียนและยอดการเงินของภาคเรียน', status: 'สถานะการศึกษาและประวัติการเปลี่ยนแปลง',
+  general: 'ข้อมูลติดต่อ ครอบครัว และข้อมูลส่วนตัว', address: 'ที่อยู่ตามทะเบียนบ้านและที่อยู่ปัจจุบัน', parent: 'ข้อมูลบิดา มารดา และผู้ดูแล', sensitive: 'ข้อมูลสุขภาพที่มีการควบคุมสิทธิ์', prior: 'ประวัติการศึกษาก่อนเข้าเรียน', advisor: 'อาจารย์ที่ปรึกษาและสิทธิ์ผู้ปกครอง', achievement: 'รางวัลและผลงานที่นักศึกษาได้รับ', study: 'เวลาเรียนและยอดการเงินของภาคเรียน', status: 'สถานะการศึกษาและประวัติการเปลี่ยนแปลง',
 };
 const TAB_GROUPS = [
   { title:'ข้อมูลพื้นฐาน', keys:['general', 'address', 'parent'] },
-  { title:'การดูแลและประวัติ', keys:['sensitive', 'prior', 'advisor'] },
+  { title:'การดูแลและประวัติ', keys:['sensitive', 'prior', 'advisor', 'achievement'] },
   { title:'การเรียน', keys:['study', 'status'] },
 ] as const;
 
@@ -229,6 +231,7 @@ export function StudentDetailScreen({ id }: { id: string }) {
                     {tab === 'sensitive' && <SensitiveTab p={pf} reload={profile.reload} />}
                     {tab === 'prior' && <PriorEducationTab p={pf} reload={profile.reload} />}
                     {tab === 'advisor' && <AdvisorTab p={pf} reload={profile.reload} />}
+                    {tab === 'achievement' && <AchievementTab p={pf} reload={profile.reload} />}
                     {tab === 'status' && <StatusTab p={pf} reload={profile.reload} />}
                   </>
                 )}

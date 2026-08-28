@@ -54,6 +54,7 @@ import { StudentCenterScreen } from './screens/student-center';
 import { SubjectDataScreen } from './screens/subject-data';
 import { SubjectGroupsScreen } from './screens/subject-groups';
 import { CompetenciesScreen } from './screens/competencies';
+import { AnnouncementsScreen } from './screens/announcements';
 import { TermCategoriesScreen } from './screens/term-categories';
 import { TimetableScreen } from './screens/timetable';
 import { TimetableCenterScreen } from './screens/timetable-center';
@@ -210,6 +211,7 @@ function Routes() {
   if (head === 'subject-data') return <SubjectDataScreen />;
   if (head === 'subject-groups') return <SubjectGroupsScreen />;
   if (head === 'competencies') return <CompetenciesScreen />;
+  if (head === 'announcements') return <AnnouncementsScreen />;
   if (head === 'student-center') return <StudentCenterScreen />;
   if (head === 'personnel-center') return <PersonnelCenterScreen />;
   if (head === 'personnel-search') return <PersonnelSearchScreen staffId={second} />;

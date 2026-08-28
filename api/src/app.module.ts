@@ -35,6 +35,8 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ClubsModule } from './modules/clubs/clubs.module';
 import { OnetModule } from './modules/onet/onet.module';
 import { ExamScheduleModule } from './modules/exam-schedule/exam-schedule.module';
+import { AchievementsModule } from './modules/achievements/achievements.module';
+import { AnnouncementsModule } from './modules/announcements/announcements.module';
 
 @Module({
   imports: [
@@ -73,6 +75,8 @@ import { ExamScheduleModule } from './modules/exam-schedule/exam-schedule.module
     ClubsModule,
     OnetModule,
     ExamScheduleModule,
+    AchievementsModule,
+    AnnouncementsModule,
     JobsModule,
   ],
   providers: [

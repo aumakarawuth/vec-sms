@@ -2,8 +2,8 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้าง + ข้อมูลตัวอย่าง
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- migration ล่าสุด  0089
--- ลายนิ้วมือต้นทาง  cdd5af13edd81341
+-- migration ล่าสุด  0091
+-- ลายนิ้วมือต้นทาง  e3b334ac1aed4a44
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -23690,6 +23690,237 @@ $$;
 
 comment on function student_failed_courses(uuid) is
   'วิชาที่นักศึกษาคนหนึ่งยังไม่ผ่าน (ผลปัจจุบันไม่ได้หน่วยกิต และไม่เคยผ่านวิชานี้ในความพยายามครั้งไหนเลย) — หลักการเดียวกับ regrade_eligible() แต่มองจากฝั่งนักศึกษา ใช้กรองรายวิชาในหน้าลงทะเบียนเรียนเสริม/เรียนปรับเกรดรายคน';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0090_student_achievement.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0090_student_achievement.sql
+--
+-- ผลงานและเกียรติประวัติของนักศึกษา — เมนู "ข้อมูลผลงานและเกียรติประวัติ"
+-- ในศูนย์นักศึกษาไม่เคยมีตารางรองรับเลยตั้งแต่ต้น (ต่างจาก `talent_th`
+-- ซึ่งเป็นแค่ข้อความอิสระบนโปรไฟล์ — รางวัล/ผลงานต้องมีวันที่ ระดับ และ
+-- ผู้มอบ เพื่อขึ้นใบประกาศเกียรติคุณหรือพิจารณาทุนได้จริง)
+--
+-- ─── ทำไมไม่ใช้ตาราง behavior_record (ทิศทาง 'award') แทน ───
+-- behavior_record เป็นเรื่อง**คะแนนความประพฤติสะสม**ที่บวก/ลบยอดรายวินาที
+-- (ดู v_behavior_balance) ส่วนผลงาน/เกียรติประวัติเป็น**บันทึกเหตุการณ์**ที่
+-- ไม่มียอดสะสมและไม่ผูกกับ behavior_rule เลย — ผสมสองเรื่องนี้เข้าตารางเดียว
+-- จะทำให้ยอดคะแนนความประพฤติปนกับ "ได้รับรางวัลกีฬาสี" ซึ่งไม่ควรบวกลบอะไร
+--
+-- ─── ทำไมแก้ไข/ลบได้ตรง ไม่ใช่ write-once แบบ issued_document ───
+-- รางวัลที่บันทึกผิดปี ผิดระดับ หรือพิมพ์ชื่อผิด เป็นเรื่องที่ต้องแก้ตรงได้
+-- ต่างจากเอกสารที่ออกไปแล้วมีคนถือกระดาษอยู่ (หลักข้อ 4) — บันทึกนี้ยังไม่ใช่
+-- หลักฐานที่พิมพ์ออกไปให้ใครถือ จึงแก้/ลบตรงได้เหมือน club (0070)
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create table student_achievement (
+  id             uuid        primary key default gen_random_uuid(),
+  student_id     uuid        not null references student on delete cascade,
+  title_th       text        not null,
+  category_th    text,                          -- เช่น "วิชาการ" "กีฬา" "ศิลปะ" "จิตอาสา" — ข้อความอิสระ ไม่ตรึงเป็น enum
+  level_th       text,                           -- เช่น "ระดับสถานศึกษา" "ระดับจังหวัด" "ระดับชาติ" — ข้อความอิสระเช่นกัน
+  issuer_th      text,                           -- หน่วยงานที่มอบ/จัด
+  awarded_on     date        not null default current_date,
+  note_th        text,
+  recorded_by    uuid        not null references person on delete restrict,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create index on student_achievement (student_id, awarded_on desc);
+
+comment on table student_achievement is
+  'ผลงานและเกียรติประวัติของนักศึกษา — บันทึกเหตุการณ์ ไม่ใช่ยอดสะสมแบบ behavior_record (ดูคอมเมนต์บนไฟล์นี้)';
+comment on column student_achievement.recorded_by is
+  'ผู้บันทึกจริง ไม่ใช่ผู้ที่ระบบอนุญาตให้เลือก — ตั้งจาก current_actor_id() เท่านั้น (ดู trigger guard)';
+
+create trigger student_achievement_touch before update on student_achievement
+  for each row execute function set_updated_at();
+
+-- ───────────────────────────────────────────────────────────────────
+-- Row-Level Security — สืบทอดสถานศึกษาผ่าน student_id เหมือน club_member
+-- ───────────────────────────────────────────────────────────────────
+alter table student_achievement enable row level security;
+alter table student_achievement force row level security;
+
+create policy tenant_isolation on student_achievement
+  using (student_institution(student_achievement.student_id) = current_institution_id())
+  with check (student_institution(student_achievement.student_id) = current_institution_id());
+
+/*
+ * อ่านได้กว้างกว่าเขียน — ครูควรเห็นผลงานของนักศึกษาที่ตัวเองดูแล/สอนเวลา
+ * เขียนจดหมายแนะนำหรือคัดเลือกตัวแทน ต่างจากการบันทึก/แก้ไขที่ควรอยู่กับ
+ * งานที่รับผิดชอบเรื่องนี้จริง (รูปแบบเดียวกับ club_member_scope ใน 0070)
+ */
+create policy student_achievement_read on student_achievement
+  as restrictive
+  using (
+    is_institution_wide_role()
+    or current_app_role() = 'teacher'
+    or student_id in (select actor_student_ids())
+    or exists (select 1 from student_guardian sg
+                where sg.student_id = student_achievement.student_id
+                  and sg.person_id = current_actor_id()
+                  and sg.verified_at is not null)
+  );
+
+create policy student_achievement_insert on student_achievement
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+create policy student_achievement_update on student_achievement
+  as restrictive for update
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']))
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+create policy student_achievement_delete on student_achievement
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+/*
+ * ─── ทำไมต้องมี trigger ทั้งที่มีนโยบาย insert แล้ว ───
+ * นโยบายเทียบได้แค่ "บทบาทนี้เขียนได้ไหม" แต่เทียบไม่ได้ว่าค่า recorded_by
+ * ที่ส่งมาเป็นคนที่กดจริงหรือไม่ — ถ้าไม่บังคับ เจ้าหน้าที่คนหนึ่งจะบันทึก
+ * ในนามคนอื่นได้ แล้วหลักฐานว่าใครบันทึกจะชี้ผิดคน (บทเรียนเดียวกับ
+ * behavior_record_guard ใน 0056)
+ */
+create or replace function student_achievement_guard() returns trigger
+language plpgsql as $$
+begin
+  if current_app_role() = 'none' then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.recorded_by is distinct from current_actor_id() then
+      raise exception 'ผู้บันทึกผลงาน/เกียรติประวัติต้องเป็นผู้ใช้ที่กำลังทำรายการ';
+    end if;
+    return new;
+  end if;
+  if new.student_id <> old.student_id then
+    raise exception 'ย้ายบันทึกไปให้นักศึกษาคนอื่นไม่ได้ — ถ้าบันทึกผิดคนต้องลบแล้วบันทึกใหม่';
+  end if;
+  if new.recorded_by is distinct from old.recorded_by then
+    raise exception 'เปลี่ยนผู้บันทึกไม่ได้';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists student_achievement_guard on student_achievement;
+create trigger student_achievement_guard
+  before insert or update on student_achievement
+  for each row execute function student_achievement_guard();
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0091_announcement.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0091_announcement.sql
+--
+-- ประกาศ/ข่าวสารถึงนักศึกษา — รวมสองเมนูเดิมของศูนย์นักศึกษาเป็นระบบเดียว
+-- "การประชาสัมพันธ์" (จัดทำประกาศ) และ "ไปรษณีย์" (จัดการข้อมูลไปรษณีย์และ
+-- เอกสารติดต่อ) เป็นงานเดียวกันจริง ๆ ในทางปฏิบัติ — ทั้งสองคือ "ข้อความ
+-- ที่วิทยาลัยต้องการสื่อสารถึงนักศึกษาเป็นกลุ่ม" ต่างกันแค่ช่องทาง (ปิดประกาศ
+-- vs. เอกสารที่ส่งทางไปรษณีย์) ซึ่งไม่ใช่ความต่างของโครงสร้างข้อมูล
+-- แยกเป็นสองตารางจะได้ระบบที่ทำงานเหมือนกันทุกอย่างสองชุดโดยไม่มีเหตุผล
+--
+-- ─── ทำไมยังไม่มี audience targeting (ต่อกลุ่ม/ห้อง) ───
+-- ตารางที่ผูกกับ program/class_section เพิ่มความซับซ้อนของ RLS และการ
+-- คำนวณ "ใครเห็นประกาศนี้" ทันที โดยยังไม่มีใครขอ — วิทยาลัยที่ใช้งานจริง
+-- อาจต้องการ "ทั้งวิทยาลัย" เป็นส่วนใหญ่อยู่แล้ว เพิ่มการเจาะกลุ่มทีหลังได้
+-- เมื่อรู้ว่าวิทยาลัยต้องการแบบไหนจริง ไม่ใช่เดาไว้ก่อน (หลักการเดียวกับ
+-- ที่ 0070 ยังไม่ผูกชมรมกับเกณฑ์จบ)
+--
+-- ─── ทำไม published_at เป็น timestamptz ที่ตั้งค่าได้ ไม่ใช่แค่ boolean ───
+-- งานประชาสัมพันธ์เขียนล่วงหน้าแล้วตั้งเวลาปล่อยเป็นเรื่องปกติ (เช่น เขียน
+-- ประกาศผลสอบไว้ก่อน แล้วให้ขึ้นพร้อมกันตอนเช้าวันถัดไป) — null คือฉบับร่าง
+-- ที่ยังไม่เผยแพร่ ค่าที่ตั้งไว้ในอนาคตคือ "ตั้งเวลาไว้แล้ว" หน้าจอเป็นผู้
+-- ตัดสินว่าจะแสดงอะไรจากสองคอลัมน์นี้ ไม่ต้องมี status แยกอีกคอลัมน์ที่
+-- อาจไม่ตรงกับเวลาจริง
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create table announcement (
+  id             uuid        primary key default gen_random_uuid(),
+  institution_id uuid        not null references institution on delete restrict,
+  title_th       text        not null,
+  body_th        text        not null,
+  category_th    text,                          -- เช่น "ทั่วไป" "การเงิน" "ตารางสอบ" "กิจกรรม" — ข้อความอิสระ
+  published_at   timestamptz,                    -- null = ฉบับร่าง · อนาคต = ตั้งเวลาไว้แล้ว
+  expires_on     date,                           -- null = ไม่มีกำหนดหมดอายุ
+  created_by     uuid        not null references person on delete restrict,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create index on announcement (institution_id, published_at desc);
+
+comment on table announcement is
+  'ประกาศ/ข่าวสารถึงนักศึกษา — รวมงาน "การประชาสัมพันธ์" และ "ไปรษณีย์" เดิมของศูนย์นักศึกษาเป็นระบบเดียว (ดูคอมเมนต์บนไฟล์นี้)';
+comment on column announcement.created_by is
+  'ผู้เขียนจริง ไม่ใช่ผู้ที่ระบบอนุญาตให้เลือก — ตั้งจาก current_actor_id() เท่านั้น (ดู trigger guard)';
+
+create trigger announcement_touch before update on announcement
+  for each row execute function set_updated_at();
+
+-- ───────────────────────────────────────────────────────────────────
+-- Row-Level Security
+-- ───────────────────────────────────────────────────────────────────
+alter table announcement enable row level security;
+alter table announcement force row level security;
+
+create policy tenant_isolation on announcement
+  using (institution_id = current_institution_id())
+  with check (institution_id = current_institution_id());
+
+/*
+ * เขียนได้เฉพาะบทบาทที่ทำหน้าที่สื่อสารกับนักศึกษาโดยตรง — ครูไม่รวม
+ * เพราะประกาศระดับนี้เป็นเสียงของวิทยาลัย ไม่ใช่ของครูรายคน (ต่างจาก
+ * behavior_record ที่ครูต้องบันทึกเองได้ตามเหตุการณ์ที่เห็น)
+ */
+create policy announcement_insert on announcement
+  as restrictive for insert
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+create policy announcement_update on announcement
+  as restrictive for update
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']))
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+create policy announcement_delete on announcement
+  as restrictive for delete
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin']));
+
+/* ผู้เขียนต้องเป็นคนที่กดจริง — เหตุผลเดียวกับ student_achievement_guard ใน 0090 */
+create or replace function announcement_guard() returns trigger
+language plpgsql as $$
+begin
+  if current_app_role() = 'none' then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.created_by is distinct from current_actor_id() then
+      raise exception 'ผู้เขียนประกาศต้องเป็นผู้ใช้ที่กำลังทำรายการ';
+    end if;
+    return new;
+  end if;
+  if new.created_by is distinct from old.created_by then
+    raise exception 'เปลี่ยนผู้เขียนประกาศไม่ได้';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists announcement_guard on announcement;
+create trigger announcement_guard
+  before insert or update on announcement
+  for each row execute function announcement_guard();
 
 commit;
 

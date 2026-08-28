@@ -104,10 +104,10 @@ class PrintOptionsDto {
    * สรุปรายภาคกับถ้อยคำหนึ่งคำ — ต่างจากการเลือกตระกูล 67/62 ซึ่งต้องมาจาก
    * รุ่นหลักสูตรใน payload เพราะจัดกลุ่มคนละแบบ
    */
-  @IsOptional() @IsIn(['62', 'sorsor'], {
-    message: 'รูปแบบใบ รบ. ต้องเป็น 62 หรือ sorsor',
+  @IsOptional() @IsIn(['62', 'sorsor', 'en-landscape'], {
+    message: 'รูปแบบใบ รบ. ต้องเป็น 62 หรือ sorsor หรือ en-landscape',
   })
-  form?: '62' | 'sorsor';
+  form?: '62' | 'sorsor' | 'en-landscape';
 }
 
 class VoidDocumentDto {

@@ -4778,6 +4778,108 @@ async function main() {
     expect(again.status === 404, `ถอนซ้ำควรได้ 404 ได้ ${again.status}`);
   });
 
+  console.log('');
+  console.log('══ ผลงานและเกียรติประวัติของนักศึกษา (0090) ══');
+
+  let achievementId = '';
+
+  await check('API-238 ครูบันทึกผลงานนักศึกษาเองไม่ได้', async () => {
+    const r = await teacher(`/students/${F.student}/achievements`, {
+      method: 'POST',
+      body: JSON.stringify({ titleTh: 'รางวัลทดสอบโดยครู' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-239 งานทะเบียนบันทึกผลงานได้ พร้อมระดับและผู้มอบ', async () => {
+    const r = await registrar(`/students/${F.student}/achievements`, {
+      method: 'POST',
+      body: JSON.stringify({
+        titleTh: 'รางวัลชนะเลิศแข่งขันหุ่นยนต์ API-239',
+        categoryTh: 'วิชาการ',
+        levelTh: 'ระดับจังหวัด',
+        issuerTh: 'สอศ.',
+        awardedOn: '2026-06-01',
+      }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    achievementId = r.body.id;
+  });
+
+  await check('API-240 ครูอ่านผลงานของนักศึกษาที่สอนได้ แต่แก้ไข/ลบไม่ได้', async () => {
+    const list = await teacher(`/students/${F.student}/achievements`);
+    expect(list.status === 200, `ควรอ่านได้ ได้ ${list.status}`);
+    expect(list.body.some((x: any) => x.id === achievementId), 'ควรเห็นรายการที่เพิ่งบันทึก');
+
+    const upd = await teacher(`/achievements/${achievementId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ titleTh: 'แก้โดยครู' }),
+    });
+    expect(upd.status === 403, `แก้ไขควรได้ 403 ได้ ${upd.status}`);
+
+    const del = await teacher(`/achievements/${achievementId}`, { method: 'DELETE' });
+    expect(del.status === 403, `ลบควรได้ 403 ได้ ${del.status}`);
+  });
+
+  await check('API-241 งานทะเบียนแก้ไขและลบผลงานได้ ลบซ้ำได้ 404', async () => {
+    const upd = await registrar(`/achievements/${achievementId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ levelTh: 'ระดับชาติ' }),
+    });
+    expect(upd.status === 200, `ควรได้ 200 ได้ ${upd.status}: ${JSON.stringify(upd.body)}`);
+    expect(upd.body.level_th === 'ระดับชาติ', 'ระดับต้องอัปเดตเป็นค่าใหม่');
+
+    const del = await registrar(`/achievements/${achievementId}`, { method: 'DELETE' });
+    expect(del.status === 200, `ลบควรได้ 200 ได้ ${del.status}`);
+
+    const again = await registrar(`/achievements/${achievementId}`, { method: 'DELETE' });
+    expect(again.status === 404, `ลบซ้ำควรได้ 404 ได้ ${again.status}`);
+  });
+
+  console.log('');
+  console.log('══ ประกาศ/ข่าวสารถึงนักศึกษา (0091) ══');
+
+  let announcementId = '';
+
+  await check('API-242 ครูสร้างประกาศเองไม่ได้', async () => {
+    const r = await teacher('/announcements', {
+      method: 'POST',
+      body: JSON.stringify({ titleTh: 'ประกาศทดสอบโดยครู', bodyTh: 'เนื้อหา' }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-243 งานทะเบียนสร้างประกาศเป็นฉบับร่างได้ก่อน แล้วค่อยเผยแพร่', async () => {
+    const created = await registrar('/announcements', {
+      method: 'POST',
+      body: JSON.stringify({ titleTh: 'ปิดภาคเรียน API-243', bodyTh: 'ประกาศปิดภาคเรียน', categoryTh: 'ทั่วไป' }),
+    });
+    expect(created.status === 201, `ควรได้ 201 ได้ ${created.status}: ${JSON.stringify(created.body)}`);
+    expect(created.body.published_at === null, 'ไม่ส่ง publishNow ต้องเป็นฉบับร่าง (published_at เป็น null)');
+    announcementId = created.body.id;
+
+    const published = await registrar(`/announcements/${announcementId}/publish`, { method: 'POST' });
+    expect(published.status === 201, `เผยแพร่ควรได้ 201 ได้ ${published.status}`);
+    expect(!!published.body.published_at, 'เผยแพร่แล้วต้องมี published_at');
+  });
+
+  await check('API-244 เผยแพร่ทันทีตอนสร้างได้ด้วย publishNow', async () => {
+    const r = await registrar('/announcements', {
+      method: 'POST',
+      body: JSON.stringify({ titleTh: 'ประกาศด่วน API-244', bodyTh: 'เนื้อหา', publishNow: true }),
+    });
+    expect(r.status === 201, `ควรได้ 201 ได้ ${r.status}`);
+    expect(!!r.body.published_at, 'publishNow=true ต้องได้ published_at ทันที');
+  });
+
+  await check('API-245 ลบประกาศได้ และลบซ้ำได้ 404', async () => {
+    const del = await registrar(`/announcements/${announcementId}`, { method: 'DELETE' });
+    expect(del.status === 200, `ควรได้ 200 ได้ ${del.status}`);
+
+    const again = await registrar(`/announcements/${announcementId}`, { method: 'DELETE' });
+    expect(again.status === 404, `ลบซ้ำควรได้ 404 ได้ ${again.status}`);
+  });
+
   await app.close();
 
   console.log('');

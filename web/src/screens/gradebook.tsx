@@ -15,7 +15,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { num, pct } from '../core/fmt';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
+import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const CATEGORY: Record<string, string> = {
@@ -432,6 +432,11 @@ function GradePanel({
             รอบนี้ล็อกแล้ว — การแก้เกรดหลังจากนี้ต้องยื่นคำร้องที่ต้องมีผู้อนุมัติสองคน
             ไม่มีทางแก้ตรงจากหน้าจอนี้
           </Notice>
+          <div style={{ marginTop: 8 }}>
+            <PrintButton path={`/reports/grade-announcement/${sectionId}`}>
+              พิมพ์ประกาศผลสอบ
+            </PrintButton>
+          </div>
         </div>
       )}
 

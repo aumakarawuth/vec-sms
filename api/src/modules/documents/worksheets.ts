@@ -268,6 +268,68 @@ export class WorksheetService {
       return { head, students };
     });
   }
+
+  /**
+   * ประกาศผลสอบของกลุ่มเรียน — ต่างจากประกาศผู้มีสิทธิ์สอบตรงที่นี่คือ
+   * "หลังสอบ" (มีเกรด) ไม่ใช่ "ก่อนสอบ" (มีแค่เวลาเรียน)
+   *
+   * ─── ทำไมต้องล็อกก่อนถึงจะพิมพ์ได้ ───
+   * เกรดเปลี่ยนได้ทางเดียวคือผ่าน `grade_change_request` ที่ต้องมีผู้อนุมัติ
+   * สองคน (หลักข้อ 3ก) — ถ้าพิมพ์ประกาศได้ตั้งแต่ขั้น `teacher_submitted`
+   * หรือ `head_approved` จะกลายเป็นเกรดที่ยังไม่ผ่านสายอนุมัติแต่ถูกนักศึกษา
+   * เห็นและอ้างอิงแล้ว ทั้งที่อาจถูกตีกลับแก้ในขั้นถัดไป
+   */
+  async gradeAnnouncement(sectionId: string) {
+    return this.db.tx(async (c) => {
+      const head = (
+        await c.query(
+          `select cs.section_no, c.code, c.name_th as course_th,
+                  i.name_th as institution_th,
+                  t.ordinal, ay.year_be,
+                  trim(coalesce(tp.prefix_th,'') || coalesce(tp.first_name_th,'')
+                       || ' ' || coalesce(tp.last_name_th,'')) as teacher_th,
+                  gs.stage, gs.locked_at
+             from class_section cs
+             join course c on c.id = cs.course_id
+             join term t on t.id = cs.term_id
+             join academic_year ay on ay.id = t.academic_year_id
+             join institution i on i.id = cs.institution_id
+             left join staff tst on tst.id = cs.teacher_id
+             left join person tp on tp.id = tst.person_id
+             left join grade_submission gs on gs.class_section_id = cs.id
+            where cs.id = $1`,
+          [sectionId],
+        )
+      ).rows[0];
+      if (!head) throw new NotFoundException('ไม่พบกลุ่มเรียนที่ระบุ');
+      if (head.stage !== 'locked') {
+        throw new NotFoundException(
+          `ประกาศผลได้เฉพาะกลุ่มเรียนที่ล็อกเกรดแล้ว — กลุ่มนี้อยู่ขั้น ` +
+            `"${head.stage ?? 'ยังไม่ส่ง'}" ยังพิมพ์ประกาศไม่ได้`,
+        );
+      }
+
+      const students = (
+        await c.query(
+          `select s.student_code,
+                  trim(coalesce(p.prefix_th,'') || coalesce(p.first_name_th,'')
+                       || ' ' || coalesce(p.last_name_th,'')) as full_name,
+                  s.class_number, gsym.symbol as grade_symbol
+             from enrollment e
+             join student s on s.id = e.student_id
+             join person  p on p.id = s.person_id
+             left join enrollment_result er
+                    on er.enrollment_id = e.id and er.superseded_by is null
+             left join grade_symbol gsym on gsym.id = er.grade_symbol_id
+            where e.class_section_id = $1 and e.status <> 'dropped'
+            order by s.student_code`,
+          [sectionId],
+        )
+      ).rows;
+
+      return { head, students };
+    });
+  }
 }
 
 @Roles('teacher', 'registrar', 'academic', 'student_affairs', 'director', 'admin')
@@ -542,6 +604,67 @@ ${printedAt(
 )}`;
 
     return sheet(`ผู้มีสิทธิ์สอบ ${head.code} ${head.section_no}`, 'portrait', body);
+  }
+
+  /**
+   * ประกาศผลสอบ — ต่างจากประกาศผู้มีสิทธิ์สอบตรงที่พิมพ์ได้เฉพาะกลุ่มเรียน
+   * ที่ล็อกเกรดแล้ว (`svc.gradeAnnouncement` ปฏิเสธเองถ้ายังไม่ล็อก)
+   */
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('grade-announcement/:sectionId')
+  async gradeAnnouncement(
+    @Param('sectionId', ParseUuidPipe) sectionId: string,
+    @Query() _q: EmptyQueryDto,
+  ) {
+    const { head, students } = await this.svc.gradeAnnouncement(sectionId);
+
+    const rows = students
+      .map(
+        (x: Record<string, unknown>, i: number) => `<tr>
+      <td class="mid">${i + 1}</td>
+      <td>${esc(x.student_code)}</td>
+      <td>${esc(x.full_name)}</td>
+      <td class="mid">${esc(x.grade_symbol ?? '—')}</td>
+    </tr>`,
+      )
+      .join('\n');
+
+    const body = `
+<div class="school">${esc(head.institution_th)}</div>
+<div class="title">ประกาศผลการเรียน</div>
+<div class="sub">ภาคเรียนที่ ${esc(head.ordinal)} ปีการศึกษา ${esc(head.year_be)}</div>
+
+<div class="meta">
+  <span><strong>รายวิชา</strong> ${esc(head.code)} ${esc(head.course_th)}</span>
+  <span><strong>กลุ่ม</strong> ${esc(head.section_no)}</span>
+  <span><strong>ผู้สอน</strong> ${esc(head.teacher_th ?? '—')}</span>
+  <span><strong>จำนวน</strong> ${students.length} คน</span>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:8%">ที่</th>
+      <th style="width:18%">รหัสนักศึกษา</th>
+      <th>ชื่อ — นามสกุล</th>
+      <th style="width:14%">ผลการเรียน</th>
+    </tr>
+  </thead>
+  <tbody>${rows || '<tr><td colspan="4" class="mid">— ยังไม่มีผู้ลงทะเบียน —</td></tr>'}</tbody>
+</table>
+
+<div class="sign-row">
+  <div class="sign"><div class="line">ผู้สอน</div></div>
+  <div class="sign"><div class="line">หัวหน้างานทะเบียน</div></div>
+</div>
+
+${printedAt(
+  `<br>เกรดล็อกแล้วเมื่อ ${esc(thaiDate(
+    head.locked_at instanceof Date ? head.locked_at.toISOString() : head.locked_at,
+  ))} — การแก้ไขหลังจากนี้ต้องยื่นคำร้องขอแก้เกรดที่ต้องมีผู้อนุมัติสองคน`,
+)}`;
+
+    return sheet(`ประกาศผลสอบ ${head.code} ${head.section_no}`, 'portrait', body);
   }
 }
 

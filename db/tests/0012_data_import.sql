@@ -142,35 +142,59 @@ begin
 end $$;
 
 -- ── TEST 108 ───────────────────────────────────────────────────────
--- ไม่เก็บเลขประจำตัวประชาชนแบบอ่านออก เก็บเป็นค่าแฮช
+-- ไม่เก็บเลขประจำตัวประชาชนแบบอ่านออก เก็บเป็นค่าแฮชที่มีกุญแจ
 --
--- คอลัมน์ national_id_enc รอเชื่อม KMS จึงยังไม่เขียนเลขจริงลงไป
--- การเก็บเลขจริงแบบอ่านออกไว้ก่อนแล้วค่อยเข้ารหัสทีหลัง แปลว่ามีช่วงเวลา
--- ที่ข้อมูลอ่อนไหวที่สุดของระบบอยู่ในรูปที่อ่านได้
+-- ─── ทำไมเทสต์นี้ส่ง national_id_hash_hex มาเอง ไม่ใช่ national_id ตรง ๆ ───
+-- 0087 เปลี่ยนสัญญาของ apply_student_import() ให้รับเฉพาะค่าที่เข้ารหัส/
+-- แฮชมาแล้วจากชั้น API (ดูคอมเมนต์บนสุดของ 0087) เพราะกุญแจ HMAC
+-- (NATIONAL_ID_KEY) อยู่นอกฐานข้อมูลโดยตั้งใจตั้งแต่ 0061 — ถ้าฟังก์ชันนี้
+-- แฮชเลขบัตรตรงในฐานข้อมูลเอง (แบบ 0023 เดิม) จะไม่มีกุญแจให้ใช้เลย
+-- และย้อนกลับไปเป็นแฮชเปล่าที่ไล่ครบได้ในไม่กี่นาที ซึ่งเป็นช่องโหว่ที่
+-- 0061 ปิดไปแล้ว — เทสต์รุ่นเดิมยัง raw `national_id` ตรง ๆ จึงพังตั้งแต่
+-- 0087 โดยไม่มีอะไรฟ้องจนกว่าจะรันทั้งชุด (v_hash เป็น null เพราะฟังก์ชัน
+-- ไม่เห็น national_id_hash_hex ในเพย์โหลดเลย)
+--
+-- ค่าเลขฐานสิบหกด้านล่างเป็นค่าจำลอง (ไม่ใช่ HMAC จริงของเลข 13 หลักใด ๆ)
+-- เพราะเทสต์ระดับฐานข้อมูลไม่มีกุญแจของชั้น API ให้คำนวณค่าจริง — สิ่งที่
+-- ต้องพิสูจน์ตรงนี้คือฟังก์ชัน**ส่งผ่าน**ค่าที่ได้รับมาอย่างถูกต้อง ไม่ใช่
+-- ตรวจอัลกอริทึมแฮช (นั่นคือหน้าที่ของเทสต์ฝั่ง API — ดู national-id.ts)
+--
+-- คอลัมน์ national_id_enc รอเชื่อม KMS จึงยังไม่เขียนเลขจริงลงไปแม้จะส่ง
+-- hash มาแล้วก็ตาม (ไม่ส่ง national_id_enc_hex มาในเทสต์นี้)
 do $$
-declare v_batch uuid; v_hash bytea; v_enc bytea;
+declare v_batch uuid; v_hash bytea; v_enc bytea; v_ver smallint;
+  v_hash_hex text := 'a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff';
 begin
   insert into import_batch (institution_id, kind, total_rows)
   values ('11111111-1111-1111-1111-111111111111', 'student', 1)
   returning id into v_batch;
 
   insert into import_row (batch_id, row_no, payload) values
-    (v_batch, 1, '{"student_code":"69IMP0009","first_name_th":"มานี","last_name_th":"มีนา",
-                   "admitted_year_be":"2569","national_id":"3845663218456"}'::jsonb);
+    (v_batch, 1, jsonb_build_object(
+      'student_code', '69IMP0009', 'first_name_th', 'มานี', 'last_name_th', 'มีนา',
+      'admitted_year_be', '2569', 'national_id', '3845663218456',
+      'national_id_hash_hex', v_hash_hex));
 
   perform apply_student_import(v_batch);
 
-  select p.national_id_hash, p.national_id_enc into v_hash, v_enc
+  select p.national_id_hash, p.national_id_enc, p.national_id_hash_v
+    into v_hash, v_enc, v_ver
     from person p join student s on s.person_id = p.id
    where s.student_code = '69IMP0009';
 
   if v_hash is null then
-    raise exception 'TEST 108 ล้มเหลว: ไม่ได้เก็บค่าแฮชของเลขประจำตัวประชาชน';
+    raise exception 'TEST 108 ล้มเหลว: ไม่ได้เก็บค่าแฮชของเลขประจำตัวประชาชนที่ส่งมาจากชั้น API';
+  end if;
+  if v_hash <> decode(v_hash_hex, 'hex') then
+    raise exception 'TEST 108 ล้มเหลว: ค่าแฮชที่เก็บไม่ตรงกับที่ชั้น API ส่งมา — ฟังก์ชันต้องส่งผ่าน ไม่ใช่คำนวณเอง';
+  end if;
+  if v_ver <> 2 then
+    raise exception 'TEST 108 ล้มเหลว: national_id_hash_v ต้องเป็น 2 เมื่อมี national_id_hash_hex มาให้';
   end if;
   if v_enc is not null then
     raise exception 'TEST 108 ล้มเหลว: เขียนเลขประจำตัวประชาชนลงคอลัมน์ที่ยังไม่ได้เข้ารหัสจริง';
   end if;
-  raise notice 'TEST 108 ผ่าน — เก็บเลขประจำตัวประชาชนเป็นค่าแฮช ไม่เก็บแบบอ่านออก';
+  raise notice 'TEST 108 ผ่าน — ส่งผ่านค่าแฮชที่มีกุญแจจากชั้น API ได้ถูกต้อง ไม่คำนวณแฮชเองในฐานข้อมูล';
 end $$;
 
 -- ── TEST 109 ───────────────────────────────────────────────────────

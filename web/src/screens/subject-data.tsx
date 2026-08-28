@@ -16,6 +16,7 @@ const GROUPS: { title: string; subtitle: string; items: SubjectItem[] }[] = [
       { title: 'กลุ่มสาระการเรียนรู้', description: 'จัดหมวดรายวิชาในฉบับหลักสูตร เช่น สมรรถนะวิชาชีพและพื้นฐาน', path: '/curriculum/versions', state: 'ready' },
       { title: 'กลุ่มวิชา', description: 'กำหนดกลุ่มวิชา ลำดับ และเงื่อนไขหน่วยกิตของแต่ละหลักสูตร', path: '/subject-groups', state: 'ready' },
       { title: 'วิชา', description: 'เพิ่ม แก้ไข ค้นหา รหัส ชื่อ หน่วยกิต และรายละเอียดรายวิชา', path: '/curriculum/courses', state: 'ready' },
+      { title: 'สมรรถนะ', description: 'กำหนดสมรรถนะของแต่ละฉบับหลักสูตร แล้วผูกกับรายวิชาที่ฝึกสมรรถนะนั้น', path: '/competencies', state: 'ready' },
       { title: 'แผนการเรียน', description: 'นำรายวิชาไปวางตามชั้นปีและภาคเรียนของหลักสูตร', path: '/curriculum/plan', state: 'ready' },
     ],
   },

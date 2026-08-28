@@ -36,6 +36,7 @@ import {
   type Transcript62Document,
   type Transcript62Form,
 } from './transcript-62';
+import { renderTranscriptEnLandscape } from './transcript-en-landscape';
 
 export interface IssuedDocument {
   id: string;
@@ -218,7 +219,11 @@ export interface PrintOptions {
    * รูปแบบย่อยของใบ รบ. ตระกูล 62 — `sorsor` ย้ายสรุปรายภาคไปเป็นตาราง
    * แนวนอนหน้า 2 ตามที่ใบของ สอศ. วางไว้ (ไม่มีผลกับตระกูล 67)
    */
-  form?: '62' | 'sorsor';
+  /**
+   * `en-landscape` เป็นรูปแบบย่อยเฉพาะฉบับอังกฤษของตระกูล 62 เท่านั้น —
+   * ฉบับไทยไม่มีรูปแบบแนวนอนในไฟล์ต้นแบบเลย จึงไม่ต้องมีค่านี้ให้เลือก
+   */
+  form?: '62' | 'sorsor' | 'en-landscape';
 }
 
 /** เลื่อนได้ไม่เกินครึ่งนิ้ว — เกินกว่านั้นคือดันเนื้อหาตกขอบโดยไม่มีตัวอย่างให้ดู */
@@ -966,6 +971,21 @@ export function renderDocument(doc: IssuedDocument, opts?: PrintOptions): string
        * ผิดหลักสูตร ซึ่งคนที่ไม่รู้ว่าควรเป็นแบบไหนมองไม่ออก
        * และ payload ตรึงรุ่นไว้แล้ว จึงตัดสินจากตัวเอกสารเองได้
        */
+      /*
+       * ─── แนวนอนอังกฤษเลือกได้ทุกรุ่นหลักสูตร ตัดสินก่อนเรื่องรุ่น ───
+       * ต่างจากการเลือกระหว่าง 67/62 ที่ต้องมาจาก payload (จัดกลุ่มรายวิชา
+       * คนละแบบ) — แนวนอนอังกฤษใช้ข้อมูลชุดเดียวกับ 62 (`term_tree`) ซึ่ง
+       * 0060 เติมให้ทุกฉบับหลักสูตรแล้วไม่ว่าจะเป็นรุ่น 67 หรือก่อนหน้า
+       * จึงเป็นแค่ "อยากได้หน้าตาแบบไหน" ไม่ใช่ข้อเท็จจริงของหลักสูตร
+       * ต้องตรวจก่อนเรื่องรุ่น 67 มิฉะนั้นนักศึกษารุ่น 67 จะเลือกแบบนี้ไม่ได้เลย
+       */
+      if (
+        opts?.form === 'en-landscape' &&
+        (doc.payload as { lang?: string }).lang === 'en' &&
+        has62TermTree(doc.payload as { term_tree?: unknown })
+      ) {
+        return renderTranscriptEnLandscape(doc as unknown as Transcript62Document);
+      }
       if (is67Edition(doc.payload) && Array.isArray((doc.payload as { category_tree?: unknown[] }).category_tree)) {
         return renderTranscript67(doc as unknown as Transcript67Document);
       }

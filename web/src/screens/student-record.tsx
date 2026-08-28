@@ -1183,3 +1183,122 @@ function StatusHistory({ studentId }: { studentId: string }) {
     </TableCard>
   );
 }
+
+/* ─── แท็บ 9 · ผลงานและเกียรติประวัติ (0090) ────────────────────── */
+
+interface Achievement {
+  id: string;
+  title_th: string;
+  category_th: string | null;
+  level_th: string | null;
+  issuer_th: string | null;
+  awarded_on: string;
+  note_th: string | null;
+}
+
+/**
+ * บันทึกและลบตรงได้ (ไม่ใช่ write-once) เพราะยังไม่ใช่เอกสารที่พิมพ์ออกไป
+ * ให้ใครถือ — ดูเหตุผลเต็มที่คอมเมนต์บน migration 0090
+ */
+export function AchievementTab({ p, reload: _reload }: { p: FullProfile; reload: () => void }) {
+  const canWrite = useCan('registrar', 'academic', 'student_affairs', 'admin');
+  const [rows, setRows] = useState<Achievement[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({});
+
+  function load() {
+    api
+      .get<Achievement[]>(`/students/${p.id}/achievements`)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoaded(true));
+  }
+
+  useEffect(load, [p.id]);
+
+  return (
+    <>
+      <TableCard title="ผลงานและเกียรติประวัติ">
+        {!loaded ? (
+          <div className="empty">กำลังโหลด…</div>
+        ) : rows.length === 0 ? (
+          <div className="empty">ยังไม่มีบันทึกผลงาน/เกียรติประวัติ</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 110 }}>วันที่ได้รับ</th>
+                <th>ชื่อผลงาน/รางวัล</th>
+                <th style={{ width: 110 }}>ประเภท</th>
+                <th style={{ width: 130 }}>ระดับ</th>
+                <th style={{ width: 160 }}>ผู้มอบ/จัดโดย</th>
+                {canWrite && <th style={{ width: 60 }} />}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((x) => (
+                <tr key={x.id}>
+                  <td>{thaiDate(x.awarded_on)}</td>
+                  <td style={{ whiteSpace: 'normal' }}>
+                    {x.title_th}
+                    {x.note_th ? <div className="hint">{x.note_th}</div> : null}
+                  </td>
+                  <td>{x.category_th ?? '—'}</td>
+                  <td>{x.level_th ?? '—'}</td>
+                  <td>{x.issuer_th ?? '—'}</td>
+                  {canWrite && (
+                    <td>
+                      <ActionButton
+                        className="danger"
+                        confirm="ลบบันทึกนี้ ยืนยันหรือไม่"
+                        onRun={() => api.del(`/achievements/${x.id}`)}
+                        onDone={load}
+                      >
+                        ลบ
+                      </ActionButton>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </TableCard>
+
+      {canWrite && (
+        <Card title="บันทึกผลงาน/เกียรติประวัติใหม่">
+          <div className="row">
+            <T label="ชื่อผลงาน/รางวัล" form={form} set={setForm} name="titleTh" />
+            <T label="วันที่ได้รับ" form={form} set={setForm} name="awardedOn" type="date" />
+          </div>
+          <div className="row">
+            <T label="ประเภท" form={form} set={setForm} name="categoryTh" placeholder="เช่น วิชาการ กีฬา ศิลปะ จิตอาสา" />
+            <T label="ระดับ" form={form} set={setForm} name="levelTh" placeholder="เช่น ระดับสถานศึกษา ระดับจังหวัด ระดับชาติ" />
+            <T label="ผู้มอบ/จัดโดย" form={form} set={setForm} name="issuerTh" />
+          </div>
+          <div className="row">
+            <T label="หมายเหตุ" form={form} set={setForm} name="noteTh" />
+          </div>
+          <div className="row">
+            <div className="shrink">
+              <ActionButton
+                className="primary"
+                onRun={() =>
+                  form.titleTh?.trim()
+                    ? api.post(`/students/${p.id}/achievements`, filled(form))
+                    : Promise.reject(new Error('กรอกชื่อผลงาน/รางวัลก่อน'))
+                }
+                onDone={() => {
+                  setForm({});
+                  load();
+                }}
+              >
+                บันทึก
+              </ActionButton>
+            </div>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
