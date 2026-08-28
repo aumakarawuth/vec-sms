@@ -1,6 +1,53 @@
-import { Controller, Get, Injectable, Module } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Header, Injectable, Module, Query } from '@nestjs/common';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
+import { UUID_PATTERN } from '../../common/validation/uuid';
+
+function esc(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** โครงกระดาษพิมพ์ของรายงาน — ตารางล้วน ไม่ใช่เอกสารราชการที่ต้องวัดกระดาษ */
+function reportSheet(title: string, sub: string, body: string): string {
+  return `<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>${esc(title)}</title>
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'TH Sarabun New', 'Sarabun', 'Leelawadee UI', Tahoma, sans-serif;
+         font-size: 13pt; color: #000; }
+  .title { font-size: 17pt; font-weight: 700; text-align: center; margin: 0 0 2pt; }
+  .sub { text-align: center; font-size: 12.5pt; color: #333; margin-bottom: 8pt; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6pt; }
+  th, td { border: 0.7pt solid #000; padding: 2.5pt 4pt; }
+  th { background: #eee; font-weight: 700; font-size: 12pt; }
+  td.num { text-align: right; }
+  td.mid { text-align: center; }
+  .foot { margin-top: 10pt; font-size: 11pt; color: #444; }
+  @media screen {
+    body { background: #f4f4f4; padding: 16px; }
+    .sheet { background: #fff; margin: 0 auto; padding: 12mm; max-width: 297mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+<div class="title">${esc(title)}</div>
+<div class="sub">${esc(sub)}</div>
+${body}
+<div class="foot">พิมพ์เมื่อ ${esc(new Date().toLocaleString('th-TH'))} — รายงานนี้แสดงข้อมูล ณ เวลาที่พิมพ์</div>
+</div>
+</body>
+</html>`;
+}
 
 /**
  * ข้อมูลสถิติภาพรวม — รวมตัวเลขที่มีอยู่แล้วในแต่ละโมดูลมาไว้จุดเดียว
@@ -70,6 +117,70 @@ export class ReportsService {
     };
   }
 
+  /**
+   * รายงานผลการเรียน — เลือกขอบเขตได้สามแบบ (ภาคเรียนเดียว / ทั้งปีการศึกษา /
+   * ทุกภาคเรียน) และกรอง "เฉพาะที่ไม่ผ่าน" ได้ — เป็นแบบสอบถามอ่านอย่างเดียว
+   * ไม่ใช่กฎธุรกิจ จึงเขียนที่ชั้น API ตรง ๆ แบบเดียวกับ rooms()/roomPlan()
+   * ในโมดูลลงทะเบียน ไม่ต้องมีฟังก์ชันในฐานข้อมูล
+   */
+  async grades(opts: { termId?: string; academicYearId?: string; allTerms?: boolean; onlyFailed?: boolean }) {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (opts.termId) {
+      params.push(opts.termId);
+      conditions.push(`t.id = $${params.length}`);
+    } else if (opts.academicYearId) {
+      params.push(opts.academicYearId);
+      conditions.push(`t.academic_year_id = $${params.length}`);
+    } else if (!opts.allTerms) {
+      throw new BadRequestException('ต้องระบุ termId, academicYearId หรือ allTerms=true อย่างใดอย่างหนึ่ง');
+    }
+    if (opts.onlyFailed) conditions.push('not gsym.earns_credit');
+    const where = conditions.length ? `and ${conditions.join(' and ')}` : '';
+
+    return this.db.query(
+      `select s.student_code,
+              trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '')
+                   || ' ' || coalesce(p.last_name_th, '')) as full_name,
+              c.code as course_code, c.name_th as course_name, c.credits,
+              gsym.symbol as grade_symbol, gsym.earns_credit,
+              'ภาคเรียนที่ ' || t.ordinal || '/' || ay.year_be as term_label
+         from enrollment e
+         join class_section cs      on cs.id = e.class_section_id
+         join course c               on c.id  = cs.course_id
+         join term t                 on t.id  = e.term_id
+         join academic_year ay       on ay.id = t.academic_year_id
+         join student s              on s.id  = e.student_id
+         join person p               on p.id  = s.person_id
+         join enrollment_result er   on er.enrollment_id = e.id and er.superseded_by is null
+         join grade_symbol gsym      on gsym.id = er.grade_symbol_id
+        where e.status = 'enrolled' ${where}
+        order by s.student_code, c.code`,
+      params,
+    );
+  }
+
+  /**
+   * นักศึกษาที่มีผลการเรียนไม่ผ่านเกณฑ์ — รวมจาก student_failed_courses()
+   * (0089) ที่ตอบคำถาม "นักศึกษาคนนี้ยังไม่ผ่านวิชาอะไรบ้าง" อยู่แล้ว
+   * ที่นี่กวาดทุกคนที่ยัง active มาต่อกันเป็นรายงานเดียว
+   */
+  async failingStudents() {
+    return this.db.query(
+      `select s.student_code,
+              trim(coalesce(p.prefix_th, '') || coalesce(p.first_name_th, '')
+                   || ' ' || coalesce(p.last_name_th, '')) as full_name,
+              count(*) as failed_count,
+              string_agg(f.course_code || ' ' || f.course_name, ', ' order by f.course_code) as failed_courses
+         from student s
+         join person p on p.id = s.person_id
+         cross join lateral student_failed_courses(s.id) f
+        where s.status = 'active'
+        group by s.id, s.student_code, p.prefix_th, p.first_name_th, p.last_name_th
+        order by failed_count desc, s.student_code`,
+    );
+  }
+
   /** จำนวนนักศึกษาต่อหลักสูตร — ใช้ตอบว่าสาขาไหนคนเยอะ/น้อยโดยไม่ต้องนับเอง */
   async byCurriculum() {
     return this.db.query(
@@ -99,6 +210,125 @@ export class ReportsController {
   @Get('by-curriculum')
   byCurriculum() {
     return this.svc.byCurriculum();
+  }
+
+  @Get('grades')
+  grades(
+    @Query('termId') termId?: string,
+    @Query('academicYearId') academicYearId?: string,
+    @Query('allTerms') allTerms?: string,
+    @Query('onlyFailed') onlyFailed?: string,
+  ) {
+    if (termId && !UUID_PATTERN.test(termId)) throw new BadRequestException('termId ต้องเป็นรหัสรูปแบบ UUID');
+    if (academicYearId && !UUID_PATTERN.test(academicYearId)) {
+      throw new BadRequestException('academicYearId ต้องเป็นรหัสรูปแบบ UUID');
+    }
+    return this.svc.grades({
+      termId: termId || undefined,
+      academicYearId: academicYearId || undefined,
+      allTerms: allTerms === 'true',
+      onlyFailed: onlyFailed === 'true',
+    });
+  }
+
+  @Get('failing-students')
+  failingStudents() {
+    return this.svc.failingStudents();
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('grades/print')
+  async gradesPrint(
+    @Query('termId') termId?: string,
+    @Query('academicYearId') academicYearId?: string,
+    @Query('allTerms') allTerms?: string,
+    @Query('onlyFailed') onlyFailed?: string,
+    @Query('scopeLabel') scopeLabel?: string,
+  ) {
+    if (termId && !UUID_PATTERN.test(termId)) throw new BadRequestException('termId ต้องเป็นรหัสรูปแบบ UUID');
+    if (academicYearId && !UUID_PATTERN.test(academicYearId)) {
+      throw new BadRequestException('academicYearId ต้องเป็นรหัสรูปแบบ UUID');
+    }
+    const rows = await this.svc.grades({
+      termId: termId || undefined,
+      academicYearId: academicYearId || undefined,
+      allTerms: allTerms === 'true',
+      onlyFailed: onlyFailed === 'true',
+    });
+
+    const body = `<table>
+  <thead>
+    <tr>
+      <th style="width:5%">ที่</th>
+      <th style="width:12%">รหัสนักศึกษา</th>
+      <th style="width:20%">ชื่อ — นามสกุล</th>
+      <th style="width:10%">รหัสวิชา</th>
+      <th>ชื่อวิชา</th>
+      <th style="width:8%">นก.</th>
+      <th style="width:8%">ผลการเรียน</th>
+      <th style="width:14%">ภาคเรียน</th>
+    </tr>
+  </thead>
+  <tbody>${
+    rows.length === 0
+      ? '<tr><td colspan="8" class="mid">— ไม่มีข้อมูลตามเงื่อนไขที่เลือก —</td></tr>'
+      : rows
+          .map(
+            (r: Record<string, unknown>, i: number) => `<tr>
+      <td class="mid">${i + 1}</td>
+      <td>${esc(r.student_code)}</td>
+      <td>${esc(r.full_name)}</td>
+      <td>${esc(r.course_code)}</td>
+      <td>${esc(r.course_name)}</td>
+      <td class="num">${esc(r.credits)}</td>
+      <td class="mid">${esc(r.grade_symbol)}</td>
+      <td>${esc(r.term_label)}</td>
+    </tr>`,
+          )
+          .join('')
+  }</tbody>
+</table>`;
+
+    return reportSheet(
+      onlyFailed === 'true' ? 'รายงานผลการเรียน — เฉพาะที่ไม่ผ่าน' : 'รายงานผลการเรียน',
+      `${scopeLabel ?? ''} — ${rows.length} รายการ`,
+      body,
+    );
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('failing-students/print')
+  async failingStudentsPrint() {
+    const rows = await this.svc.failingStudents();
+
+    const body = `<table>
+  <thead>
+    <tr>
+      <th style="width:6%">ที่</th>
+      <th style="width:14%">รหัสนักศึกษา</th>
+      <th style="width:20%">ชื่อ — นามสกุล</th>
+      <th style="width:10%">จำนวนวิชาที่ตก</th>
+      <th>รายวิชาที่ยังไม่ผ่าน</th>
+    </tr>
+  </thead>
+  <tbody>${
+    rows.length === 0
+      ? '<tr><td colspan="5" class="mid">— ไม่มีนักศึกษาที่ผลการเรียนไม่ผ่านเกณฑ์ —</td></tr>'
+      : rows
+          .map(
+            (r: Record<string, unknown>, i: number) => `<tr>
+      <td class="mid">${i + 1}</td>
+      <td>${esc(r.student_code)}</td>
+      <td>${esc(r.full_name)}</td>
+      <td class="num">${esc(r.failed_count)}</td>
+      <td>${esc(r.failed_courses)}</td>
+    </tr>`,
+          )
+          .join('')
+  }</tbody>
+</table>`;
+
+    return reportSheet('นักศึกษาที่ผลการเรียนไม่ผ่านเกณฑ์', `${rows.length} คน`, body);
   }
 }
 

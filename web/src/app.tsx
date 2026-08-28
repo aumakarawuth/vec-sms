@@ -47,6 +47,7 @@ import { RiskScreen } from './screens/risk';
 import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
+import { GradeReportsScreen } from './screens/grade-reports';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { AdvisorsScreen } from './screens/advisors';
 import { StudentCenterScreen } from './screens/student-center';
@@ -259,6 +260,7 @@ function Routes() {
   if (head === 'workload') return <WorkloadScreen />;
   if (head === 'advisors') return <AdvisorsScreen />;
   if (head === 'statistics') return <StatisticsScreen />;
+  if (head === 'grade-reports') return <GradeReportsScreen />;
   if (head === 'clubs') return <ClubsScreen />;
   if (head === 'onet') return <OnetScreen />;
 
