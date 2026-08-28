@@ -1,7 +1,8 @@
-import { BadRequestException, Controller, Get, Header, Injectable, Module, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Header, Injectable, Module, Param, Query } from '@nestjs/common';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
-import { UUID_PATTERN } from '../../common/validation/uuid';
+import { thaiDate } from '../documents/templates';
+import { ParseUuidPipe, UUID_PATTERN } from '../../common/validation/uuid';
 
 function esc(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -181,6 +182,80 @@ export class ReportsService {
     );
   }
 
+  /**
+   * ตรวจสอบหลักสูตร — วิชาทุกตัวในแผนของนักศึกษาคนหนึ่ง เทียบกับที่เรียนจริง
+   *
+   * ใช้ฉบับหลักสูตรล่าสุดที่ผูกไว้ (`student_curriculum.effective_from`
+   * มากสุด) หลักเดียวกับ `registrationSlip()` ใน worksheets.ts — ต่อวิชา
+   * หนึ่งอาจลงหลายครั้ง (เรียนซ้ำ) เอาความพยายามล่าสุดมาแสดง (created_at
+   * มากสุด) เพื่อให้เห็นสถานะปัจจุบันจริง ไม่ใช่ครั้งแรกที่เคยลง
+   */
+  async curriculumCheck(studentId: string) {
+    return this.db.query(
+      `with sc as (
+         select cv.id as curriculum_version_id
+           from student_curriculum stc
+           join curriculum_version cv on cv.id = stc.curriculum_version_id
+          where stc.student_id = $1
+          order by stc.effective_from desc nulls last
+          limit 1
+       )
+       select cc.suggested_year, cc.suggested_term, cc.requirement,
+              cat.name_th as category_name,
+              c.code as course_code, c.name_th as course_name, c.credits,
+              e.status as enrollment_status,
+              gsym.symbol as grade_symbol, gsym.earns_credit
+         from sc
+         join curriculum_course cc   on cc.curriculum_version_id = sc.curriculum_version_id
+         join curriculum_category cat on cat.id = cc.curriculum_category_id
+         join course c                on c.id  = cc.course_id
+         left join lateral (
+           select e2.id, e2.status
+             from enrollment e2
+             join class_section cs2 on cs2.id = e2.class_section_id
+            where e2.student_id = $1 and cs2.course_id = cc.course_id
+            order by e2.created_at desc
+            limit 1
+         ) e on true
+         left join enrollment_result er on er.enrollment_id = e.id and er.superseded_by is null
+         left join grade_symbol gsym    on gsym.id = er.grade_symbol_id
+        order by cc.suggested_year nulls last, cc.suggested_term nulls last, cc.sort_order`,
+      [studentId],
+    );
+  }
+
+  /**
+   * เวลาเรียนรายสัปดาห์ — สรุปคาบที่สอนจริงและสถิติการเข้าเรียนของกลุ่มเรียน
+   * หนึ่งกลุ่ม แบ่งเป็นสัปดาห์ นับสัปดาห์ที่ 1 จากคาบแรกที่สอนจริงของกลุ่มนั้น
+   * (ไม่ใช่วันเปิดภาคเรียน เพราะบางกลุ่มอาจเริ่มสอนช้ากว่าวันเปิดภาคจริง)
+   */
+  async weeklyAttendance(classSectionId: string) {
+    return this.db.query(
+      `with meetings as (
+         select id, meets_on,
+                (meets_on - min(meets_on) over ())::int / 7 + 1 as week_no
+           from class_meeting
+          where class_section_id = $1 and status = 'held'
+       ),
+       weeks as (
+         select week_no, min(meets_on) as starts_on, max(meets_on) as ends_on, count(*) as meetings_held
+           from meetings
+          group by week_no
+       )
+       select w.week_no, w.starts_on, w.ends_on, w.meetings_held,
+              count(ar.*) filter (where ar.status = 'present')  as present_count,
+              count(ar.*) filter (where ar.status = 'late')     as late_count,
+              count(ar.*) filter (where ar.status = 'absent')   as absent_count,
+              count(ar.*) filter (where ar.status::text like 'leave%') as leave_count
+         from weeks w
+         join meetings m on m.week_no = w.week_no
+         left join attendance_record ar on ar.class_meeting_id = m.id
+        group by w.week_no, w.starts_on, w.ends_on, w.meetings_held
+        order by w.week_no`,
+      [classSectionId],
+    );
+  }
+
   /** จำนวนนักศึกษาต่อหลักสูตร — ใช้ตอบว่าสาขาไหนคนเยอะ/น้อยโดยไม่ต้องนับเอง */
   async byCurriculum() {
     return this.db.query(
@@ -329,6 +404,108 @@ export class ReportsController {
 </table>`;
 
     return reportSheet('นักศึกษาที่ผลการเรียนไม่ผ่านเกณฑ์', `${rows.length} คน`, body);
+  }
+
+  @Get('curriculum-check/:studentId')
+  curriculumCheck(@Param('studentId', ParseUuidPipe) studentId: string) {
+    return this.svc.curriculumCheck(studentId);
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('curriculum-check/:studentId/print')
+  async curriculumCheckPrint(
+    @Param('studentId', ParseUuidPipe) studentId: string,
+    @Query('studentLabel') studentLabel?: string,
+  ) {
+    const rows = await this.svc.curriculumCheck(studentId);
+    const STATUS_LABEL: Record<string, string> = {
+      enrolled: 'กำลังเรียน', dropped: 'ถอนแล้ว', completed: 'เรียนจบแล้ว',
+    };
+
+    const body = `<table>
+  <thead>
+    <tr>
+      <th style="width:4%">ที่</th>
+      <th style="width:10%">รหัสวิชา</th>
+      <th>ชื่อวิชา</th>
+      <th style="width:16%">หมวดวิชา</th>
+      <th style="width:6%">นก.</th>
+      <th style="width:8%">ปี/ภาคที่แนะนำ</th>
+      <th style="width:10%">สถานะ</th>
+      <th style="width:10%">ผลการเรียน</th>
+    </tr>
+  </thead>
+  <tbody>${
+    rows.length === 0
+      ? '<tr><td colspan="8" class="mid">— นักศึกษาคนนี้ยังไม่ได้ผูกหลักสูตร —</td></tr>'
+      : rows
+          .map((r: Record<string, unknown>, i: number) => {
+            const status = r.grade_symbol
+              ? (r.earns_credit ? 'ผ่านแล้ว' : 'ไม่ผ่าน')
+              : (STATUS_LABEL[r.enrollment_status as string] ?? 'ยังไม่ลง');
+            return `<tr>
+      <td class="mid">${i + 1}</td>
+      <td>${esc(r.course_code)}</td>
+      <td>${esc(r.course_name)}</td>
+      <td>${esc(r.category_name)}</td>
+      <td class="num">${esc(r.credits)}</td>
+      <td class="mid">${r.suggested_year ? `${esc(r.suggested_year)}/${esc(r.suggested_term ?? '—')}` : '—'}</td>
+      <td class="mid">${esc(status)}</td>
+      <td class="mid">${esc(r.grade_symbol ?? '—')}</td>
+    </tr>`;
+          })
+          .join('')
+  }</tbody>
+</table>`;
+
+    return reportSheet('ตรวจสอบหลักสูตร', `${studentLabel ?? studentId} — ${rows.length} วิชา`, body);
+  }
+
+  @Get('weekly-attendance/:classSectionId')
+  weeklyAttendance(@Param('classSectionId', ParseUuidPipe) classSectionId: string) {
+    return this.svc.weeklyAttendance(classSectionId);
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('weekly-attendance/:classSectionId/print')
+  async weeklyAttendancePrint(
+    @Param('classSectionId', ParseUuidPipe) classSectionId: string,
+    @Query('sectionLabel') sectionLabel?: string,
+  ) {
+    const rows = await this.svc.weeklyAttendance(classSectionId);
+
+    const body = `<table>
+  <thead>
+    <tr>
+      <th style="width:10%">สัปดาห์ที่</th>
+      <th style="width:20%">ช่วงวันที่</th>
+      <th style="width:12%">คาบที่สอน</th>
+      <th style="width:14%">มาเรียน</th>
+      <th style="width:14%">มาสาย</th>
+      <th style="width:14%">ขาดเรียน</th>
+      <th>ลา</th>
+    </tr>
+  </thead>
+  <tbody>${
+    rows.length === 0
+      ? '<tr><td colspan="7" class="mid">— กลุ่มเรียนนี้ยังไม่มีคาบที่สอนจริง —</td></tr>'
+      : rows
+          .map(
+            (r: Record<string, unknown>) => `<tr>
+      <td class="mid">${esc(r.week_no)}</td>
+      <td class="mid">${esc(thaiDate(r.starts_on as string))} – ${esc(thaiDate(r.ends_on as string))}</td>
+      <td class="num">${esc(r.meetings_held)}</td>
+      <td class="num">${esc(r.present_count)}</td>
+      <td class="num">${esc(r.late_count)}</td>
+      <td class="num">${esc(r.absent_count)}</td>
+      <td class="num">${esc(r.leave_count)}</td>
+    </tr>`,
+          )
+          .join('')
+  }</tbody>
+</table>`;
+
+    return reportSheet('เวลาเรียนรายสัปดาห์', `${sectionLabel ?? classSectionId} — ${rows.length} สัปดาห์`, body);
   }
 }
 
