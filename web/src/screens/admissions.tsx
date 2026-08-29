@@ -18,6 +18,7 @@ import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { fetchTerms } from '../core/catalog';
 import { num, thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
@@ -61,6 +62,15 @@ interface ApplicationDetail {
   prior_school_th: string | null;
   prior_qualification_th: string | null;
   prior_gpax: string | null;
+  student_id: string | null;
+  father_first_name_th: string | null;
+  father_last_name_th: string | null;
+  father_occupation_th: string | null;
+  father_phone: string | null;
+  mother_first_name_th: string | null;
+  mother_last_name_th: string | null;
+  mother_occupation_th: string | null;
+  mother_phone: string | null;
   choices: { preference: number; name_th: string; shift: string | null }[];
   documents: { kind: string; status: string; note: string | null }[];
 }
@@ -217,6 +227,18 @@ function CreateApplicationCard({
   const [choice1, setChoice1] = useState('');
   const [choice2, setChoice2] = useState('');
 
+  const [fatherFirstNameTh, setFatherFirstNameTh] = useState('');
+  const [fatherLastNameTh, setFatherLastNameTh] = useState('');
+  const [fatherOccupationTh, setFatherOccupationTh] = useState('');
+  const [fatherIncomeMonthly, setFatherIncomeMonthly] = useState('');
+  const [fatherPhone, setFatherPhone] = useState('');
+
+  const [motherFirstNameTh, setMotherFirstNameTh] = useState('');
+  const [motherLastNameTh, setMotherLastNameTh] = useState('');
+  const [motherOccupationTh, setMotherOccupationTh] = useState('');
+  const [motherIncomeMonthly, setMotherIncomeMonthly] = useState('');
+  const [motherPhone, setMotherPhone] = useState('');
+
   const bad = nationalId !== '' && !/^\d{13}$/.test(nationalId);
 
   return (
@@ -284,6 +306,20 @@ function CreateApplicationCard({
           </select>
         </label>
       </div>
+      <div className="row">
+        <Field label="ชื่อบิดา"><input value={fatherFirstNameTh} onChange={(e) => setFatherFirstNameTh(e.target.value)} /></Field>
+        <Field label="นามสกุลบิดา"><input value={fatherLastNameTh} onChange={(e) => setFatherLastNameTh(e.target.value)} /></Field>
+        <Field label="อาชีพบิดา"><input value={fatherOccupationTh} onChange={(e) => setFatherOccupationTh(e.target.value)} /></Field>
+        <Field label="รายได้บิดา/เดือน"><input type="number" min={0} value={fatherIncomeMonthly} onChange={(e) => setFatherIncomeMonthly(e.target.value)} style={{ maxWidth: 120 }} /></Field>
+        <Field label="โทรบิดา"><input value={fatherPhone} onChange={(e) => setFatherPhone(e.target.value)} style={{ maxWidth: 130 }} /></Field>
+      </div>
+      <div className="row">
+        <Field label="ชื่อมารดา"><input value={motherFirstNameTh} onChange={(e) => setMotherFirstNameTh(e.target.value)} /></Field>
+        <Field label="นามสกุลมารดา"><input value={motherLastNameTh} onChange={(e) => setMotherLastNameTh(e.target.value)} /></Field>
+        <Field label="อาชีพมารดา"><input value={motherOccupationTh} onChange={(e) => setMotherOccupationTh(e.target.value)} /></Field>
+        <Field label="รายได้มารดา/เดือน"><input type="number" min={0} value={motherIncomeMonthly} onChange={(e) => setMotherIncomeMonthly(e.target.value)} style={{ maxWidth: 120 }} /></Field>
+        <Field label="โทรมารดา"><input value={motherPhone} onChange={(e) => setMotherPhone(e.target.value)} style={{ maxWidth: 130 }} /></Field>
+      </div>
       {bad && <Notice kind="error">เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก — เว้นว่างได้ถ้ายังไม่ทราบ</Notice>}
       <div className="row">
         <div className="shrink">
@@ -304,6 +340,16 @@ function CreateApplicationCard({
                 ...(gender ? { gender } : {}),
                 ...(priorSchoolTh.trim() ? { priorSchoolTh: priorSchoolTh.trim() } : {}),
                 ...(priorGpax ? { priorGpax: Number(priorGpax) } : {}),
+                ...(fatherFirstNameTh.trim() ? { fatherFirstNameTh: fatherFirstNameTh.trim() } : {}),
+                ...(fatherLastNameTh.trim() ? { fatherLastNameTh: fatherLastNameTh.trim() } : {}),
+                ...(fatherOccupationTh.trim() ? { fatherOccupationTh: fatherOccupationTh.trim() } : {}),
+                ...(fatherIncomeMonthly ? { fatherIncomeMonthly: Number(fatherIncomeMonthly) } : {}),
+                ...(fatherPhone.trim() ? { fatherPhone: fatherPhone.trim() } : {}),
+                ...(motherFirstNameTh.trim() ? { motherFirstNameTh: motherFirstNameTh.trim() } : {}),
+                ...(motherLastNameTh.trim() ? { motherLastNameTh: motherLastNameTh.trim() } : {}),
+                ...(motherOccupationTh.trim() ? { motherOccupationTh: motherOccupationTh.trim() } : {}),
+                ...(motherIncomeMonthly ? { motherIncomeMonthly: Number(motherIncomeMonthly) } : {}),
+                ...(motherPhone.trim() ? { motherPhone: motherPhone.trim() } : {}),
                 choices,
               });
             }}
@@ -311,6 +357,10 @@ function CreateApplicationCard({
               setPrefixTh(''); setFirstNameTh(''); setLastNameTh(''); setNationalId('');
               setPhone(''); setGender(''); setPriorSchoolTh(''); setPriorGpax('');
               setChoice1(''); setChoice2('');
+              setFatherFirstNameTh(''); setFatherLastNameTh(''); setFatherOccupationTh('');
+              setFatherIncomeMonthly(''); setFatherPhone('');
+              setMotherFirstNameTh(''); setMotherLastNameTh(''); setMotherOccupationTh('');
+              setMotherIncomeMonthly(''); setMotherPhone('');
               onDone();
             }}
           >
@@ -419,6 +469,19 @@ function ApplicationDetailCard({ id }: { id: string }) {
             <p className="hint">
               อันดับที่เลือก: {d.choices.map((c) => `${c.preference}. ${c.name_th}`).join(' · ') || 'ยังไม่มี'}
             </p>
+            <p className="hint">
+              บิดา {[d.father_first_name_th, d.father_last_name_th].filter(Boolean).join(' ') || '—'}
+              {d.father_occupation_th ? ` (${d.father_occupation_th})` : ''}
+              {' · '}มารดา {[d.mother_first_name_th, d.mother_last_name_th].filter(Boolean).join(' ') || '—'}
+              {d.mother_occupation_th ? ` (${d.mother_occupation_th})` : ''}
+            </p>
+
+            {d.student_id && (
+              <Notice kind="ok">
+                ขึ้นทะเบียนเป็นนักศึกษาแล้ว — บิดามารดาและวุฒิเดิมที่กรอกไว้ข้างต้นถูกคัดลอกเข้าแฟ้มนักศึกษาให้แล้วอัตโนมัติ{' '}
+                <a href={href(`/finance?studentId=${d.student_id}`)}>ไปออกใบแจ้งหนี้ค่าเทอม ส่วนลด หรือทุน →</a>
+              </Notice>
+            )}
 
             <table>
               <thead>

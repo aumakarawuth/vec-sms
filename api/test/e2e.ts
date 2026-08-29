@@ -2148,6 +2148,10 @@ async function main() {
         nationalId: '1100000000001', priorSchoolTh: 'โรงเรียนทดสอบวิทยา',
         priorQualificationTh: 'ม.3', priorGpax: 2.85,
         referralSource: 'เพจเฟซบุ๊กของวิทยาลัย',
+        fatherFirstNameTh: 'สมชาย', fatherLastNameTh: 'ผู้สมัครหนึ่ง',
+        fatherOccupationTh: 'รับราชการ', fatherIncomeMonthly: 30000, fatherPhone: '0811111111',
+        motherFirstNameTh: 'สมหญิง', motherLastNameTh: 'ผู้สมัครหนึ่ง',
+        motherOccupationTh: 'ค้าขาย', motherIncomeMonthly: 15000, motherPhone: '0822222222',
         choices: [{ preference: 1, curriculumVersionId: CV }],
       }),
     });
@@ -2245,6 +2249,55 @@ async function main() {
     return `ได้นักศึกษา 69ADM00001 พร้อมชั้นปี`;
   });
 
+  await check('API-246 รับเข้าแล้วบิดามารดาและวุฒิเดิมที่กรอกในใบสมัครไปถึงแฟ้มนักศึกษาอัตโนมัติ', async () => {
+    const app = await registrar(`/admissions/applications/${appId}`);
+    expect(app.status === 200, `ได้ ${app.status}`);
+    expect(!!app.body.student_id, 'ใบสมัครต้องผูกกับนักศึกษาแล้วหลังรับเข้า');
+    expect(app.body.father_first_name_th === 'สมชาย', 'ใบสมัครต้องยังเก็บชื่อบิดาไว้ครบ');
+
+    const profile = await registrar(`/students/${app.body.student_id}/profile`);
+    expect(profile.status === 200, `ได้ ${profile.status}`);
+
+    const father = profile.body.parents.find((x: any) => x.role === 'father');
+    const mother = profile.body.parents.find((x: any) => x.role === 'mother');
+    expect(!!father && father.first_name_th === 'สมชาย' && father.occupation_th === 'รับราชการ',
+      `บิดาต้องถูกคัดลอกมาครบ ได้ ${JSON.stringify(father)}`);
+    expect(!!mother && mother.first_name_th === 'สมหญิง' && Number(mother.income_monthly) === 15000,
+      `มารดาต้องถูกคัดลอกมาครบ ได้ ${JSON.stringify(mother)}`);
+
+    const prior = profile.body.priorEducation.find((x: any) => x.level_th === 'ม.3');
+    expect(!!prior && prior.school_th === 'โรงเรียนทดสอบวิทยา' && Number(prior.gpax) === 2.85,
+      `วุฒิเดิมต้องถูกคัดลอกมาครบ ได้ ${JSON.stringify(prior)}`);
+    return 'บิดา มารดา และวุฒิเดิม คัดลอกมาครบจากใบสมัคร';
+  });
+
+  await check('API-247 งานทะเบียนออกใบแจ้งหนี้และให้ทุนนักศึกษาที่เพิ่งรับเข้าได้ทันที', async () => {
+    /*
+     * RLS ของ invoice/student_funding (0041 · 0080) อนุญาต registrar ไว้แล้ว
+     * แต่ @Roles ของ FinanceController เดิมแคบกว่านั้น (เฉพาะ finance) —
+     * งานรับสมัครต้องตั้งค่าเทอมนักศึกษาใหม่ได้ทันทีไม่ต้องโอนงานไปให้
+     * ฝ่ายการเงินทำแทน (ดูคอมเมนต์ในคอนโทรลเลอร์)
+     */
+    const studentId = (await registrar(`/admissions/applications/${appId}`)).body.student_id;
+
+    const src = await registrar('/finance/funding-sources', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'other', nameTh: 'ทุนทดสอบ API-247' }),
+    });
+    expect(src.status === 201, `ควรได้ 201 ได้ ${src.status}: ${JSON.stringify(src.body)}`);
+
+    const fund = await registrar(`/finance/students/${studentId}/funding`, {
+      method: 'POST',
+      body: JSON.stringify({ fundingSourceId: src.body.id, academicYearId: AY, percentOff: 20 }),
+    });
+    expect(fund.status === 201, `ควรได้ 201 ได้ ${fund.status}: ${JSON.stringify(fund.body)}`);
+
+    // ใบเสร็จ (รับเงินแล้ว) ยังเป็นของฝ่ายการเงินล้วน — คนละงานกับตั้งยอด
+    const receipts = await registrar(`/finance/receipts?studentId=${studentId}`);
+    expect(receipts.status === 403, `ใบเสร็จควรยังปิดสำหรับงานทะเบียน ได้ ${receipts.status}`);
+    return 'ตั้งทุนได้ผ่าน registrar · ใบเสร็จยังปิดตามเดิม';
+  });
+
   await check('API-66 สรุปยอดรับสมัครตรงกับความจริง', async () => {
     const r = await registrar(`/admissions/rounds/${roundId}/summary`);
     expect(r.status === 200, `ได้ ${r.status}`);
@@ -2268,6 +2321,52 @@ async function main() {
     expect(r.body.length === 0, `ควรไม่เห็นรอบของเรา เห็น ${r.body.length} รอบ`);
     const l = await other(`/admissions/applications?roundId=${roundId}`);
     expect(l.body.length === 0, `ควรไม่เห็นใบสมัคร เห็น ${l.body.length} ใบ`);
+  });
+
+  await check('API-248 ผู้อำนวยการรับเข้าใบสมัครที่มีข้อมูลบิดามารดาได้โดยไม่ชน RLS', async () => {
+    /*
+     * parent_insert/prior_education_insert (0053) เดิมไม่มี 'director' อยู่เลย
+     * ทั้งที่ AdmissionsController เปิดให้ director เรียก /admit ได้ — ถ้า
+     * ไม่แก้ policy การรับเข้าที่มีข้อมูลบิดา/มารดามาด้วยจะพังกลางทางทันที
+     * ที่ director เป็นคนกด (ดูคอมเมนต์ใน 0092)
+     */
+    const dRound = await registrar('/admissions/rounds', {
+      method: 'POST',
+      body: JSON.stringify({
+        academicYearId: AY, code: 'R-DIR-248', nameTh: 'รอบทดสอบผู้อำนวยการ',
+        appliesFrom: '2026-01-01', appliesTo: '2026-12-31',
+      }),
+    });
+    await registrar(`/admissions/rounds/${dRound.body.id}/quotas`, {
+      method: 'POST', body: JSON.stringify({ curriculumVersionId: CV, seats: 1 }),
+    });
+    await registrar(`/admissions/rounds/${dRound.body.id}/status`, {
+      method: 'POST', body: JSON.stringify({ status: 'open' }),
+    });
+
+    const app = await registrar('/admissions/applications', {
+      method: 'POST',
+      body: JSON.stringify({
+        roundId: dRound.body.id, firstNameTh: 'ทดสอบ', lastNameTh: 'ผู้อำนวยการรับเข้า',
+        fatherFirstNameTh: 'บิดา', fatherLastNameTh: 'ทดสอบ',
+        choices: [{ preference: 1, curriculumVersionId: CV }],
+      }),
+    });
+    await registrar(`/admissions/applications/${app.body.id}/submit`, { method: 'POST' });
+    await registrar(`/admissions/applications/${app.body.id}/decision`, {
+      method: 'POST', body: JSON.stringify({ outcome: 'passed', curriculumVersionId: CV }),
+    });
+
+    const admitted = await director(`/admissions/applications/${app.body.id}/admit`, {
+      method: 'POST',
+      body: JSON.stringify({ studentCode: '69ADMDIR001', academicYearId: AY }),
+    });
+    expect(admitted.status === 201, `ผู้อำนวยการรับเข้าควรได้ 201 ได้ ${admitted.status}: ${JSON.stringify(admitted.body)}`);
+
+    const profile = await registrar(`/students/${admitted.body.studentId}/profile`);
+    const father = profile.body.parents.find((x: any) => x.role === 'father');
+    expect(!!father && father.first_name_th === 'บิดา', 'ข้อมูลบิดาต้องถูกคัดลอกมาแม้ผู้รับเข้าเป็นผู้อำนวยการ');
+    return 'ผู้อำนวยการรับเข้าได้ พร้อมข้อมูลบิดามารดาไม่ชน RLS';
   });
 
   console.log('');

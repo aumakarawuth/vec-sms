@@ -98,6 +98,26 @@ class CreateApplicationDto {
   @IsOptional() @IsNumber() @Min(0) @Max(4) priorGpax?: number;
   @IsOptional() @IsString() referralSource?: string;
 
+  @IsOptional() @IsString() fatherPrefixTh?: string;
+  @IsOptional() @IsString() fatherFirstNameTh?: string;
+  @IsOptional() @IsString() fatherLastNameTh?: string;
+  @IsOptional()
+  @Matches(/^[0-9]{13}$/, { message: 'เลขประจำตัวประชาชนบิดาต้องเป็นตัวเลข 13 หลัก' })
+  fatherNationalId?: string;
+  @IsOptional() @IsString() fatherOccupationTh?: string;
+  @IsOptional() @IsNumber() @Min(0) fatherIncomeMonthly?: number;
+  @IsOptional() @IsString() fatherPhone?: string;
+
+  @IsOptional() @IsString() motherPrefixTh?: string;
+  @IsOptional() @IsString() motherFirstNameTh?: string;
+  @IsOptional() @IsString() motherLastNameTh?: string;
+  @IsOptional()
+  @Matches(/^[0-9]{13}$/, { message: 'เลขประจำตัวประชาชนมารดาต้องเป็นตัวเลข 13 หลัก' })
+  motherNationalId?: string;
+  @IsOptional() @IsString() motherOccupationTh?: string;
+  @IsOptional() @IsNumber() @Min(0) motherIncomeMonthly?: number;
+  @IsOptional() @IsString() motherPhone?: string;
+
   @IsArray() @ArrayNotEmpty() @ArrayMaxSize(5)
   @ValidateNested({ each: true }) @Type(() => ChoiceDto)
   choices: ChoiceDto[];
@@ -207,17 +227,33 @@ export class AdmissionsService {
              (institution_id, round_id, application_no, prefix_th,
               first_name_th, last_name_th, national_id_hash, birth_date, gender,
               phone, email, address_th, prior_school_th, prior_qualification_th,
-              prior_gpax, referral_source)
+              prior_gpax, referral_source,
+              father_prefix_th, father_first_name_th, father_last_name_th,
+              father_national_id_hash, father_occupation_th, father_income_monthly, father_phone,
+              mother_prefix_th, mother_first_name_th, mother_last_name_th,
+              mother_national_id_hash, mother_occupation_th, mother_income_monthly, mother_phone)
            values (current_institution_id(), $1, $2, $3, $4, $5,
                    case when $6::text is not null then digest($6::text, 'sha256') end,
                    $7, coalesce($8, 'undisclosed')::gender_kind,
-                   $9, $10, $11, $12, $13, $14, $15)
+                   $9, $10, $11, $12, $13, $14, $15,
+                   $16, $17, $18,
+                   case when $19::text is not null then digest($19::text, 'sha256') end,
+                   $20, $21, $22,
+                   $23, $24, $25,
+                   case when $26::text is not null then digest($26::text, 'sha256') end,
+                   $27, $28, $29)
            returning id, application_no`,
           [dto.roundId, no, dto.prefixTh ?? null, dto.firstNameTh, dto.lastNameTh,
            dto.nationalId ?? null, dto.birthDate ?? null, dto.gender ?? null,
            dto.phone ?? null, dto.email ?? null, dto.addressTh ?? null,
            dto.priorSchoolTh ?? null, dto.priorQualificationTh ?? null,
-           dto.priorGpax ?? null, dto.referralSource ?? null],
+           dto.priorGpax ?? null, dto.referralSource ?? null,
+           dto.fatherPrefixTh ?? null, dto.fatherFirstNameTh ?? null, dto.fatherLastNameTh ?? null,
+           dto.fatherNationalId ?? null, dto.fatherOccupationTh ?? null,
+           dto.fatherIncomeMonthly ?? null, dto.fatherPhone ?? null,
+           dto.motherPrefixTh ?? null, dto.motherFirstNameTh ?? null, dto.motherLastNameTh ?? null,
+           dto.motherNationalId ?? null, dto.motherOccupationTh ?? null,
+           dto.motherIncomeMonthly ?? null, dto.motherPhone ?? null],
         )
       ).rows[0];
 
@@ -257,7 +293,13 @@ export class AdmissionsService {
               a.birth_date, a.gender, a.phone, a.email, a.address_th,
               a.prior_school_th, a.prior_qualification_th, a.prior_gpax,
               a.referral_source, a.status, a.rank_no, a.score, a.decision_note,
-              a.submitted_at, a.decided_at, a.reported_on, a.student_id
+              a.submitted_at, a.decided_at, a.reported_on, a.student_id,
+              a.father_prefix_th, a.father_first_name_th, a.father_last_name_th,
+              a.father_occupation_th, a.father_income_monthly, a.father_phone,
+              (a.father_national_id_hash is not null) as father_has_national_id,
+              a.mother_prefix_th, a.mother_first_name_th, a.mother_last_name_th,
+              a.mother_occupation_th, a.mother_income_monthly, a.mother_phone,
+              (a.mother_national_id_hash is not null) as mother_has_national_id
          from application a where a.id = $1`,
       [id],
     );

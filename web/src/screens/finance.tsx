@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { money, thaiDate } from '../core/fmt';
+import { useRoute } from '../core/router';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
@@ -699,12 +700,14 @@ function PendingMatchRow({
 }
 
 export function FinanceScreen() {
+  const route = useRoute();
   const { terms, termId, term, setTerm } = useTermPicker();
   const aging = useAsync(() => api.get<AgingRow[]>('/finance/ar-aging'), []);
   const students = useAsync(() => api.get<StudentRow[]>('/students?limit=200'), []);
   const pending = useAsync(() => api.get<PendingMatch[]>('/finance/reconcile/pending'), []);
 
-  const [studentId, setStudentId] = useState('');
+  /** เปิดตรงมาจากงานรับสมัคร (?studentId=) หลังขึ้นทะเบียนนักศึกษาใหม่แล้ว */
+  const [studentId, setStudentId] = useState(route.query.get('studentId') ?? '');
   const [installments, setInstallments] = useState('2');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
@@ -727,6 +730,38 @@ export function FinanceScreen() {
         : Promise.resolve([]),
     [studentId],
   );
+
+  /*
+   * `/students?limit=200` ไม่รับประกันว่าจะมีนักศึกษาที่เพิ่งขึ้นทะเบียน
+   * ใหม่อยู่ในสองร้อยแถวแรก (โดยเฉพาะวิทยาลัยที่มีนักศึกษาเกินสองร้อยคน
+   * อยู่แล้ว) — ถ้าเปิดหน้านี้มาจากลิงก์ `?studentId=` ของงานรับสมัครแล้ว
+   * ไม่เจอในรายการ ให้ดึงคนนั้นมาเพิ่มเป็นตัวเลือกเองแยกต่างหาก มิฉะนั้น
+   * ช่องเลือกนักศึกษาจะโชว์ว่างเปล่าทั้งที่ข้อมูลด้านล่างโหลดถูกคนแล้วจริง
+   */
+  const alreadyInList = (students.data ?? []).some((s) => s.id === studentId);
+  const deepLinkedStudent = useAsync(
+    () =>
+      studentId && !alreadyInList
+        ? api.get<{ student_code: string; first_name_th: string; last_name_th: string }>(`/students/${studentId}`)
+        : Promise.resolve(null),
+    [studentId, alreadyInList],
+  );
+  /*
+   * กรองซ้ำที่ตอนรวมรายการเสมอ ไม่ใช่พึ่ง alreadyInList ตัวเดียว — ตอน
+   * `students.data` ยังไม่โหลดเสร็จตอนแรก alreadyInList เป็น false ทำให้
+   * ไปดึงคนนี้มาซ้ำ แล้วพอ students.data โหลดเสร็จ (มีคนนี้อยู่แล้วจริง)
+   * จะได้ตัวเลือกซ้ำ id เดียวกันในเฟรมเดียวกันชั่วขณะ (React เตือน key ซ้ำ)
+   */
+  const studentOptions: StudentRow[] = [
+    ...(students.data ?? []),
+    ...(deepLinkedStudent.data && !alreadyInList
+      ? [{
+          id: studentId,
+          student_code: deepLinkedStudent.data.student_code,
+          full_name: `${deepLinkedStudent.data.first_name_th} ${deepLinkedStudent.data.last_name_th}`,
+        }]
+      : []),
+  ];
 
   return (
     <>
@@ -812,10 +847,10 @@ export function FinanceScreen() {
           <label className="field" style={{ flex: 2 }}>
             <span>นักศึกษา</span>
             <AsyncView state={students}>
-              {(rows) => (
+              {() => (
                 <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
                   <option value="">— เลือกนักศึกษา —</option>
-                  {rows.map((s) => (
+                  {studentOptions.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.student_code} {s.full_name}
                     </option>

@@ -522,11 +522,26 @@ export class FinanceService {
 class FinanceController {
   constructor(private readonly svc: FinanceService) {}
 
+  /*
+   * ─── ทำไมเส้นทางกลุ่มนี้เปิดให้ 'registrar' ด้วย ทั้งที่ทั้งคอนโทรลเลอร์
+   * จำกัดที่ finance ───
+   * RLS ของ `invoice`/`invoice_line`/`fee_item`/`fee_schedule`/
+   * `funding_source`/`student_funding` (0041 · 0080) เขียนไว้ชัดเจนแล้วว่า
+   * registrar เขียนได้ — งานรับสมัครต้องตั้งค่าเทอมนักศึกษาใหม่ ให้ส่วนลด
+   * และผูกทุนได้ทันทีตอนรับเข้า ไม่ต้องรอโอนงานไปให้การเงินทำแทน
+   * ก่อนหน้านี้ @Roles ของคอนโทรลเลอร์แคบกว่าที่ฐานข้อมูลอนุญาตไว้แล้ว
+   * ทำให้ registrar โดน 403 ทั้งที่ RLS ยอมอยู่แล้ว (รูปเดียวกับข้อ 14
+   * ในบทเรียน — @Roles ที่แคบกว่าฐานข้อมูลจริง)
+   * ส่วนรับชำระ/ใบเสร็จ/กระทบยอดธนาคารยังเป็นงานของฝ่ายการเงินล้วน
+   * จึงไม่แตะ — คนละงานกับตอนรับสมัคร
+   */
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Post('invoices')
   issue(@Body() dto: IssueInvoiceDto) {
     return this.svc.issueInvoice(dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('invoices')
   invoice(@Query('id') id: string) {
     return this.svc.getInvoice(id);
@@ -537,6 +552,12 @@ class FinanceController {
     return this.svc.recordPayment(dto);
   }
 
+  /*
+   * ─── ใบเสร็จยังเป็นของฝ่ายการเงินล้วน ไม่ขยายให้ registrar ───
+   * ต่างจากใบแจ้งหนี้/ส่วนลด/ทุนด้านบน — API-194 ยืนยันไว้แล้วว่างานทะเบียน
+   * ออกใบ รบ. ได้แต่ไม่ใช่คนรับเงิน การเปิดใบเสร็จ (หลักฐานว่า "รับเงินแล้ว")
+   * เป็นคนละงานกับการตั้งยอดที่ต้องเก็บ (invoice) — ตั้งใจแยกไว้
+   */
   @Get('receipts')
   receipts(@Query('studentId', ParseUuidPipe) studentId: string) {
     return this.svc.receipts(studentId);
@@ -564,6 +585,7 @@ class FinanceController {
     return this.svc.reconcile();
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('reconcile/pending')
   pending() {
     return this.svc.pendingMatches();
@@ -586,66 +608,78 @@ class FinanceController {
     return this.svc.refreshHolds();
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('ar-aging')
   aging() {
     return this.svc.aging();
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('fee-items')
   feeItems() {
     return this.svc.feeItems();
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('fee_item')
   @Post('fee-items')
   createFeeItem(@Body() dto: FeeItemDto) {
     return this.svc.createFeeItem(dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('fee-schedules')
   feeSchedules(@Query('academicYearId', ParseUuidPipe) academicYearId: string) {
     return this.svc.feeSchedules(academicYearId);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('fee_schedule')
   @Post('fee-schedules')
   createFeeSchedule(@Body() dto: FeeScheduleDto) {
     return this.svc.createFeeSchedule(dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('fee-schedules/:id/lines')
   feeScheduleLines(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.feeScheduleLines(id);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('fee_schedule', 'id')
   @Post('fee-schedules/:id/lines')
   setFeeScheduleLines(@Param('id', ParseUuidPipe) id: string, @Body() dto: SetFeeScheduleLinesDto) {
     return this.svc.setFeeScheduleLines(id, dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('funding-sources')
   fundingSources() {
     return this.svc.fundingSources();
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('funding_source')
   @Post('funding-sources')
   createFundingSource(@Body() dto: FundingSourceDto) {
     return this.svc.createFundingSource(dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Get('students/:id/funding')
   studentFunding(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.studentFunding(id);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('student_funding', 'id')
   @Post('students/:id/funding')
   grantFunding(@Param('id', ParseUuidPipe) id: string, @Body() dto: StudentFundingDto) {
     return this.svc.grantFunding(id, dto);
   }
 
+  @Roles('finance', 'registrar', 'director', 'admin')
   @Audit('student_funding', 'fundingId')
   @Delete('students/:id/funding/:fundingId')
   revokeFunding(@Param('fundingId', ParseUuidPipe) fundingId: string) {
