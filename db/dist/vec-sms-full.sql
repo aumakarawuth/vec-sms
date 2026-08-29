@@ -3,7 +3,7 @@
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
 -- migration ล่าสุด  0094
--- ลายนิ้วมือต้นทาง  e31b55d3034ed3b5
+-- ลายนิ้วมือต้นทาง  b8eb0126937cd71d
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -24388,7 +24388,18 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 revoke all on function enrollment_has_pending_retake_charge(uuid) from public;
-grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+
+-- app_runtime ยังไม่มีบน cluster ใหม่ (roles.sql รันหลัง migrations ทั้งหมด
+-- ตามลำดับใน db/run.sh และ DEPLOY-ONLINE.md) grant ตรงนี้จึงต้อง guard
+-- เหมือนทุกจุดก่อนหน้าที่แตะ app_runtime มิฉะนั้น migration นี้จะล้มทันที
+-- บนฐานข้อมูลเปล่า — roles.sql เองก็ grant execute on all functions ให้แล้ว
+-- ท่อนนี้จึงมีไว้สำหรับ cluster เก่าที่มี app_runtime ค้างอยู่แล้วเท่านั้น
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+  end if;
+end $$;
 
 comment on function enrollment_has_pending_retake_charge(uuid) is
   'true = มีค่าซ่อมค้างชำระ — security definer เพราะครูมองไม่เห็นแถว course_retake_charge เอง (ดูคอมเมนต์บนฟังก์ชันนี้)';
