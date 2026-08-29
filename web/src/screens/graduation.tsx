@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import { api, emptyPage } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
@@ -348,7 +349,7 @@ export function GraduationScreen() {
 
   return (
     <>
-      <PageHead title="สำเร็จการศึกษา" />
+      <PageHead title="สำเร็จการศึกษา" sub={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>} />
 
       {!canUse ? (
         <RestrictedNotice roles={GRADUATION_ROLES} />

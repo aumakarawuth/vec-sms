@@ -6,6 +6,7 @@
  */
 import { useState } from 'react';
 import { api } from '../core/api';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Notice, PageHead, useAsync } from '../ui/kit';
 
 export interface GradeLevelRow {
@@ -28,7 +29,11 @@ export function GradeLevelsScreen() {
 
   return (
     <>
-      <PageHead title="ระดับชั้น" sub="กำหนดชื่อและชื่อย่อของแต่ละชั้นปีในแต่ละระดับ" />
+      <PageHead
+        title="ระดับชั้น"
+        sub="กำหนดชื่อและชื่อย่อของแต่ละชั้นปีในแต่ละระดับ"
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
+      />
       <Notice kind="info">เลขชั้นปี (1–6) เป็นตัวเลขที่ระบบใช้คำนวณเลื่อนชั้นจริงอยู่แล้ว หน้านี้แค่ตั้งชื่อที่แสดงผล</Notice>
       <div className="period-layout">
         <aside className="period-groups">

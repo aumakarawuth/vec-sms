@@ -16,6 +16,7 @@
 import { Fragment, useState } from 'react';
 import { api, qs } from '../core/api';
 import { fetchSections, termLabel, type Section, type Term } from '../core/catalog';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   AsyncView, Badge, Card, Notice, PageHead, PrintButton, RestrictedNotice, TableCard, useAsync, useCan, type Async,
@@ -314,7 +315,11 @@ export function GradeReportsScreen() {
 
   return (
     <>
-      <PageHead title="รายงานผลการเรียน" sub="ดูผลการเรียนตามขอบเขตที่เลือก และรายชื่อนักศึกษาที่ยังไม่ผ่านเกณฑ์" />
+      <PageHead
+        title="รายงานผลการเรียน"
+        sub="ดูผลการเรียนตามขอบเขตที่เลือก และรายชื่อนักศึกษาที่ยังไม่ผ่านเกณฑ์"
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
+      />
 
       {!canUse ? (
         <RestrictedNotice roles={REPORTS_ROLES} />

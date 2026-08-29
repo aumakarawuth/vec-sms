@@ -713,10 +713,13 @@ export function TimetableScreen() {
       <PageHead
         title="ตารางสอน"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/timetable-center')}>← ศูนย์งานตารางเรียน</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

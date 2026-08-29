@@ -123,10 +123,13 @@ export function AdvisorsScreen() {
         title="กำหนดอาจารย์ที่ปรึกษา"
         sub="มอบหมายทั้งห้องพร้อมกัน — ต่างจาก /students ที่มอบหมายได้ทีละคน"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/timetable-center')}>← ศูนย์งานตารางเรียน</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

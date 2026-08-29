@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { pct, thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -87,10 +88,13 @@ export function AttendanceScreen() {
       <PageHead
         title="เช็คชื่อรายคาบ"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(list) => <TermSelect terms={list} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/behavior-center')}>← ศูนย์งานพฤติกรรม</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(list) => <TermSelect terms={list} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import { useSession } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync,
@@ -172,6 +173,7 @@ export function DualScreen() {
       <PageHead
         title="ทวิภาคีและสถานประกอบการ"
         sub={pending.data ? `รอรับรอง ${num(pendingHours, 1)} ชั่วโมง` : undefined}
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
       />
 
       <Notice kind="info">

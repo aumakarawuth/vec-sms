@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
+import { href } from '../core/router';
 import { useSession } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync,
@@ -92,6 +93,7 @@ export function StudentLeaveScreen() {
       <PageHead
         title="การลาของนักศึกษา"
         sub={leaves.data ? `${leaves.data.length} รายการ` : undefined}
+        actions={<a href={href('/behavior-center')}>← ศูนย์งานพฤติกรรม</a>}
       />
 
       <Notice kind="info">

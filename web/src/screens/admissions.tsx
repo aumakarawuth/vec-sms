@@ -565,7 +565,7 @@ export function AdmissionsScreen() {
 
   return (
     <>
-      <PageHead title="งานรับสมัคร" />
+      <PageHead title="งานรับสมัคร" sub={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>} />
 
       {!canUse ? (
         <RestrictedNotice roles={ADMISSIONS_ROLES} />

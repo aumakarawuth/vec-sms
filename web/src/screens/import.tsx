@@ -20,6 +20,7 @@ import { mapGradeImportRow } from '../core/grade-import-template';
 import { useScope } from '../core/scope';
 import { isBlankSisaCsvRow, mapSisaCsvRow } from '../core/student-import-sisa-csv-template';
 import { isBlankStudentRow, mapStudentImportRow, STUDENT_IMPORT_DATA_START_ROW } from '../core/student-import-template';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
@@ -221,7 +222,7 @@ export function ImportScreen() {
 
   return (
     <>
-      <PageHead title="นำเข้าข้อมูล" />
+      <PageHead title="นำเข้าข้อมูล" sub={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>} />
 
       {!canUse ? (
         <RestrictedNotice roles={IMPORT_ROLES} />

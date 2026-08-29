@@ -7,6 +7,7 @@
  */
 import { api } from '../core/api';
 import { num } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import { AsyncView, Card, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 
@@ -52,7 +53,11 @@ export function StatisticsScreen() {
 
   return (
     <>
-      <PageHead title="ข้อมูลสถิติ" sub="ภาพรวมของทั้งวิทยาลัย ณ ขณะนี้ — ตัวเลขจากฐานข้อมูลจริง ไม่ใช่ตัวอย่าง" />
+      <PageHead
+        title="ข้อมูลสถิติ"
+        sub="ภาพรวมของทั้งวิทยาลัย ณ ขณะนี้ — ตัวเลขจากฐานข้อมูลจริง ไม่ใช่ตัวอย่าง"
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
+      />
 
       {!canUse ? (
         <RestrictedNotice roles={REPORTS_ROLES} />

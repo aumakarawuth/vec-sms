@@ -4979,6 +4979,202 @@ async function main() {
     expect(again.status === 404, `ลบซ้ำควรได้ 404 ได้ ${again.status}`);
   });
 
+  console.log('');
+  console.log('══ ค่าซ่อมรายวิชา (0093) ══');
+
+  // F.section (TERM1) เปิดรับลงทะเบียนอยู่แล้ว (เทสต์อื่นลงทะเบียนสำเร็จ
+  // มาก่อนหน้านี้) และ F.studentRegrade ยังไม่เคยลงทะเบียนกลุ่มนี้ — ต่างจาก
+  // กลุ่ม 'c0' ที่ใช้เก็บผลสอบตกของนักศึกษาคนนี้ไปแล้ว จึงใช้ได้โดยไม่ต้อง
+  // เปิดภาคเรียน/สร้างกลุ่มเรียนใหม่เอง
+  const RETAKE_SECTION = F.section;
+  let retakeChargeId = '';
+
+  await check('API-246 ยังไม่ได้ตั้งอัตราค่าซ่อม — ลงทะเบียนซ่อมถูกปฏิเสธ', async () => {
+    const r = await registrar('/retake-fee/register', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.studentRegrade, termId: TERM1, sectionId: RETAKE_SECTION }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+    expect(/อัตรา/.test(JSON.stringify(r.body)), `ข้อความควรบอกว่ายังไม่ได้ตั้งอัตรา ได้ ${JSON.stringify(r.body)}`);
+  });
+
+  await check('API-247 ครูตั้งอัตราค่าซ่อมเองไม่ได้ แต่การเงินตั้งได้', async () => {
+    const denied = await teacher('/retake-fee/policy', {
+      method: 'POST', body: JSON.stringify({ feePerCredit: 300 }),
+    });
+    expect(denied.status === 403, `ครูควรได้ 403 ได้ ${denied.status}`);
+
+    const r = await finance('/retake-fee/policy', {
+      method: 'POST', body: JSON.stringify({ feePerCredit: 300 }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(Number(r.body.fee_per_credit) === 300, `อัตราควรเป็น 300 ได้ ${r.body.fee_per_credit}`);
+  });
+
+  await check('API-248 ลงทะเบียนซ่อมแล้วออกยอดอัตโนมัติ — 2 หน่วยกิต × 300 = 600 บาท สถานะรอชำระ', async () => {
+    const r = await registrar('/retake-fee/register', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.studentRegrade, termId: TERM1, sectionId: RETAKE_SECTION }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(Number(r.body.charge.amount) === 600, `ยอดควรเป็น 600 ได้ ${r.body.charge.amount}`);
+    expect(r.body.charge.status === 'pending', `สถานะควรเป็น pending ได้ ${r.body.charge.status}`);
+    retakeChargeId = r.body.charge.id;
+  });
+
+  await check('API-249 ระหว่างรอชำระเงิน ชื่อนักศึกษาคนนี้ยังไม่ขึ้นสมุดคะแนนของครู แต่คนอื่นในห้องเดียวกันเห็นตามปกติ', async () => {
+    const r = await teacher(`/gradebook/sections/${RETAKE_SECTION}/scores`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(
+      !r.body.students.some((s: any) => s.student_code === '69201010779'),
+      `นักศึกษาที่ยังไม่ชำระค่าซ่อมไม่ควรขึ้นสมุดคะแนน ได้ ${JSON.stringify(r.body.students)}`,
+    );
+    expect(
+      r.body.students.length > 0,
+      'นักศึกษาคนอื่นในห้องเดียวกัน (ที่ไม่มีค่าซ่อมค้าง) ยังต้องขึ้นสมุดคะแนนตามปกติ',
+    );
+  });
+
+  await check('API-250 ครูยืนยันการชำระเองไม่ได้ แต่การเงินยืนยันได้ แล้วชื่อขึ้นสมุดคะแนนทันที', async () => {
+    const denied = await teacher(`/retake-fee/${retakeChargeId}/confirm-payment`, {
+      method: 'POST', body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(denied.status === 403, `ครูควรได้ 403 ได้ ${denied.status}`);
+
+    const r = await finance(`/retake-fee/${retakeChargeId}/confirm-payment`, {
+      method: 'POST', body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.status === 'paid', `สถานะควรเป็น paid ได้ ${r.body.status}`);
+
+    const roster = await teacher(`/gradebook/sections/${RETAKE_SECTION}/scores`);
+    expect(
+      roster.body.students.some((s: any) => s.student_code === '69201010779'),
+      `ชำระแล้วต้องขึ้นสมุดคะแนนทันที ได้ ${JSON.stringify(roster.body.students)}`,
+    );
+  });
+
+  await check('API-251 ยืนยันซ้ำรายการที่จ่ายแล้วถูกปฏิเสธ', async () => {
+    const r = await finance(`/retake-fee/${retakeChargeId}/confirm-payment`, {
+      method: 'POST', body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(r.status >= 400, `ควรถูกปฏิเสธ ได้ ${r.status}`);
+  });
+
+  await check('API-252 ยอดค่าซ่อมไม่ปนกับยอดใบแจ้งหนี้ค่าเทอมของนักศึกษาคนเดียวกัน', async () => {
+    // ออกใบแจ้งหนี้ค่าเทอมให้นักศึกษาคนเดียวกันในภาคเดียวกัน แล้วตรวจว่า
+    // ยอดค้างชำระค่าเทอมไม่ขยับเพราะค่าซ่อม (คนละบัญชี คนละตารางกันจริง)
+    const before = await registrar(`/students/${F.studentRegrade}/balance`);
+    const inv = await registrar('/finance/invoices', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.studentRegrade, termId: TERM2, installments: 1 }),
+    });
+    const after = await registrar(`/students/${F.studentRegrade}/balance`);
+    expect(inv.status === 201, `ออกใบแจ้งหนี้ควรได้ 201 ได้ ${inv.status}: ${JSON.stringify(inv.body)}`);
+    expect(
+      Number(after.body.billed) - Number(before.body.billed) !== 600,
+      `ยอดเรียกเก็บค่าเทอมต้องไม่รวมค่าซ่อม 600 เข้าไปด้วย ก่อน ${before.body.billed} หลัง ${after.body.billed}`,
+    );
+
+    const charges = await registrar(`/retake-fee/students/${F.studentRegrade}`);
+    expect(charges.status === 200, `ได้ ${charges.status}`);
+    expect(
+      charges.body.some((c: any) => c.id === retakeChargeId && c.status === 'paid'),
+      'ต้องยังเห็นรายการค่าซ่อมที่จ่ายแล้วอยู่ในบัญชีของตัวเอง แยกจากใบแจ้งหนี้ค่าเทอม',
+    );
+  });
+
+  console.log('');
+  console.log('══ บล็อกใบ รบ. เมื่อมียอดค้าง + รายงานรายรับ (0094) ══');
+
+  await check('API-253 เปิดบล็อกใบ รบ. เป็นทางเลือกที่ปิดโดยค่าเริ่มต้น', async () => {
+    const r = await finance('/finance/late-policy');
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    // ฐานทดสอบตั้งนโยบายไว้แล้วตั้งแต่ prepare-db (TEST 13/28) — ตรวจแค่ว่า
+    // คอลัมน์ใหม่มีอยู่จริงและอ่านได้ ไม่ตรวจค่าเริ่มต้นเพราะ fixture อาจตั้งไว้แล้ว
+    expect('blocks_transcript_after_hold' in r.body, 'ต้องมีคอลัมน์นี้ในนโยบาย');
+  });
+
+  await check('API-254 ครูตั้งนโยบายค้างชำระเองไม่ได้', async () => {
+    const r = await teacher('/finance/late-policy', {
+      method: 'POST',
+      body: JSON.stringify({ effectiveFromYearBe: 2569, blocksTranscriptAfterHold: true }),
+    });
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  await check('API-255 การเงินเปิดบล็อกใบ รบ. แล้วมีการระงับที่บล็อกจริงถึงพิมพ์ไม่ได้', async () => {
+    const set = await finance('/finance/late-policy', {
+      method: 'POST',
+      body: JSON.stringify({ effectiveFromYearBe: 2569, blocksTranscriptAfterHold: true }),
+    });
+    expect(set.status === 201, `ตั้งนโยบายไม่สำเร็จ ${set.status}: ${JSON.stringify(set.body)}`);
+    expect(set.body.blocks_transcript_after_hold === true, 'นโยบายต้องเปิดแล้ว');
+
+    // ก่อนมีการระงับ — พิมพ์ได้ตามปกติ แม้เปิดนโยบายไว้แล้วก็ตาม
+    const before = await registrar('/documents/issue', {
+      method: 'POST',
+      body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+    });
+    expect(before.status === 201, `เปิดนโยบายเฉย ๆ ไม่ควรบล็อกคนที่ไม่มีการระงับ ได้ ${before.status}`);
+
+    // จำลองการระงับสิทธิ์ที่ตั้งใจให้บล็อกใบ รบ. ด้วย (เหมือนที่
+    // refresh_finance_holds() จะตั้งให้เองเมื่อค้างชำระเกินกำหนดจริง)
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    let holdId = '';
+    try {
+      const ins = await db.query(
+        `insert into registration_hold
+           (student_id, kind, reason, source_module, blocks_registration, blocks_transcript)
+         values ($1, 'finance', 'ทดสอบ API-255', 'finance', false, true)
+         returning id`,
+        [F.student],
+      );
+      holdId = ins.rows[0].id;
+
+      const blocked = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+      });
+      expect(blocked.status >= 400, `ควรถูกปฏิเสธ ได้ ${blocked.status}`);
+      expect(/ระงับสิทธิ์/.test(JSON.stringify(blocked.body)), `ข้อความต้องบอกเหตุผล ได้ ${JSON.stringify(blocked.body)}`);
+
+      // ใบเอกสารประเภทอื่นต้องไม่ถูกบล็อกด้วย — ตั้งใจบล็อกเฉพาะใบ รบ.
+      const cert = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.student, kind: 'certification' }),
+      });
+      expect(cert.status === 201, `ใบรับรองไม่ควรถูกบล็อกด้วย ได้ ${cert.status}: ${JSON.stringify(cert.body)}`);
+
+      // ปลดการระงับแล้วพิมพ์ได้ตามปกติ
+      await db.query(`update registration_hold set released_at = now() where id = $1`, [holdId]);
+      const after = await registrar('/documents/issue', {
+        method: 'POST',
+        body: JSON.stringify({ studentId: F.student, kind: 'transcript' }),
+      });
+      expect(after.status === 201, `ปลดแล้วควรพิมพ์ได้ ได้ ${after.status}: ${JSON.stringify(after.body)}`);
+    } finally {
+      await db.end();
+    }
+  });
+
+  await check('API-256 รายงานรายรับรวมยอดที่กระทบยอดแล้วเท่านั้น', async () => {
+    const r = await finance(`/finance/revenue?from=2000-01-01&to=2999-12-31`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(typeof r.body.total === 'number', 'ต้องมียอดรวม');
+    expect(Array.isArray(r.body.byMethod), 'ต้องแยกตามช่องทางชำระ');
+    // API-15 รับชำระ 4,200 ผ่าน promptpay ไว้แล้วก่อนหน้านี้ในชุดทดสอบนี้
+    const pp = r.body.byMethod.find((x: any) => x.method === 'promptpay');
+    expect(pp && pp.amount >= 4200, `ต้องเห็นยอด promptpay ที่รับไปแล้ว ได้ ${JSON.stringify(r.body.byMethod)}`);
+    return `รวม ${r.body.total} บาท ใน ${r.body.byMethod.length} ช่องทาง`;
+  });
+
+  await check('API-257 บทบาทอื่นที่ไม่ใช่งานการเงินขึ้นไปดูรายงานรายรับไม่ได้', async () => {
+    const r = await teacher('/finance/revenue');
+    expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
   await app.close();
 
   console.log('');

@@ -14,6 +14,7 @@
  */
 import { api } from '../core/api';
 import { thaiDateTime } from '../core/fmt';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 
 interface JobRun {
@@ -46,7 +47,7 @@ export function JobsScreen() {
 
   return (
     <>
-      <PageHead title="งานตามกำหนดเวลา" />
+      <PageHead title="งานตามกำหนดเวลา" sub={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>} />
 
       <AsyncView state={status}>
         {(s) => {

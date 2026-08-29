@@ -11,6 +11,7 @@
  */
 import { useState } from 'react';
 import { api } from '../core/api';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import { ActionButton, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 
@@ -36,7 +37,11 @@ export function EducationLevelsScreen() {
 
   return (
     <>
-      <PageHead title="ระดับการศึกษา" sub="ตั้งชื่อที่ใช้เรียกแต่ละระดับการศึกษาในระบบ" />
+      <PageHead
+        title="ระดับการศึกษา"
+        sub="ตั้งชื่อที่ใช้เรียกแต่ละระดับการศึกษาในระบบ"
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
+      />
       {!canUse ? (
         <RestrictedNotice roles={EDUCATION_LEVELS_ROLES} />
       ) : (

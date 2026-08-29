@@ -233,6 +233,11 @@ export class GradebookService {
              left join v_enrollment_attendance va on va.enrollment_id = e.id
              left join gradebook_score gs on gs.enrollment_id = e.id
             where e.class_section_id = $1 and e.status = 'enrolled'
+              -- ลงทะเบียนซ่อมที่ยังไม่ชำระค่าซ่อม (0093) ยังไม่ขึ้นสมุดคะแนน
+              -- enrollment ยังอยู่ครบตามเดิม เช็คชื่อ/ใบรายชื่อจึงไม่กระทบ —
+              -- ผ่านฟังก์ชัน security definer เพราะครูมองไม่เห็นแถว
+              -- course_retake_charge เอง (RLS ของตารางนั้นไม่รวมครูไว้)
+              and not enrollment_has_pending_retake_charge(e.id)
             group by e.id, s.student_code, p.first_name_th, p.last_name_th,
                      va.pct_final, va.attendance_state
             order by s.student_code`,

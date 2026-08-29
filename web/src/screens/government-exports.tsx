@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import { AsyncView, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 
@@ -46,7 +47,7 @@ export function GovernmentExportsScreen() {
   );
   return (
     <>
-      <PageHead title="ส่งออกข้อมูลให้หน่วยงานรัฐ" />
+      <PageHead title="ส่งออกข้อมูลให้หน่วยงานรัฐ" sub={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>} />
       {!canUse ? (
         <RestrictedNotice roles={EXPORTS_ROLES} />
       ) : (

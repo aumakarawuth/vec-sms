@@ -106,6 +106,14 @@ interface FailedCourse {
   term_label: string;
 }
 
+interface RetakeCharge {
+  id: string;
+  credits: string;
+  rate_per_credit: string;
+  amount: string;
+  status: 'pending' | 'paid' | 'waived';
+}
+
 interface BulkResult {
   requested: number;
   succeeded: number;
@@ -775,6 +783,8 @@ function PerStudentTab({ termId }: { termId: string }) {
   const [result, setResult] = useState<BulkResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [retakeCharge, setRetakeCharge] = useState<RetakeCharge | null>(null);
+  const [retakeBusy, setRetakeBusy] = useState(false);
 
   const student = (students.data ?? []).find((s) => s.id === studentId);
 
@@ -814,6 +824,35 @@ function PerStudentTab({ termId }: { termId: string }) {
       setBusy(false);
     }
   }
+
+  /**
+   * ลงทะเบียนซ่อมพร้อมเก็บค่าธรรมเนียม — ใช้ได้เฉพาะเลือกวิชาเดียวที่เป็น
+   * วิชาที่ยังไม่ผ่านของนักศึกษาคนนี้ (เพื่อไม่ให้เผลอเก็บค่าซ่อมวิชาที่ยัง
+   * ไม่เคยลงหรือไม่เคยตก) ยอดคำนวณจากหน่วยกิต × อัตราที่ตั้งไว้ที่งานการเงิน
+   * — ถ้ายังไม่ได้ตั้งอัตราจะถูกปฏิเสธพร้อมบอกให้ไปตั้งก่อน
+   */
+  async function runRetake() {
+    if (!termId || !studentId || pickedSections.size !== 1) return;
+    const [sectionId] = [...pickedSections];
+    setRetakeBusy(true);
+    setError(null);
+    setRetakeCharge(null);
+    try {
+      const r = await api.post<{ charge: RetakeCharge }>('/retake-fee/register', {
+        studentId, termId, sectionId,
+      });
+      setRetakeCharge(r.charge);
+      sections.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ลงทะเบียนซ่อมไม่สำเร็จ');
+    } finally {
+      setRetakeBusy(false);
+    }
+  }
+
+  const singlePickedSection = pickedSections.size === 1 ? [...pickedSections][0] : null;
+  const isRetakeEligible = !!singlePickedSection
+    && !!visibleSections.find((s) => s.id === singlePickedSection && failedByCourse.has(s.course_id));
 
   return (
     <>
@@ -1013,7 +1052,27 @@ function PerStudentTab({ termId }: { termId: string }) {
               <button disabled title="เลือกนักศึกษาหนึ่งคนก่อน">พิมพ์ใบลงทะเบียน</button>
             )}
           </div>
+          {isRetakeEligible && (
+            <div className="shrink">
+              <button
+                disabled={retakeBusy}
+                onClick={() => void runRetake()}
+                title="เลือกวิชาที่ยังไม่ผ่านของนักศึกษาคนนี้ไว้แล้ว — ลงทะเบียนซ่อมพร้อมออกยอดค่าซ่อมให้งานการเงิน"
+              >
+                {retakeBusy ? 'กำลังลงทะเบียนซ่อม…' : 'ลงทะเบียนซ่อม (เก็บค่าธรรมเนียม)'}
+              </button>
+            </div>
+          )}
         </div>
+        {retakeCharge && (
+          <Notice kind={retakeCharge.status === 'pending' ? 'warn' : 'ok'}>
+            ลงทะเบียนซ่อมสำเร็จ — {retakeCharge.credits} หน่วยกิต × {retakeCharge.rate_per_credit} บาท
+            = <strong>{retakeCharge.amount} บาท</strong>{' '}
+            {retakeCharge.status === 'pending'
+              ? '— สถานะ "รอชำระเงิน" ชื่อนักศึกษาจะยังไม่ขึ้นสมุดคะแนนของครูจนกว่างานการเงินจะยืนยันว่าชำระแล้ว'
+              : '— ชำระแล้ว'}
+          </Notice>
+        )}
       </Card>
 
       {check && (

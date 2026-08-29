@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { money, thaiDate } from '../core/fmt';
-import { useRoute } from '../core/router';
+import { href, useRoute } from '../core/router';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
@@ -415,6 +415,252 @@ function FeeScheduleSetupCard() {
   );
 }
 
+interface RetakeFeePolicy {
+  fee_per_credit: string | null;
+}
+
+interface PendingRetakeCharge {
+  id: string;
+  amount: string;
+  created_at: string;
+  student_code: string;
+  student_name: string;
+  course_code: string;
+  course_name: string;
+}
+
+/**
+ * ค่าซ่อมรายวิชา (0093) — คนละบัญชีกับค่าเทอมโดยตั้งใจ (ดูคอมเมนต์ที่
+ * migration) งานทะเบียนเป็นคนลงทะเบียนซ่อมและออกยอดที่หน้า "ลงทะเบียนเรียน"
+ * ส่วนที่นี่เป็นที่เดียวที่ยืนยันว่าชำระแล้วหรือยกเว้น — ยืนยันแล้วชื่อ
+ * นักศึกษาจึงจะขึ้นสมุดคะแนนของครูทันที
+ */
+function RetakeFeeCard() {
+  const policy = useAsync(() => api.get<RetakeFeePolicy>('/retake-fee/policy'), []);
+  const pending = useAsync(() => api.get<PendingRetakeCharge[]>('/retake-fee/pending'), []);
+  const [rate, setRate] = useState('');
+
+  return (
+    <Card
+      title="ค่าซ่อมรายวิชา"
+      actions={
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Field label="อัตรา/หน่วยกิต (บาท)">
+            <input
+              type="number" min={0}
+              placeholder={policy.data?.fee_per_credit ?? 'ยังไม่ได้ตั้งค่า'}
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              style={{ width: 120 }}
+            />
+          </Field>
+          <div className="shrink">
+            <ActionButton
+              toast
+              onRun={() => {
+                if (!rate) throw new Error('กรอกอัตราก่อน');
+                return api.post('/retake-fee/policy', { feePerCredit: Number(rate) });
+              }}
+              onDone={() => { setRate(''); policy.reload(); }}
+            >
+              บันทึกอัตรา
+            </ActionButton>
+          </div>
+        </div>
+      }
+    >
+      {!policy.loading && policy.data?.fee_per_credit == null && (
+        <Notice kind="warn">
+          ยังไม่ได้ตั้งอัตราค่าซ่อมต่อหน่วยกิต — งานทะเบียนจะลงทะเบียนซ่อมพร้อมออกยอดไม่ได้จนกว่าจะตั้งค่าที่นี่
+        </Notice>
+      )}
+      <AsyncView state={pending} empty="ไม่มีรายการค่าซ่อมที่รอชำระ">
+        {(rows) => (
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 120 }}>รหัสนักศึกษา</th>
+                <th>ชื่อ — นามสกุล</th>
+                <th>รายวิชา</th>
+                <th className="num" style={{ width: 100 }}>ยอด</th>
+                <th style={{ width: 190 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <PendingRetakeRow key={r.id} row={r} onDone={() => pending.reload()} />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </AsyncView>
+    </Card>
+  );
+}
+
+function PendingRetakeRow({ row, onDone }: { row: PendingRetakeCharge; onDone: () => void }) {
+  return (
+    <tr>
+      <td className="mono">{row.student_code}</td>
+      <td>{row.student_name}</td>
+      <td>{row.course_code} {row.course_name}</td>
+      <td className="num">{money(row.amount)}</td>
+      <td className="row" style={{ gap: 6 }}>
+        <ActionButton
+          className="primary"
+          toast
+          confirm={`ยืนยันว่านักศึกษาชำระค่าซ่อม ${money(row.amount)} บาทแล้ว — ชื่อจะขึ้นสมุดคะแนนของครูทันที`}
+          onRun={() => api.post(`/retake-fee/${row.id}/confirm-payment`, { method: 'cash' })}
+          onDone={onDone}
+        >
+          ยืนยันชำระแล้ว
+        </ActionButton>
+        <ActionButton
+          toast
+          onRun={() => {
+            const note = window.prompt('ยกเว้นค่าซ่อมนี้ — ระบุเหตุผล');
+            if (!note?.trim()) throw new Error('ต้องระบุเหตุผลที่ยกเว้น');
+            return api.post(`/retake-fee/${row.id}/waive`, { note: note.trim() });
+          }}
+          onDone={onDone}
+        >
+          ยกเว้น
+        </ActionButton>
+      </td>
+    </tr>
+  );
+}
+
+interface LateFeePolicy {
+  effective_from_year_be: number;
+  grace_days: number;
+  flat_amount: string;
+  daily_amount: string;
+  max_amount: string | null;
+  hold_after_days: number;
+  blocks_transcript_after_hold: boolean;
+}
+
+/**
+ * นโยบายค้างชำระและการระงับสิทธิ์ (0094) — บล็อกพิมพ์ใบ รบ. เป็นทางเลือก
+ * ที่ปิดโดยค่าเริ่มต้นเสมอ (หลัก 5ข) ต้องมากดเปิดเองที่นี่ วิทยาลัยที่ไม่ได้
+ * ตั้งค่าอะไรเลยจะไม่มีใครถูกบล็อกพิมพ์ใบ รบ. แม้ค้างชำระเกินกำหนดจริง
+ */
+function LatePolicyCard() {
+  const policy = useAsync(() => api.get<LateFeePolicy | null>('/finance/late-policy'), []);
+  const [graceDays, setGraceDays] = useState('');
+  const [holdAfterDays, setHoldAfterDays] = useState('');
+  const [blocksTranscript, setBlocksTranscript] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const p = policy.data;
+  if (!touched && p && graceDays === '' && holdAfterDays === '') {
+    // เติมค่าปัจจุบันให้ครั้งแรกที่โหลดเสร็จ เพื่อไม่ให้ฟิลด์ที่ไม่ได้แตะ
+    // ถูกรีเซ็ตกลับไปเป็นค่าเริ่มต้นตอนบันทึก (ส่งครบทุกช่องเสมอ)
+    setGraceDays(String(p.grace_days));
+    setHoldAfterDays(String(p.hold_after_days));
+    setBlocksTranscript(p.blocks_transcript_after_hold);
+  }
+
+  return (
+    <Card title="นโยบายค้างชำระและการระงับสิทธิ์">
+      {!policy.loading && !p && (
+        <Notice kind="warn">ยังไม่ได้ตั้งนโยบายค้างชำระของสถานศึกษานี้ — ตั้งค่าด้านล่างเพื่อเริ่มใช้งาน</Notice>
+      )}
+      <div className="row" style={{ gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Field label="ผ่อนผัน (วัน)">
+          <input type="number" min={0} value={graceDays} onChange={(e) => { setTouched(true); setGraceDays(e.target.value); }} style={{ width: 100 }} />
+        </Field>
+        <Field label="ระงับสิทธิ์เมื่อค้างเกิน (วัน)">
+          <input type="number" min={0} value={holdAfterDays} onChange={(e) => { setTouched(true); setHoldAfterDays(e.target.value); }} style={{ width: 100 }} />
+        </Field>
+        <Field label="เมื่อระงับสิทธิ์แล้ว">
+          <label className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={blocksTranscript}
+              onChange={(e) => { setTouched(true); setBlocksTranscript(e.target.checked); }}
+            />
+            บล็อกการพิมพ์ใบ รบ. ด้วย
+          </label>
+        </Field>
+        <div className="shrink">
+          <ActionButton
+            toast
+            onRun={() => {
+              if (!graceDays || !holdAfterDays) throw new Error('กรอกจำนวนวันให้ครบก่อน');
+              return api.post('/finance/late-policy', {
+                effectiveFromYearBe: p?.effective_from_year_be ?? new Date().getFullYear() + 543,
+                graceDays: Number(graceDays),
+                holdAfterDays: Number(holdAfterDays),
+                flatAmount: p ? Number(p.flat_amount) : undefined,
+                dailyAmount: p ? Number(p.daily_amount) : undefined,
+                maxAmount: p?.max_amount != null ? Number(p.max_amount) : undefined,
+                blocksTranscriptAfterHold: blocksTranscript,
+              });
+            }}
+            onDone={() => { setTouched(false); policy.reload(); }}
+          >
+            บันทึกนโยบาย
+          </ActionButton>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+interface RevenueRow { method: string; count: number; amount: number }
+interface Revenue { from: string | null; to: string | null; total: number; byMethod: RevenueRow[] }
+
+/** รายงานรายรับ (0094) — นับเฉพาะเงินที่กระทบยอดแล้ว ไม่รวมรายการที่ยังค้างจับคู่ */
+function RevenueReportCard() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const revenue = useAsync(() => api.get<Revenue>(`/finance/revenue${qs({ from: from || undefined, to: to || undefined })}`), [from, to]);
+
+  return (
+    <Card
+      title="รายงานรายรับ"
+      actions={
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Field label="ตั้งแต่"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+          <Field label="ถึง"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        </div>
+      }
+    >
+      <AsyncView state={revenue}>
+        {(r) => (
+          <>
+            <p style={{ fontSize: 20, fontWeight: 600, margin: '0 0 12px' }}>{money(r.total)} บาท</p>
+            {r.byMethod.length === 0 ? (
+              <p className="muted">ยังไม่มีรายรับที่กระทบยอดแล้วในช่วงนี้</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>ช่องทางชำระ</th>
+                    <th className="num" style={{ width: 100 }}>จำนวนรายการ</th>
+                    <th className="num" style={{ width: 160 }}>ยอดเงิน</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.byMethod.map((x) => (
+                    <tr key={x.method}>
+                      <td>{METHOD[x.method] ?? x.method}</td>
+                      <td className="num">{x.count}</td>
+                      <td className="num">{money(x.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </AsyncView>
+    </Card>
+  );
+}
+
 /**
  * ส่วนลด/ทุนรายคน — เจาะจงรายการได้ (0080) เช่น ลดเฉพาะค่าแรกเข้า ไม่แตะ
  * ค่าเทอม ต่างจากทุนที่ตั้งใจลดทั้งใบซึ่งเว้นช่องรายการว่างไว้ กดมอบแล้ว
@@ -768,13 +1014,22 @@ export function FinanceScreen() {
       <PageHead
         title="งานการเงิน"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/finance-center')}>← ศูนย์การเงิน</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />
+
+      <RetakeFeeCard />
+
+      <RevenueReportCard />
+
+      <LatePolicyCard />
 
       <TableCard
         title="ยอดลูกหนี้แยกตามอายุหนี้"

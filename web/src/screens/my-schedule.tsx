@@ -8,6 +8,7 @@
  */
 import { api } from '../core/api';
 import { usePeriodLabel } from '../core/catalog';
+import { href } from '../core/router';
 import { AsyncView, Card, PageHead, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -41,10 +42,13 @@ export function MyScheduleScreen() {
         title="ตารางสอนของฉัน"
         sub="คาบสอนทั้งหมดที่ผูกกับบัญชีของคุณในภาคเรียนที่เลือก"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/timetable-center')}>← ศูนย์งานตารางเรียน</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

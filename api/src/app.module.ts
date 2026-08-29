@@ -14,6 +14,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { StudentsModule } from './modules/students/students.module';
 import { RegistrationModule } from './modules/registration/registration.module';
+import { RetakeFeeModule } from './modules/registration/retake-fee.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { RiskModule } from './modules/risk/risk.module';
@@ -55,6 +56,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     AuthModule,
     StudentsModule,
     RegistrationModule,
+    RetakeFeeModule,
     AttendanceModule,
     FinanceModule,
     RiskModule,

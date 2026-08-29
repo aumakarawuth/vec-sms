@@ -5,6 +5,7 @@
  */
 import { useState } from 'react';
 import { api } from '../core/api';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 
 export interface PeriodRow {
@@ -22,7 +23,11 @@ export function PeriodsScreen() {
   const periods = useAsync(fetchPeriods, []);
   return (
     <>
-      <PageHead title="คาบเรียน" sub="กำหนดเลขลำดับคาบ ชื่อคาบ และเวลาที่ใช้จัดตารางสอน" />
+      <PageHead
+        title="คาบเรียน"
+        sub="กำหนดเลขลำดับคาบ ชื่อคาบ และเวลาที่ใช้จัดตารางสอน"
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
+      />
       <TableCard title="คาบเรียนทั้งหมด">
         <AsyncView state={periods} empty="ยังไม่มีคาบเรียน">
           {(rows) => (

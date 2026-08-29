@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { fetchTerms, termLabel, type Term, type TermCategory } from '../core/catalog';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
 
 function fetchCategories() {
@@ -25,7 +26,11 @@ export function TermCategoriesScreen() {
 
   return (
     <>
-      <PageHead title="หมวดภาคเรียน" sub="จัดกลุ่มภาคเรียนตามรอบเรียน และกำหนดช่วงวันที่ย่อยของแต่ละภาคเรียน" />
+      <PageHead
+        title="หมวดภาคเรียน"
+        sub="จัดกลุ่มภาคเรียนตามรอบเรียน และกำหนดช่วงวันที่ย่อยของแต่ละภาคเรียน"
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
+      />
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <CategoryList categories={categories} />

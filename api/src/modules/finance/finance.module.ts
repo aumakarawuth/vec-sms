@@ -35,6 +35,16 @@ const FUNDING_KINDS = [
   'scholarship', 'sibling', 'staff_child', 'gov_subsidy', 'student_loan', 'employer', 'other',
 ] as const;
 
+class LateFeePolicyDto {
+  @IsInt() @Min(2500) @Max(2700) effectiveFromYearBe: number;
+  @IsOptional() @IsInt() @Min(0) @Max(365) graceDays?: number;
+  @IsOptional() @IsNumber() @Min(0) flatAmount?: number;
+  @IsOptional() @IsNumber() @Min(0) dailyAmount?: number;
+  @IsOptional() @IsNumber() @Min(0) maxAmount?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(365) holdAfterDays?: number;
+  @IsOptional() @IsBoolean() blocksTranscriptAfterHold?: boolean;
+}
+
 class FeeItemDto {
   @IsString() @MaxLength(20) code: string;
   @IsString() @MaxLength(200) nameTh: string;
@@ -374,6 +384,70 @@ export class FinanceService {
   }
 
   // ─────────────────────────────────────────────────────────────────
+  // นโยบายค่าปรับและการระงับสิทธิ์ — เดิมตั้งได้ทาง SQL ตรงเท่านั้น (0094)
+  // ─────────────────────────────────────────────────────────────────
+  async latePolicy() {
+    return this.db.queryOne(
+      `select id, effective_from_year_be, grace_days, flat_amount, daily_amount,
+              max_amount, hold_after_days, blocks_transcript_after_hold
+         from late_fee_policy where institution_id = current_institution_id()
+        order by effective_from_year_be desc limit 1`,
+    );
+  }
+
+  async setLatePolicy(dto: LateFeePolicyDto) {
+    return this.db.queryOne(
+      `insert into late_fee_policy
+         (institution_id, effective_from_year_be, grace_days, flat_amount,
+          daily_amount, max_amount, hold_after_days, blocks_transcript_after_hold)
+       values (current_institution_id(), $1, coalesce($2, 7), coalesce($3, 0),
+               coalesce($4, 0), $5, coalesce($6, 30), coalesce($7, false))
+       on conflict (institution_id, effective_from_year_be) do update
+         set grace_days = excluded.grace_days,
+             flat_amount = excluded.flat_amount,
+             daily_amount = excluded.daily_amount,
+             max_amount = excluded.max_amount,
+             hold_after_days = excluded.hold_after_days,
+             blocks_transcript_after_hold = excluded.blocks_transcript_after_hold
+       returning id, effective_from_year_be, grace_days, flat_amount, daily_amount,
+                 max_amount, hold_after_days, blocks_transcript_after_hold`,
+      [
+        dto.effectiveFromYearBe,
+        dto.graceDays ?? null,
+        dto.flatAmount ?? null,
+        dto.dailyAmount ?? null,
+        dto.maxAmount ?? null,
+        dto.holdAfterDays ?? null,
+        dto.blocksTranscriptAfterHold ?? null,
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // รายงานรายรับ — ไม่เคยมีเส้นทางไหนตอบคำถามนี้มาก่อน (0094)
+  // นับเฉพาะเงินที่กระทบยอดแล้ว (reconciled) ผ่าน v_revenue_daily
+  // ─────────────────────────────────────────────────────────────────
+  async revenue(from?: string, to?: string) {
+    const rows = await this.db.query<{ method: string; payment_count: string; amount: string }>(
+      `select method, sum(payment_count) as payment_count, sum(amount) as amount
+         from v_revenue_daily
+        where institution_id = current_institution_id()
+          and ($1::date is null or received_on >= $1::date)
+          and ($2::date is null or received_on <= $2::date)
+        group by method
+        order by amount desc`,
+      [from ?? null, to ?? null],
+    );
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    return {
+      from: from ?? null,
+      to: to ?? null,
+      total,
+      byMethod: rows.map((r) => ({ method: r.method, count: Number(r.payment_count), amount: Number(r.amount) })),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
   // โครงสร้างค่าธรรมเนียม — ไม่เคยมีเส้นทางสร้างเลยตั้งแต่ 0010 (0080)
   // ─────────────────────────────────────────────────────────────────
   async feeItems() {
@@ -612,6 +686,25 @@ class FinanceController {
   @Get('ar-aging')
   aging() {
     return this.svc.aging();
+  }
+
+  @Roles('finance', 'director', 'admin')
+  @Get('late-policy')
+  latePolicy() {
+    return this.svc.latePolicy();
+  }
+
+  @Roles('finance', 'director', 'admin')
+  @Audit('late_fee_policy')
+  @Post('late-policy')
+  setLatePolicy(@Body() dto: LateFeePolicyDto) {
+    return this.svc.setLatePolicy(dto);
+  }
+
+  @Roles('finance', 'registrar', 'director', 'admin')
+  @Get('revenue')
+  revenue(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.revenue(from, to);
   }
 
   @Roles('finance', 'registrar', 'director', 'admin')

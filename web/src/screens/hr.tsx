@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 
 interface Department {
@@ -267,7 +268,7 @@ export function HrScreen() {
 
   return (
     <>
-      <PageHead title="งานบุคลากร" />
+      <PageHead title="งานบุคลากร" sub={<a href={href('/personnel-center')}>← ศูนย์งานบุคลากร</a>} />
 
       <TableCard title="โครงสร้างหน่วยงาน">
         <AsyncView state={departments} empty="ยังไม่ได้ตั้งหน่วยงาน">

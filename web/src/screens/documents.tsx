@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead,
@@ -68,7 +69,7 @@ export function DocumentsScreen() {
 
   return (
     <>
-      <PageHead title="ออกเอกสารการศึกษา" />
+      <PageHead title="ออกเอกสารการศึกษา" sub={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>} />
 
       {!canUse ? (
         <RestrictedNotice roles={DOCUMENTS_ROLES} />

@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { api, emptyPage, qs } from '../core/api';
 import { fetchSections, usePeriodLabel, type Section } from '../core/catalog';
 import { thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync, useCan,
@@ -326,7 +327,12 @@ export function ExamScheduleScreen() {
       <PageHead
         title="ตารางสอบ"
         sub="จัดวัน เวลา ห้อง และกรรมการคุมสอบของแต่ละกลุ่มเรียน"
-        actions={terms.data && <TermSelect terms={terms.data} termId={termId} onChange={setTerm} />}
+        actions={
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/timetable-center')}>← ศูนย์งานตารางเรียน</a>
+            {terms.data && <TermSelect terms={terms.data} termId={termId} onChange={setTerm} />}
+          </div>
+        }
       />
 
       {!termId && <Notice kind="info">เลือกภาคเรียนก่อน</Notice>}

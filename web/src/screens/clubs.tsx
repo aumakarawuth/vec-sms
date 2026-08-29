@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { api, emptyPage, qs } from '../core/api';
 import { fetchTerms } from '../core/catalog';
 import { thaiDate } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import { ActionButton, AsyncView, Badge, Card, Field, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 
@@ -176,7 +177,11 @@ export function ClubsScreen() {
 
   return (
     <>
-      <PageHead title="วิชาชุมนุม/ชมรม" sub="บันทึกพื้นฐาน — ชื่อชมรม ผู้ดูแล และสมาชิกรายปีการศึกษา" />
+      <PageHead
+        title="วิชาชุมนุม/ชมรม"
+        sub="บันทึกพื้นฐาน — ชื่อชมรม ผู้ดูแล และสมาชิกรายปีการศึกษา"
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
+      />
 
       {!canUse ? (
         <RestrictedNotice roles={CLUBS_ROLES} />

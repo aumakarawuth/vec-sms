@@ -894,6 +894,7 @@ export function AcademicYearScreen() {
         sub="เปิดปีการศึกษา ตั้งภาคเรียน และเลื่อนชั้นทั้งรุ่น"
         actions={
           <div className="row" style={{ gap: 8 }}>
+            <a href={href('/registry')}>← ศูนย์งานทะเบียน</a>
             <a href={href('/academic-year/sections')}>เปิดกลุ่มเรียน →</a>
             <a href={href('/academic-year/classes')}>จัดห้องเรียน →</a>
             <a href={href('/academic-year/remedial')}>สอบซ่อม/ปรับเกรด →</a>
@@ -1238,7 +1239,7 @@ export function AcademicClassroomScreen() {
   const [financeGroupTh, setFinanceGroupTh] = useState('');
 
   return <>
-    <PageHead title="จัดชั้นปีและห้อง" sub="สร้างห้องประจำชั้น เช่น ปวช.1 / CA.1/1 แยกจากห้องกายภาพสำหรับตารางสอน" actions={<a href={href('/academic-year/placements')}>จัดนักศึกษาเข้าห้อง →</a>} />
+    <PageHead title="จัดชั้นปีและห้อง" sub="สร้างห้องประจำชั้น เช่น ปวช.1 / CA.1/1 แยกจากห้องกายภาพสำหรับตารางสอน" actions={<div className="row" style={{ gap: 8 }}><a href={href('/registry')}>← ศูนย์งานทะเบียน</a><a href={href('/academic-year/placements')}>จัดนักศึกษาเข้าห้อง →</a></div>} />
     {!canUse ? (
       <RestrictedNotice roles={OFFICE_ROLES} />
     ) : (
@@ -1333,7 +1334,7 @@ export function AcademicPlacementScreen() {
   );
 
   return <>
-    <PageHead title="จัดห้องเรียน" sub="ค้นหารายชื่อ เลือกนักศึกษา แล้วกำหนดชั้นปีและห้องเรียน" actions={<a href={href('/academic-year/classes')}>จัดการห้องประจำชั้น</a>} />
+    <PageHead title="จัดห้องเรียน" sub="ค้นหารายชื่อ เลือกนักศึกษา แล้วกำหนดชั้นปีและห้องเรียน" actions={<div className="row" style={{ gap: 8 }}><a href={href('/student-center')}>← ศูนย์นักศึกษา</a><a href={href('/academic-year/classes')}>จัดการห้องประจำชั้น</a></div>} />
     {!canUse ? (
       <RestrictedNotice roles={ACADEMIC_YEAR_ROLES} />
     ) : (

@@ -61,6 +61,7 @@ export function StudentsScreen() {
       <PageHead
         title="ระเบียนนักศึกษา"
         sub={list.data ? `${list.data.length} รายการ` : undefined}
+        actions={<a href={href('/student-center')}>← ศูนย์นักศึกษา</a>}
       />
 
       <div className="stat-grid">

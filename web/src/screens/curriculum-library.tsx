@@ -14,6 +14,7 @@
  */
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
+import { href } from '../core/router';
 import { ActionButton, Notice, PageHead, useAsync } from '../ui/kit';
 
 type Row = { level: 'PVC' | 'PVS'; typeName: string; groupName: string; code: string; nameTh: string };
@@ -64,7 +65,11 @@ export function CurriculumLibraryScreen() {
 
   return (
     <>
-      <PageHead title="หลักสูตร" sub="เลือกข้อมูลอ้างอิงจาก สอศ. ตรวจสอบและแก้ชื่อก่อนนำเข้า" />
+      <PageHead
+        title="หลักสูตร"
+        sub="เลือกข้อมูลอ้างอิงจาก สอศ. ตรวจสอบและแก้ชื่อก่อนนำเข้า"
+        actions={<a href={href('/settings-center')}>← ศูนย์การตั้งค่า</a>}
+      />
       <div className="curriculum-filter">
         <label>ปีหลักสูตร<select value={edition} onChange={(e) => setEdition(e.target.value)}><option>2557</option><option>2562</option><option>2564</option><option>2567</option></select></label>
         <label>ระดับ<select value={level} onChange={(e) => setLevel(e.target.value as typeof level)}><option value="all">ทุกระดับ</option><option value="PVC">ปวช.</option><option value="PVS">ปวส.</option></select></label>

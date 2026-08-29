@@ -74,10 +74,13 @@ export function RiskScreen() {
             : undefined
         }
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/behavior-center')}>← ศูนย์งานพฤติกรรม</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

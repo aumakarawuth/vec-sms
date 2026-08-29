@@ -19,6 +19,7 @@
 import { useEffect, useState } from 'react';
 import { api, qs } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
+import { href } from '../core/router';
 import { useSession } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, TableCard, useAsync,
@@ -180,7 +181,7 @@ export function BehaviorScreen() {
 
   return (
     <>
-      <PageHead title="พฤติกรรมและการดูแล" />
+      <PageHead title="พฤติกรรมและการดูแล" sub={<a href={href('/behavior-center')}>← ศูนย์งานพฤติกรรม</a>} />
 
       <TableCard
         title="ผู้ที่คะแนนความประพฤติต่ำกว่าเกณฑ์"

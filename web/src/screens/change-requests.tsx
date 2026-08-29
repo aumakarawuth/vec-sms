@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { thaiDateTime } from '../core/fmt';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Notice, PageHead, TableCard, useAsync } from '../ui/kit';
 
 interface ChangeRequest {
@@ -55,6 +56,7 @@ export function ChangeRequestsScreen() {
       <PageHead
         title="คำร้องขอแก้เกรด"
         sub={list.data ? `${list.data.length} รายการ` : undefined}
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
       />
 
       <Notice kind="info">

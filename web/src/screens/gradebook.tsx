@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { num, pct } from '../core/fmt';
+import { href } from '../core/router';
 import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
@@ -104,10 +105,13 @@ export function GradebookScreen() {
       <PageHead
         title="สมุดคะแนน"
         actions={
-          <div style={{ width: 240 }}>
-            <AsyncView state={terms}>
-              {(list) => <TermSelect terms={list} termId={termId} onChange={setTerm} />}
-            </AsyncView>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <a href={href('/registry')}>← ศูนย์งานทะเบียน</a>
+            <div style={{ width: 240 }}>
+              <AsyncView state={terms}>
+                {(list) => <TermSelect terms={list} termId={termId} onChange={setTerm} />}
+              </AsyncView>
+            </div>
           </div>
         }
       />

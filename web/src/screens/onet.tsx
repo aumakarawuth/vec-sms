@@ -8,6 +8,7 @@
 import { useMemo, useState } from 'react';
 import { api } from '../core/api';
 import { num } from '../core/fmt';
+import { href } from '../core/router';
 import type { Role } from '../core/session';
 import { Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useCan } from '../ui/kit';
 
@@ -88,7 +89,11 @@ export function OnetScreen() {
 
   return (
     <>
-      <PageHead title="ผลสอบ O-NET / V-NET" sub="โครงตารางทั่วไป — ยังไม่ได้เทียบกับรูปแบบไฟล์จริงที่หน่วยงานส่งมา" />
+      <PageHead
+        title="ผลสอบ O-NET / V-NET"
+        sub="โครงตารางทั่วไป — ยังไม่ได้เทียบกับรูปแบบไฟล์จริงที่หน่วยงานส่งมา"
+        actions={<a href={href('/registry')}>← ศูนย์งานทะเบียน</a>}
+      />
 
       {!canUse ? (
         <RestrictedNotice roles={ONET_ROLES} />

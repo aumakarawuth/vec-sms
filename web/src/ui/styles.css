@@ -34,9 +34,22 @@
   --paper: #ffffff;
   --paper-soft: #f5f6fb;
 
-  --row: 30px;
-  --radius: 12px;
+  --row: 40px;
+  --radius: 14px;
+  --radius-sm: 10px;
 }
+
+/*
+ * ─── 2569-08 ปรับเป็นดีไซน์โปร่งขึ้น (ตามคำขอผู้ใช้) ───
+ * ของเดิมตั้งใจเน้นความหนาแน่นของข้อมูล (แถวเตี้ย 30px ตัวอักษร 13px)
+ * เพราะเจ้าหน้าที่นั่งจ้องตารางทั้งวัน — หลักนั้นยังจริงอยู่ แต่ผู้ใช้เลือก
+ * แลกความจุต่อหน้าจอเพื่อความโปร่ง/อ่านง่ายแบบมินิมอลแทนอย่างตั้งใจ
+ * (แถวสูงขึ้นเป็น 40px ระยะห่างการ์ด/ฟอร์มมากขึ้น เงาเบาลง มุมโค้งขึ้น)
+ * ปรับที่ token กลางไฟล์นี้จุดเดียว เพราะทุกหน้าจอ (รวม 25 หน้าของศูนย์งาน
+ * ทะเบียน) ใช้คลาสร่วมชุดเดียวกัน (.card/table/button/input) อยู่แล้ว —
+ * แก้ตรงนี้จึงกระจายผลไปทุกหน้าโดยไม่ต้องไล่แก้ทีละไฟล์ ซึ่งเสี่ยงพังตรรกะ
+ * ของแต่ละหน้าที่ซับซ้อนอยู่แล้วมากกว่าการปรับดีไซน์ล้วน ๆ
+ */
 
 * { box-sizing: border-box; }
 
@@ -46,8 +59,8 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: 'Sarabun', 'Noto Sans Thai', 'Segoe UI', system-ui, sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 13.5px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -100,7 +113,7 @@ a:hover { text-decoration: underline; }
 .sidebar button:hover { background: #f0f2f8; }
 
 .main { overflow-y: auto; background: #fbfbfe; }
-.page-content { padding: 18px 24px 60px; }
+.page-content { padding: 26px 32px 70px; }
 .topbar { height: 76px; padding: 0 24px; background: #fff; border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 5; }
 .topbar > div:first-child { flex: 1; }.topbar strong, .topbar small { display: block; }.topbar strong { font-size: 16px; }.topbar small { color: var(--ink-faint); font-size: 11px; margin-top: 2px; }
 .global-search { width: min(280px, 28vw); display: flex; align-items: center; gap: 7px; padding: 0 12px; border-radius: 22px; background: #f7f8fc; color: var(--ink-faint); }
@@ -111,11 +124,11 @@ a:hover { text-decoration: underline; }
 
 /* ─── หัวเรื่อง ─────────────────────────────────────────────────── */
 .page-head {
-  display: flex; align-items: baseline; gap: 12px;
-  margin-bottom: 14px;
+  display: flex; align-items: baseline; gap: 14px;
+  margin-bottom: 22px;
 }
-.page-head h2 { font-size: 18px; margin: 0; font-weight: 600; }
-.page-head .sub { color: var(--ink-soft); font-size: 12px; }
+.page-head h2 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -.1px; }
+.page-head .sub { color: var(--ink-soft); font-size: 12.5px; }
 .page-head .grow { flex: 1; }
 
 /* ─── กล่อง ─────────────────────────────────────────────────────── */
@@ -123,26 +136,27 @@ a:hover { text-decoration: underline; }
   background: var(--surface);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  margin-bottom: 14px;
-  box-shadow: 0 5px 18px rgba(47, 52, 83, .04);
+  margin-bottom: 18px;
+  box-shadow: 0 3px 14px rgba(47, 52, 83, .035);
 }
 .card > header {
-  padding: 8px 12px; border-bottom: 1px solid var(--line-soft);
-  font-weight: 600; font-size: 12.5px;
+  padding: 13px 18px; border-bottom: 1px solid var(--line-soft);
+  font-weight: 600; font-size: 13px;
   display: flex; align-items: center; gap: 10px;
 }
-.card > .body { padding: 12px; }
+.card > .body { padding: 18px; }
 
 /* ─── ตาราง ─────────────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; }
 thead th {
   position: sticky; top: 0; background: #fafbfe; z-index: 1;
   text-align: left; font-weight: 600; font-size: 11.5px; color: var(--ink-soft);
-  padding: 6px 10px; border-bottom: 1px solid var(--line);
+  letter-spacing: .2px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 tbody td {
-  padding: 0 10px; height: var(--row);
+  padding: 0 14px; height: var(--row);
   border-bottom: 1px solid var(--line-soft);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -152,21 +166,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.mono { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
 
 /* ─── ฟอร์ม ─────────────────────────────────────────────────────── */
-label.field { display: block; margin-bottom: 10px; }
+label.field { display: block; margin-bottom: 14px; }
 label.field > span {
-  display: block; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 3px;
+  display: block; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 5px;
 }
 input, select, textarea {
-  width: 100%; padding: 5px 8px; font: inherit; font-size: 12.5px;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  width: 100%; padding: 9px 12px; font: inherit; font-size: 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: #fff; color: var(--ink);
 }
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid var(--brand-soft); border-color: var(--brand);
+  outline: 3px solid var(--brand-soft); border-color: var(--brand);
 }
 input[readonly] { background: #f4f5f7; color: var(--ink-soft); }
 
-.row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
 .row > * { flex: 1; min-width: 140px; }
 .row > .shrink { flex: 0 0 auto; min-width: 0; }
 
@@ -181,17 +195,18 @@ input[readonly] { background: #f4f5f7; color: var(--ink-soft); }
 .scroll-x { overflow-x: auto; max-width: 100%; }
 
 button {
-  font: inherit; font-size: 12.5px; padding: 5px 12px; cursor: pointer;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; font-size: 13px; padding: 8px 16px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: #fff; color: var(--ink);
+  transition: background-color .12s ease, border-color .12s ease;
 }
 button:hover:not(:disabled) { background: #f2f4f7; }
 button:disabled { opacity: .5; cursor: not-allowed; }
-button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+button.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
 button.primary:hover:not(:disabled) { background: #465bd2; }
 
-.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
-.stat-card { min-height: 126px; border-radius: 14px; padding: 16px 17px; display: flex; flex-direction: column; box-shadow: 0 8px 22px rgba(54, 58, 94, .05); }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stat-card { min-height: 128px; border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; box-shadow: 0 6px 18px rgba(54, 58, 94, .045); }
 .stat-card.pink { background: #f6a7dc; }.stat-card.yellow { background: #ffd76e; }.stat-card.blue { background: #c9dcfb; }
 .stat-card span { font-size: 12px; }.stat-card strong { font-size: 30px; line-height: 1.15; margin-top: 4px; font-weight: 600; }.stat-card small { margin-top: auto; font-size: 10.5px; color: #575867; }.stat-card small b { color: #1e9d65; }
 
@@ -281,12 +296,12 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 
 /* ─── แท็บ ──────────────────────────────────────────────────────── */
 .tabs {
-  display: flex; gap: 2px; margin-bottom: 12px;
+  display: flex; gap: 4px; margin-bottom: 18px;
   border-bottom: 1px solid var(--line); flex-wrap: wrap;
 }
 .tabs .tab {
   border: none; background: none; border-radius: 0;
-  padding: 7px 13px; font-size: 12.5px; color: var(--ink-soft);
+  padding: 10px 15px; font-size: 13px; color: var(--ink-soft);
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tabs .tab:hover { background: var(--line-soft); }
@@ -302,8 +317,8 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 
 /* ─── ป้ายสถานะ ─────────────────────────────────────────────────── */
 .badge {
-  display: inline-block; padding: 1px 7px; border-radius: 999px;
-  font-size: 11px; line-height: 17px; white-space: nowrap;
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; line-height: 18px; white-space: nowrap; font-weight: 500;
   background: var(--line-soft); color: var(--ink-soft);
 }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
@@ -313,8 +328,8 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 
 /* ─── ข้อความสถานะ ──────────────────────────────────────────────── */
 .notice {
-  padding: 8px 12px; border-radius: var(--radius); font-size: 12.5px;
-  border: 1px solid; margin-bottom: 12px;
+  padding: 12px 16px; border-radius: var(--radius); font-size: 12.5px;
+  border: 1px solid; margin-bottom: 16px; line-height: 1.5;
 }
 .notice.error { background: var(--danger-soft); border-color: #f0c4c0; color: var(--danger); }
 .notice.warn { background: var(--warn-soft); border-color: #edd9b0; color: var(--warn); }
@@ -330,8 +345,8 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 }
 .toast-error button { width: auto; padding: 0 4px; border: 0; background: transparent; color: var(--danger); font-size: 15px; line-height: 1; }
 
-.empty { padding: 28px; text-align: center; color: var(--ink-faint); font-size: 12.5px; }
-.loading { padding: 20px; color: var(--ink-faint); font-size: 12.5px; }
+.empty { padding: 36px; text-align: center; color: var(--ink-faint); font-size: 12.5px; }
+.loading { padding: 26px; color: var(--ink-faint); font-size: 12.5px; }
 
 /* ─── กริดวัน×คาบ (ตารางสอน) ────────────────────────────────────── */
 .week-grid-legend { display: flex; gap: 16px; margin: 2px 0 10px; font-size: 11.5px; color: var(--ink-soft); }
