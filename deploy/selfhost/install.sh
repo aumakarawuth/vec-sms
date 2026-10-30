@@ -43,6 +43,8 @@ if [ ! -x "/usr/lib/postgresql/$PG_VER/bin/postgres" ]; then
   # postgresql-common จัดการหลายรุ่นพร้อมกันได้อยู่แล้ว
   die "ยังไม่มี PostgreSQL $PG_VER — ติดตั้งตามขั้นที่ 2 ใน README.md ก่อน แล้วรันสคริปต์นี้ใหม่"
 fi
+# ตรวจก่อนลงมือทั้งหมด — ล้มตอนท้ายหลังสร้างฐานข้อมูลไปแล้วจะทิ้งของครึ่งทางไว้
+[ -d /etc/nginx/sites-available ] || die "ยังไม่มี Nginx — ติดตั้งตามขั้นที่ 2 ใน README.md ก่อน"
 
 if ! pg_lsclusters -h | awk '{print $1"/"$2}' | grep -qx "$PG_VER/$PG_CLUSTER"; then
   say "สร้าง cluster $PG_VER/$PG_CLUSTER ที่พอร์ต $PG_PORT"

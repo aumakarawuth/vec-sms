@@ -21,20 +21,28 @@ Ubuntu 24.04 · Nginx · `vec.examkub.com`
 **1. DNS** — เครื่องนี้เข้าทาง **Cloudflare Tunnel** จึงไม่ต้องเพิ่ม A record
 และไม่ต้องรู้ IP — Cloudflare สร้าง CNAME ชี้ไปที่ทันเนลให้เองในขั้นที่ 5
 
-**2. ติดตั้ง PostgreSQL 18 ข้างรุ่นเดิม** (ข้ามถ้ามีแล้ว — `ls /usr/lib/postgresql`)
+**2. PostgreSQL 18 และ Nginx**
+
+ตรวจก่อนว่ามี PostgreSQL 18 แล้วหรือยัง (`ls /usr/lib/postgresql`) — บนเครื่อง
+examkub มีอยู่แล้ว เพราะ examkub ใช้ cluster `18/main` พอร์ต 5432 **จึงข้าม
+การติดตั้งได้ และ `18/main` คือฐานข้อมูลของระบบสอบ — ห้าม drop · stop ·
+แก้ค่าของ cluster นี้เด็ดขาด** vec-sms สร้าง cluster `18/vecsms` แยกของตัวเอง
+
+ถ้ายังไม่มีรุ่น 18 จริง ๆ:
 
 ```bash
-sudo apt install -y postgresql-common && sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+sudo apt install -y postgresql-common && sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && sudo apt install -y postgresql-18
 ```
+
+**Nginx** — เครื่อง examkub ไม่มี Nginx (cloudflared ส่งตรงเข้า examkub)
+ติดตั้งใหม่ให้ vec-sms ใช้คนเดียว แล้วลบไซต์ตั้งต้นที่ฟังพอร์ต 80 ทิ้ง
+เพราะไม่มีใครใช้และไม่ควรมีพอร์ตที่เปิดโดยไม่มีเหตุผล
 
 ```bash
-sudo apt install -y postgresql-18
+sudo apt install -y nginx && sudo rm -f /etc/nginx/sites-enabled/default && sudo systemctl reload nginx
 ```
 
-แพ็กเกจรุ่น 18 อยู่คู่กับรุ่นเดิมได้ แต่ **การติดตั้งจะสร้าง cluster `18/main`
-ให้อัตโนมัติ** ถ้า examkub ใช้พอร์ต 5432 อยู่ ตัวใหม่จะไปได้ 5433 — ไม่ชนกัน
-แต่ไม่มีใครใช้ ลบทิ้งได้ด้วย `sudo pg_dropcluster 18 main --stop`
-(**ตรวจด้วย `pg_lsclusters` ก่อนว่าไม่ใช่ cluster ของ examkub**)
+ไม่กระทบ examkub เพราะเส้นทางของ examkub ไม่ผ่าน Nginx เลย
 
 **3. วางโค้ด**
 
