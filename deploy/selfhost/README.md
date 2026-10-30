@@ -154,6 +154,27 @@ sudo -u postgres psql -p 5434 -v ON_ERROR_STOP=1 -f /opt/vecsms/app/db/deploy/fi
 sudo bash /opt/vecsms/app/deploy/selfhost/build-web.sh <institutionId>
 ```
 
+## ให้ examkub.com/vec ส่งต่อมาที่นี่ (Cloudflare Redirect Rule)
+
+**เคยพลาดจนระบบสอบทั้งหมดถูกส่งไป vec-sms** — rule ถูกบันทึกเป็น
+"All incoming requests" แทน Custom filter ทุกหน้ารวม `/` และ `/teacher`
+จึงเด้งไปที่ `vec.examkub.com` ต้องตรวจเงื่อนไข**ก่อน**เปิด rule เสมอ
+
+| ช่อง | ค่า |
+|---|---|
+| If incoming requests match | **Custom filter expression** (ห้ามเลือก All incoming requests) |
+| Expression | `http.request.uri.path in {"/vec" "/vec/"}` |
+| Then | Static · `https://vec.examkub.com` · 302 · ไม่ติ๊ก Preserve query string |
+
+ห้ามใช้ "ขึ้นต้นด้วย /vec" — จะกิน `/vec/apply` `/vec/student` `/vec/verify`
+`/vec/evaluate` `/vec/survey` ของ examkub ไปด้วย ตรวจทันทีหลังเปิด
+
+```bash
+for p in / /teacher /admin /vec /vec/ /vec/apply /vec/student /vec/verify; do printf '%-14s ' "$p"; curl -s -o /dev/null -w '%{http_code} → %{redirect_url}\n' "https://examkub.com$p"; done
+```
+
+มีแค่ `/vec` กับ `/vec/` ที่ชี้ไป `vec.examkub.com` — บรรทัดอื่นชี้ไปเมื่อไรให้ปิด rule ทันที
+
 ## อัปเดตรอบถัดไป
 
 ```bash
