@@ -46,10 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: ติดตั้ง psql 16
+      # ไม่ระบุเลขรุ่น — ubuntu-latest ขยับเป็น 26.04 แล้วไม่มี postgresql-client-16
+      # ให้ติดตั้ง job ล้มตั้งแต่ขั้นนี้ทั้งที่โค้ดไม่ได้เปลี่ยน ตัวเมตาแพ็กเกจได้รุ่น
+      # ตั้งต้นของระบบปฏิบัติการ ซึ่ง psql รุ่นใหม่กว่าต่อเซิร์ฟเวอร์ 18 ได้เสมอ
+      - name: ติดตั้ง psql
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
+          sudo apt-get install -y postgresql-client
+          psql --version
 
       - name: เทสต์ฐานข้อมูล — migrations, seed และเทสต์ทั้งหมด
         run: bash db/run.sh

@@ -82,7 +82,10 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const ALL: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin', 'teacher'];
+const ALL: Role[] = [
+  'registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin',
+  'secretary', 'hr', 'teacher',
+];
 
 /**
  * เมนูซ้ายเหลือแค่ทางเข้า "ศูนย์งาน" ทั้งห้า + การเงิน — ทุกหน้าจอจริงยังอยู่
@@ -98,7 +101,10 @@ const NAV: NavGroup[] = [
     items: [
       { path: '/registry', label: 'ศูนย์งานทะเบียน', roles: ALL },
       { path: '/student-center', label: 'ศูนย์นักศึกษา', roles: ['registrar', 'academic', 'student_affairs', 'director', 'admin'] },
-      { path: '/personnel-center', label: 'ศูนย์งานบุคลากร', roles: ['registrar', 'director', 'admin'] },
+      // ALL เพราะหน้านี้แบ่งเป็นการ์ดตามฝ่ายเอง (ครู/วิชาการ/ทะเบียน/การเงิน/
+      // บุคคล/เลขา/กิจการนักศึกษา) — ใครมีบทบาทไหนเห็นการ์ดฝ่ายนั้น ไม่ใช่
+      // ทั้งหน้าเปิด-ปิดตามบทบาทเดียว (ดูเหตุผลเต็มในตัวหน้าจอเอง)
+      { path: '/personnel-center', label: 'ศูนย์บุคลากร', roles: ALL },
       { path: '/timetable-center', label: 'ศูนย์งานตารางเรียน', roles: ['teacher', 'registrar', 'academic', 'director', 'admin'] },
       { path: '/settings-center', label: 'ศูนย์การตั้งค่า', roles: ['registrar', 'academic', 'director', 'admin'] },
       { path: '/behavior-center', label: 'ศูนย์งานพฤติกรรม', roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'] },
@@ -119,9 +125,13 @@ export function App() {
   if (s.stage !== 'ready') return <LoginScreen />;
 
   const role = s.role;
+  const roles = s.roles;
+  // .some แทน .includes(role) เดี่ยว — คนที่มีหลายบทบาทซ้อนกัน (เช่น
+  // วิชาการที่สอนด้วย) ต้องเห็นเมนูของทุกบทบาทที่ตัวเองมีพร้อมกัน ไม่ใช่
+  // แค่บทบาทหลักที่ระบบเลือกให้
   const visible = NAV.map((g) => ({
     ...g,
-    items: g.items.filter((i) => !role || i.roles.includes(role)),
+    items: g.items.filter((i) => roles.length === 0 || i.roles.some((r) => roles.includes(r))),
   })).filter((g) => g.items.length > 0);
 
   return (

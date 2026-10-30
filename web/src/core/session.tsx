@@ -20,11 +20,13 @@ import { api, hasToken, INSTITUTION_ID, setTokens, setUnauthorizedHandler } from
 
 export type Role =
   | 'registrar' | 'academic' | 'finance' | 'student_affairs'
-  | 'director' | 'admin' | 'teacher' | 'student' | 'guardian';
+  | 'director' | 'admin' | 'secretary' | 'hr'
+  | 'teacher' | 'student' | 'guardian';
 
 /** บทบาทที่หน้าจอชุดนี้รองรับ — นักศึกษาและผู้ปกครองใช้แอป Flutter แยก */
 export const STAFF_ROLES: Role[] = [
-  'registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin', 'teacher',
+  'registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin',
+  'secretary', 'hr', 'teacher',
 ];
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -34,6 +36,8 @@ export const ROLE_LABEL: Record<Role, string> = {
   student_affairs: 'ฝ่ายกิจการนักศึกษา',
   director: 'ผู้อำนวยการ',
   admin: 'ผู้ดูแลระบบ',
+  secretary: 'งานเลขานุการ',
+  hr: 'งานบุคคล',
   teacher: 'ครูผู้สอน',
   student: 'นักศึกษา',
   guardian: 'ผู้ปกครอง',
@@ -44,6 +48,8 @@ interface TokenResponse {
   refreshToken: string;
   expiresInSeconds: number;
   role: Role;
+  /** ชุดบทบาททั้งหมดที่มีผลจริง — คนที่มีหลายฝ่ายเห็นเมนูของทุกฝ่ายพร้อมกัน */
+  roles: Role[];
   mustChangePassword?: boolean;
 }
 
@@ -53,6 +59,7 @@ interface ChallengeResponse {
   challengeToken: string;
   mustChangePassword?: boolean;
   role?: Role;
+  roles?: Role[];
 }
 
 type LoginResponse = TokenResponse | ChallengeResponse;
@@ -70,7 +77,10 @@ export type Stage =
 
 export interface SessionState {
   stage: Stage;
+  /** บทบาทหลัก (แรงที่สุด) — เหลือไว้ให้จุดที่ยังอ้างค่าเดียว เช่นป้ายแสดงผล */
   role: Role | null;
+  /** ชุดบทบาททั้งหมดที่มีผลจริง — ใช้ตรวจสิทธิ์เมนู/การ์ดแทน role เดี่ยวเสมอ */
+  roles: Role[];
   username: string | null;
   /** ใช้ตอนขั้น mfa/mfa-enroll เท่านั้น */
   challengeToken: string | null;
@@ -86,6 +96,11 @@ interface SessionApi extends SessionState {
   signOut: () => Promise<void>;
 }
 
+/** ผู้ใช้ถือบทบาทใดบทบาทหนึ่งในรายการนี้อยู่หรือไม่ — ใช้แทนการเทียบ role === x ตรง ๆ */
+export function hasRole(s: Pick<SessionState, 'roles'>, ...roles: Role[]): boolean {
+  return s.roles.some((r) => roles.includes(r));
+}
+
 const Ctx = createContext<SessionApi | null>(null);
 
 export function useSession(): SessionApi {
@@ -95,13 +110,29 @@ export function useSession(): SessionApi {
 }
 
 const ROLE_KEY = 'vecsms.role';
+const ROLES_KEY = 'vecsms.roles';
 const USER_KEY = 'vecsms.username';
+
+function readStoredRoles(): Role[] {
+  try {
+    const raw = sessionStorage.getItem(ROLES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Role[];
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch {
+    // ค่าที่เก็บไว้เพี้ยน — ตกไปใช้ role เดี่ยวด้านล่าง
+  }
+  const single = sessionStorage.getItem(ROLE_KEY) as Role | null;
+  return single ? [single] : [];
+}
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>(() => ({
     // มี token ค้างอยู่แปลว่าเพิ่งรีเฟรชหน้า ไม่ใช่เข้าใหม่
     stage: hasToken() ? 'ready' : 'anonymous',
     role: (sessionStorage.getItem(ROLE_KEY) as Role | null) ?? null,
+    roles: readStoredRoles(),
     username: sessionStorage.getItem(USER_KEY),
     challengeToken: null,
     enrollUri: null,
@@ -110,8 +141,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const reset = useCallback(() => {
     setTokens(null, null);
     sessionStorage.removeItem(ROLE_KEY);
+    sessionStorage.removeItem(ROLES_KEY);
     sessionStorage.removeItem(USER_KEY);
-    setState({ stage: 'anonymous', role: null, username: null, challengeToken: null, enrollUri: null });
+    setState({
+      stage: 'anonymous', role: null, roles: [], username: null,
+      challengeToken: null, enrollUri: null,
+    });
   }, []);
 
   // token หมดอายุกลางคันแล้วต่ออายุไม่สำเร็จ — พากลับหน้าล็อกอินทันที
@@ -119,11 +154,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const land = useCallback((t: TokenResponse, username: string) => {
     setTokens(t.accessToken, t.refreshToken);
+    const roles = t.roles?.length ? t.roles : [t.role];
     sessionStorage.setItem(ROLE_KEY, t.role);
+    sessionStorage.setItem(ROLES_KEY, JSON.stringify(roles));
     sessionStorage.setItem(USER_KEY, username);
     setState({
       stage: t.mustChangePassword ? 'must-change' : 'ready',
       role: t.role,
+      roles,
       username,
       challengeToken: null,
       enrollUri: null,
@@ -144,6 +182,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setState({
           stage: res.enrollmentRequired ? 'mfa-enroll' : 'mfa',
           role: res.role ?? null,
+          roles: res.roles?.length ? res.roles : res.role ? [res.role] : [],
           username,
           challengeToken: res.challengeToken,
           enrollUri: null,

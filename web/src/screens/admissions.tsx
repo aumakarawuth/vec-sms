@@ -43,6 +43,8 @@ interface Application {
   full_name: string;
   status: string;
   admitted_curriculum: string | null;
+  /** online = ผู้สมัครกรอกเองจากหน้าสาธารณะ (0096) — ยังไม่ผ่านตาเจ้าหน้าที่ */
+  submitted_via: 'staff' | 'online';
 }
 
 interface VersionOption {
@@ -726,7 +728,12 @@ export function AdmissionsScreen() {
                       return (
                         <tr key={a.id}>
                           <td className="mono">{a.application_no}</td>
-                          <td>{a.full_name}</td>
+                          <td>
+                            {a.full_name}
+                            {a.submitted_via === 'online' && (
+                              <> <Badge kind="info">กรอกเอง</Badge></>
+                            )}
+                          </td>
                           <td>{a.admitted_curriculum ?? '—'}</td>
                           <td>
                             <Badge kind={st?.kind ?? 'default'}>{st?.label ?? a.status}</Badge>

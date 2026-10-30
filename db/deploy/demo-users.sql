@@ -87,9 +87,11 @@ end $$;
 
 /*
  * ─── บุคลากรหนึ่งคนต่อหนึ่งค่าใน staff_role_kind ───
- * ทำไมไม่ใช้คนเดียวหลายบทบาท — `login_role_for()` คืน**บทบาทเดียว** เสมอ
- * คนที่มีสามบทบาทจะได้ token ที่ระบุบทบาทเดียวอยู่ดี แล้วเมนูที่กรองตาม
- * บทบาทจะไม่แสดงของอีกสองบทบาท ทำให้เข้าใจผิดว่าหน้าจอนั้นยังไม่ได้ทำ
+ * ตั้งแต่ 0095 คนคนเดียวถือหลายบทบาทซ้อนกันได้จริง (login_roles_for()
+ * คืนทั้งชุด ไม่ยุบเหลือตัวเดียวแบบ login_role_for() อีกต่อไป) แต่บัญชี
+ * สาธิตชุดนี้ยังคงหนึ่งคนต่อหนึ่งบทบาทโดยตั้งใจ — เพื่อให้กดทดสอบแต่ละฝ่าย
+ * แยกจากกันได้ชัดเจน ไม่ปนกัน ต้องการทดสอบหลายบทบาทซ้อนกันให้มอบบทบาท
+ * เพิ่มเองผ่านหน้า /hr หลังจากมีบัญชีเหล่านี้แล้ว
  */
 create temporary table _staff on commit drop as
 select * from (values
@@ -104,7 +106,11 @@ select * from (values
   ('20000000-0000-0000-0000-000000000005'::uuid, '21000000-0000-0000-0000-000000000005'::uuid,
    'S-FIN01', 'finance.demo',   'finance'::staff_role_kind,         'นางสาว', 'พรทิพย์',    'บัญชีแม่น',    'female'::gender_kind),
   ('20000000-0000-0000-0000-000000000006'::uuid, '21000000-0000-0000-0000-000000000006'::uuid,
-   'S-AFF01', 'affairs.demo',   'student_affairs'::staff_role_kind, 'นาย',    'สุรชัย',     'ปกครองดี',     'male'::gender_kind)
+   'S-AFF01', 'affairs.demo',   'student_affairs'::staff_role_kind, 'นาย',    'สุรชัย',     'ปกครองดี',     'male'::gender_kind),
+  ('20000000-0000-0000-0000-000000000007'::uuid, '21000000-0000-0000-0000-000000000007'::uuid,
+   'S-SEC01', 'secretary.demo', 'secretary'::staff_role_kind,       'นางสาว', 'อัญชลี',     'จดหมายเหตุ',   'female'::gender_kind),
+  ('20000000-0000-0000-0000-000000000008'::uuid, '21000000-0000-0000-0000-000000000008'::uuid,
+   'S-HR01',  'hr.demo',        'hr'::staff_role_kind,              'นาย',    'ประเสริฐ',   'คนสำคัญ',      'male'::gender_kind)
 ) as v(person_id, staff_id, staff_code, username, role, prefix_th, first_name_th, last_name_th, gender);
 
 insert into person (id, institution_id, prefix_th, first_name_th, last_name_th, gender)

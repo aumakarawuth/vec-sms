@@ -12,8 +12,18 @@ export interface UserContext {
   institutionId: string;
   /** person_id ของผู้ใช้ ไม่ใช่ student_id หรือ staff_id */
   actorId: string;
-  /** registrar | academic | finance | student_affairs | director | admin | teacher | student | guardian */
+  /** บทบาทหลัก (แรงที่สุด) — registrar | academic | finance | student_affairs | director | admin | teacher | student | guardian */
   role: AppRole;
+  /**
+   * ชุดบทบาททั้งหมดที่มีผลจริง (มาจาก login_roles_for() ไม่ใช่แค่ role เดียว)
+   * ใช้ตั้ง app.roles ให้ RLS ที่รองรับหลายบทบาทซ้อนกัน (current_app_roles())
+   * — ไม่ลบ role เดี่ยวด้านบน เพราะจุดอื่นที่ยังอ้างค่าเดียวยังต้องใช้ได้
+   *
+   * เป็น optional เพราะบริบทเบื้องหลัง (jobs, provisioning, platform, auth
+   * ระหว่างล็อกอิน) ยังสร้าง UserContext ด้วยบทบาทเดียวอยู่ — DbService
+   * เติมให้เป็น [role] เองถ้าไม่ได้ระบุ ไม่ต้องแก้จุดเหล่านั้นทั้งหมด
+   */
+  roles?: AppRole[];
   /** ใช้ในบันทึกการตรวจสอบเท่านั้น ไม่ได้ส่งลงฐานข้อมูล */
   requestId?: string;
   /**
@@ -33,6 +43,8 @@ export type AppRole =
   | 'student_affairs'
   | 'director'
   | 'admin'
+  | 'secretary'
+  | 'hr'
   | 'teacher'
   | 'student'
   | 'guardian';

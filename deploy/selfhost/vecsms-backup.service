@@ -1,0 +1,11 @@
+[Unit]
+Description=สำรองฐานข้อมูล vec-sms
+Requires=postgresql@18-vecsms.service
+After=postgresql@18-vecsms.service
+
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/opt/vecsms/app/deploy/selfhost/backup.sh
+CPUWeight=10
+IOWeight=10
