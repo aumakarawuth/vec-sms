@@ -89,7 +89,9 @@ fi
 
 # ─── ผู้ใช้ระบบและการ build ───────────────────────────────────────────
 id vecsms >/dev/null 2>&1 || useradd --system --home /opt/vecsms --shell /usr/sbin/nologin vecsms
-install -d -o vecsms -g vecsms /opt/vecsms/run /opt/vecsms/www
+# .npm คือ cache ของ npm ใต้ home ของ vecsms — /opt/vecsms เป็นของ root
+# (มาจากตอน clone) ถ้าไม่สร้างไว้ npm ci จะเขียน cache ไม่ได้แล้วล้ม
+install -d -o vecsms -g vecsms /opt/vecsms/run /opt/vecsms/www /opt/vecsms/.npm
 install -d -o postgres -g postgres -m 700 /opt/vecsms/backups
 chown -R vecsms:vecsms "$APP"
 
