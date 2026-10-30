@@ -34,15 +34,28 @@ examkub มีอยู่แล้ว เพราะ examkub ใช้ cluster
 sudo apt install -y postgresql-common && sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && sudo apt install -y postgresql-18
 ```
 
-**Nginx** — เครื่อง examkub ไม่มี Nginx (cloudflared ส่งตรงเข้า examkub)
-ติดตั้งใหม่ให้ vec-sms ใช้คนเดียว แล้วลบไซต์ตั้งต้นที่ฟังพอร์ต 80 ทิ้ง
-เพราะไม่มีใครใช้และไม่ควรมีพอร์ตที่เปิดโดยไม่มีเหตุผล
+**Nginx** — หน้าเครื่อง examkub คือ **Caddy ที่พอร์ต 80** (cloudflared → Caddy
+→ examkub) vec-sms ใช้ Nginx แยกของตัวเองที่ฟังแค่ `127.0.0.1:8081`
+**ไม่แตะ Caddyfile เลย** — Caddy เป็นทางที่คำขอของระบบสอบวิ่งผ่านทุกคำขอ
+
+ปัญหาคือแพ็กเกจ nginx ติดตั้งแล้วพยายามสตาร์ตไซต์ตั้งต้นที่พอร์ต 80 ทันที
+ซึ่ง Caddy ถืออยู่ — Nginx จะสตาร์ตไม่ขึ้น (**Caddy ไม่ได้รับผลกระทบ** การ bind
+พอร์ตที่มีคนถืออยู่แค่ล้มฝั่งที่มาทีหลัง) แล้ว apt จะรายงานว่าตั้งค่าไม่ครบ
+จึงทำสามขั้นนี้ตามลำดับ
 
 ```bash
-sudo apt install -y nginx && sudo rm -f /etc/nginx/sites-enabled/default && sudo systemctl reload nginx
+sudo apt install -y nginx || true
 ```
 
-ไม่กระทบ examkub เพราะเส้นทางของ examkub ไม่ผ่าน Nginx เลย
+```bash
+sudo rm -f /etc/nginx/sites-enabled/default && sudo dpkg --configure -a
+```
+
+```bash
+sudo systemctl restart nginx && sudo ss -ltnp | grep -E ':80\b'
+```
+
+บรรทัดสุดท้ายต้องเห็น **`caddy` คนเดียว** ที่พอร์ต 80 ไม่มี nginx
 
 **3. วางโค้ด**
 
