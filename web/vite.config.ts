@@ -10,5 +10,11 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: { port: 5174, strictPort: true },
-  build: { outDir: 'dist', sourcemap: false },
+  // apply.html เป็นหน้าสาธารณะของผู้สมัคร — entry แยก จึงไม่มีโค้ดหน้าจอ
+  // เจ้าหน้าที่ (และรายการเมนู/เส้นทางทั้งหมด) ติดไปกับหน้าที่ใครก็เปิดได้
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    rollupOptions: { input: { main: 'index.html', apply: 'apply.html' } },
+  },
 });

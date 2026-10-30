@@ -114,6 +114,20 @@ async function main() {
     return 'ยิง /auth/login จนตันแล้ว /health ยังเรียกได้ปกติ';
   });
 
+  await check('RATE-04ก ยิงใบสมัครออนไลน์รัวถูกปฏิเสธด้วย 429', async () => {
+    // เส้นทางเดียวที่คนนอกเขียนข้อมูลได้ — ข้อมูลไม่ต้องถูกต้อง เพราะตัวจำกัด
+    // ทำงานก่อนตรวจข้อมูล คำขอที่ผิดก็ต้องนับ มิฉะนั้นบอทยิงขยะได้ไม่จำกัด
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const r = await fetch(`${base}/apply/applications`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      statuses.push(r.status);
+    }
+    expect(statuses.includes(429), `ต้องถูกจำกัดภายใน 12 ครั้ง ได้ ${statuses.join(',')}`);
+    return `ครั้งแรกที่ถูกปฏิเสธคือครั้งที่ ${statuses.indexOf(429) + 1}`;
+  });
+
   console.log('\n══ ตัวจำกัดรายไอพีในฐานข้อมูล ══');
 
   await check('RATE-05 login_rate_status นับเฉพาะครั้งที่ล้มเหลว', async () => {

@@ -5175,6 +5175,156 @@ async function main() {
     expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
   });
 
+  console.log('');
+  console.log('══ สมัครเรียนออนไลน์ (ไม่มี token — ทางที่ผู้สมัครเดินจริง) ══');
+
+  // เลขบัตรที่ผ่านหลักตรวจสอบ — ชั้น API ปฏิเสธเลขที่ตัวตรวจสอบไม่ตรง
+  const thaiId = (body12: string) => {
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += Number(body12[i]) * (13 - i);
+    return body12 + String((11 - (sum % 11)) % 10);
+  };
+  const isoDay = (d: number) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+  let onlineRound = '';
+  const applicant = (nid: string, extra: Record<string, unknown> = {}) => ({
+    institutionId: INST, roundId: onlineRound, nationalId: nid,
+    firstNameTh: 'ออนไลน์', lastNameTh: 'ผู้สมัคร', birthDate: isoDay(-15 * 365),
+    phone: '0812345678', choices: [CV], startedAt: Date.now() - 30_000, ...extra,
+  });
+  const post = (path: string, body: unknown) =>
+    anon(path, { method: 'POST', body: JSON.stringify(body) });
+
+  let mine = { applicationNo: '', secret: '' };
+  let theirs = { applicationNo: '', secret: '' };
+  const onlineApps = async () =>
+    (await registrar(`/admissions/applications?roundId=${onlineRound}`)).body as any[];
+
+  await check('API-258 หน้าสาธารณะเห็นรอบที่เปิดอยู่ วิทยาลัยที่ไม่มีอยู่ได้รายการว่าง', async () => {
+    const r = await registrar('/admissions/rounds', {
+      method: 'POST',
+      body: JSON.stringify({ academicYearId: AY, code: 'ON-2569', nameTh: 'รอบออนไลน์',
+                             appliesFrom: isoDay(-3), appliesTo: isoDay(3) }),
+    });
+    onlineRound = r.body.id;
+    await registrar(`/admissions/rounds/${onlineRound}/quotas`, {
+      method: 'POST', body: JSON.stringify({ curriculumVersionId: CV, seats: 40 }),
+    });
+    const before = await anon(`/apply/rounds?institutionId=${INST}`);
+    expect(!before.body.some((x: any) => x.id === onlineRound), 'รอบ draft ต้องไม่ปรากฏ');
+    await registrar(`/admissions/rounds/${onlineRound}/status`, {
+      method: 'POST', body: JSON.stringify({ status: 'open' }),
+    });
+    const after = await anon(`/apply/rounds?institutionId=${INST}`);
+    expect(after.status === 200, `ได้ ${after.status}: ${JSON.stringify(after.body)}`);
+    const round = after.body.find((x: any) => x.id === onlineRound);
+    expect(round && round.programs.some((p: any) => p.curriculumVersionId === CV), 'ต้องเห็นสาขาที่เปิดโควตา');
+    const ghost = await anon('/apply/rounds?institutionId=00000000-0000-0000-0000-0000000000aa');
+    expect(ghost.status === 200 && ghost.body.length === 0, 'วิทยาลัยที่ไม่มีอยู่ต้องได้รายการว่าง');
+    return `${after.body.length} รอบ`;
+  });
+
+  await check('API-259 ผู้สมัครยื่นเองได้ และเจ้าหน้าที่เห็นในหน้างานรับสมัครเดิม', async () => {
+    const r = await post('/apply/applications', applicant(thaiId('110370000001')));
+    expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(/^ON-2569-\d{4}$/.test(r.body.applicationNo), `เลขที่ ${r.body.applicationNo}`);
+    expect(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(r.body.secret), 'ต้องได้รหัสลับกลับมาครั้งเดียว');
+    mine = r.body;
+    const row = (await onlineApps()).find((x) => x.application_no === mine.applicationNo);
+    expect(row && row.status === 'submitted' && row.submitted_via === 'online',
+      `เจ้าหน้าที่ต้องเห็นใบที่ยื่นแล้ว ได้ ${JSON.stringify(row)}`);
+    const t = await post('/apply/applications', applicant(thaiId('110370000002')));
+    expect(t.status === 201, `ใบที่สองได้ ${t.status}`);
+    theirs = t.body;
+    return mine.applicationNo;
+  });
+
+  await check('API-260 บอท — ช่องซ่อน · กรอกเร็วเกิน · เลขบัตรตัวตรวจสอบผิด ถูกปฏิเสธ', async () => {
+    const valid = thaiId('110370000005');
+    const badChecksum = valid.slice(0, 12) + String((Number(valid[12]) + 1) % 10);
+    const a = await post('/apply/applications', applicant(thaiId('110370000003'), { homepageUrl: 'http://spam' }));
+    const b = await post('/apply/applications', applicant(thaiId('110370000004'), { startedAt: Date.now() }));
+    const c = await post('/apply/applications', applicant(badChecksum));
+    expect(a.status === 400 && b.status === 400 && c.status === 400,
+      `ได้ ${a.status}/${b.status}/${c.status}`);
+    const n = (await onlineApps()).length;
+    expect(n === 2, `ต้องมีแค่สองใบจริง ได้ ${n}`);
+  });
+
+  await check('API-261 เลขบัตรเดิมยื่นซ้ำไม่ได้ — ทั้งออนไลน์และใบที่เจ้าหน้าที่กรอก', async () => {
+    const r = await post('/apply/applications', applicant(thaiId('110370000001')));
+    expect(r.status === 422, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(!JSON.stringify(r.body).includes(mine.applicationNo), 'ห้ามบอกเลขใบเดิม');
+    // ฝั่งเจ้าหน้าที่ต้องแฮชด้วยกุญแจเดียวกัน มิฉะนั้นตัวกันซ้ำมองไม่เห็นกัน
+    const s = await registrar('/admissions/applications', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: onlineRound, firstNameTh: 'กรอก', lastNameTh: 'แทน',
+                             nationalId: thaiId('110370000001'),
+                             choices: [{ preference: 1, curriculumVersionId: CV }] }),
+    });
+    expect(s.status === 409, `ใบที่เจ้าหน้าที่กรอกด้วยเลขเดียวกันต้องชน ได้ ${s.status}`);
+  });
+
+  await check('API-262 ดูสถานะได้เฉพาะของตัวเอง — รหัสของคนอื่นใช้กับเลขของเราไม่ได้', async () => {
+    const ok = await post('/apply/status', { institutionId: INST, ...mine });
+    expect(ok.status === 201 && ok.body.status === 'submitted' && ok.body.editable === true,
+      `ได้ ${ok.status}: ${JSON.stringify(ok.body)}`);
+    expect(!('national_id_hash' in ok.body) && !('score' in ok.body), 'ห้ามมีค่าแฮชหรือคะแนน');
+    const cross = await post('/apply/status',
+      { institutionId: INST, applicationNo: mine.applicationNo, secret: theirs.secret });
+    expect(cross.status === 401 && !cross.body?.full_name, `ได้ ${cross.status}`);
+    const otherInst = await post('/apply/status', { institutionId: INST2, ...mine });
+    expect(otherInst.status === 401, `คนละวิทยาลัยต้องเปิดไม่ได้ ได้ ${otherInst.status}`);
+  });
+
+  await check('API-263 แก้ใบของตัวเองได้ แก้ของคนอื่นไม่ได้ และแก้ไม่ได้อีกเมื่อเจ้าหน้าที่เริ่มตรวจ', async () => {
+    const form = { institutionId: INST, firstNameTh: 'แก้แล้ว', lastNameTh: 'ผู้สมัคร',
+                   birthDate: isoDay(-16 * 365), phone: '0899999999', choices: [CV] };
+    const ok = await post('/apply/applications/update', { ...form, ...mine });
+    expect(ok.status === 201 && ok.body.form.first_name_th === 'แก้แล้ว',
+      `ได้ ${ok.status}: ${JSON.stringify(ok.body)}`);
+    const hijack = await post('/apply/applications/update',
+      { ...form, applicationNo: theirs.applicationNo, secret: mine.secret, firstNameTh: 'ถูกแก้' });
+    expect(hijack.status === 401, `ได้ ${hijack.status}`);
+    const apps = await onlineApps();
+    const theirApp = apps.find((x) => x.application_no === theirs.applicationNo);
+    expect(!theirApp.full_name.includes('ถูกแก้'), 'ใบของคนอื่นต้องไม่เปลี่ยน');
+
+    const myId = apps.find((x) => x.application_no === mine.applicationNo).id;
+    await registrar(`/admissions/applications/${myId}/documents`, {
+      method: 'POST', body: JSON.stringify({ kind: 'transcript', status: 'received' }),
+    });
+    const late = await post('/apply/applications/update', { ...form, ...mine, firstNameTh: 'แก้ทีหลัง' });
+    expect(late.status === 422, `ได้ ${late.status}`);
+    const view = await post('/apply/status', { institutionId: INST, ...mine });
+    expect(view.body.editable === false && view.body.form === null, 'หลังเจ้าหน้าที่ตรวจต้องไม่ส่งฟอร์มกลับ');
+  });
+
+  await check('API-264 ผลที่บันทึกไว้ไม่รั่วก่อนรอบประกาศ แต่เห็นหลังประกาศ', async () => {
+    const theirId = (await onlineApps()).find((x) => x.application_no === theirs.applicationNo).id;
+    const d = await registrar(`/admissions/applications/${theirId}/decision`, {
+      method: 'POST', body: JSON.stringify({ outcome: 'passed', curriculumVersionId: CV }),
+    });
+    expect(d.status === 201, `ได้ ${d.status}: ${JSON.stringify(d.body)}`);
+    const before = await post('/apply/status', { institutionId: INST, ...theirs });
+    expect(before.body.status === 'submitted' && !before.body.admitted_curriculum,
+      `ผลรั่ว: ${JSON.stringify(before.body)}`);
+    for (const s of ['closed', 'announced']) {
+      await registrar(`/admissions/rounds/${onlineRound}/status`, { method: 'POST', body: JSON.stringify({ status: s }) });
+    }
+    const after = await post('/apply/status', { institutionId: INST, ...theirs });
+    expect(after.body.status === 'passed' && after.body.admitted_curriculum, `ได้ ${JSON.stringify(after.body)}`);
+  });
+
+  await check('API-265 เดารหัสผิดห้าครั้งถูกล็อก แม้รหัสถูกก็ต้องรอ', async () => {
+    for (let i = 0; i < 5; i++) {
+      const r = await post('/apply/status', { institutionId: INST, applicationNo: mine.applicationNo, secret: 'AAAA-AAAA' });
+      expect(r.status === 401, `ครั้งที่ ${i + 1} ได้ ${r.status}`);
+    }
+    // ถ้าชั้น API โยนภายใน runAs ตัวนับจะถูก rollback แล้วข้อนี้จะได้ 201
+    const locked = await post('/apply/status', { institutionId: INST, ...mine });
+    expect(locked.status === 429, `ได้ ${locked.status}`);
+  });
+
   await app.close();
 
   console.log('');

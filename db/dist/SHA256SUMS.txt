@@ -1,3 +1,3 @@
-95a30368659d9eaaa6b08e1f30f8d0bb9daf8aefc46b417d428b75517e8a294d *vec-sms-demo-data.sql
-0dac34d2aaa55a0c46303ca3d7dad64c1bc9c1ef2af33a2e3587486bf020cda6 *vec-sms-full.sql
-61fb90a215d890da1aef0db77db913bd0b7dc92edb7cc625a76be415c13f334a *vec-sms-schema.sql
+f58f8448b31e34017933c98551c8ad9a4ab193829252e6154c545f10dddcfb2c *vec-sms-demo-data.sql
+18e326df0aa75d79c25bf54699ea3cc78cdce4ffcbfbcdea2ff9026a8f25a2cb *vec-sms-full.sql
+6c6b72636dbbf75e42782404460e1e9b981485ae9a3c2fa80041424fea798b06 *vec-sms-schema.sql

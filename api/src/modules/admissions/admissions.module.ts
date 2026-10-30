@@ -29,6 +29,8 @@ import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { hashNationalId } from '../../common/crypto/national-id';
+import { ApplyController, ApplyService } from './apply';
 
 /**
  * งานรับสมัครนักศึกษาใหม่
@@ -39,13 +41,11 @@ import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
  *
  * ─── เลขบัตรประชาชนไม่ผ่านชั้นนี้แบบอ่านออก ───
  * ฐานข้อมูลเก็บเฉพาะค่าแฮช (หลักเดียวกับ person.national_id_hash ใน 0002)
- * ชั้นนี้จึงส่งเลขที่รับมาให้ `digest()` ในคำสั่ง SQL แล้วไม่เก็บไว้ที่ไหนอีก
+ * ชั้นนี้แฮชด้วยกุญแจที่อยู่นอกฐานข้อมูล (`hashNationalId()`) แล้วไม่เก็บเลขไว้ที่ไหนอีก
  * ข้อจำกัดเดียวกับการนำเข้าข้อมูล — คอลัมน์ที่เข้ารหัสจริงรอเชื่อม KMS
- *
- * ─── ยังไม่เปิดให้ผู้สมัครกรอกเอง ───
- * ทุก endpoint ต้องเป็นเจ้าหน้าที่ เพราะการเปิดให้คนนอกสร้างใบสมัครได้เอง
- * ต้องมีการยืนยันตัวตน การกันบอท และการจำกัดจำนวนคำขอที่ออกแบบแยกต่างหาก
- * การเปิดก่อนแล้วค่อยคิดเรื่องนั้นทีหลังคือการเปิดช่องให้ยิงใบสมัครปลอม
+ * ─── ผู้สมัครกรอกเองอยู่ที่ `apply.ts` ───
+ * แยกไฟล์เพราะเป็นเส้นทาง @Public ที่ออกแบบการยืนยันตัวตน การกันบอท
+ * และการจำกัดคำขอแยกต่างหาก (0096) ส่วนไฟล์นี้ทุก endpoint ยังเป็นของเจ้าหน้าที่
  */
 
 class CreateRoundDto {
@@ -152,6 +152,16 @@ class DocumentDto {
 export class AdmissionsService {
   constructor(private readonly db: DbService) {}
 
+  /**
+   * แฮชเลขบัตรด้วยกุญแจเดียวกับการนำเข้าและใบสมัครออนไลน์ (0061)
+   * เดิมใช้ digest() เปล่า ซึ่งนอกจากไล่ย้อนได้แล้วยังไม่ตรงกับค่าของ
+   * person ที่นำเข้ามา admit_applicant() จึงจับคู่คนเดิมไม่ได้ และใบที่
+   * เจ้าหน้าที่กรอกกับใบที่ผู้สมัครกรอกเองจะไม่ชนกันที่ตัวกันยื่นซ้ำ
+   */
+  private nid(raw?: string): Buffer | null {
+    return raw ? hashNationalId(raw, process.env.IP_HASH_SECRET ?? 'vec-sms') : null;
+  }
+
   async createRound(dto: CreateRoundDto) {
     return this.db.queryOne(
       `insert into admission_round
@@ -233,26 +243,26 @@ export class AdmissionsService {
               mother_prefix_th, mother_first_name_th, mother_last_name_th,
               mother_national_id_hash, mother_occupation_th, mother_income_monthly, mother_phone)
            values (current_institution_id(), $1, $2, $3, $4, $5,
-                   case when $6::text is not null then digest($6::text, 'sha256') end,
+                   $6::bytea,
                    $7, coalesce($8, 'undisclosed')::gender_kind,
                    $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18,
-                   case when $19::text is not null then digest($19::text, 'sha256') end,
+                   $19::bytea,
                    $20, $21, $22,
                    $23, $24, $25,
-                   case when $26::text is not null then digest($26::text, 'sha256') end,
+                   $26::bytea,
                    $27, $28, $29)
            returning id, application_no`,
           [dto.roundId, no, dto.prefixTh ?? null, dto.firstNameTh, dto.lastNameTh,
-           dto.nationalId ?? null, dto.birthDate ?? null, dto.gender ?? null,
+           this.nid(dto.nationalId), dto.birthDate ?? null, dto.gender ?? null,
            dto.phone ?? null, dto.email ?? null, dto.addressTh ?? null,
            dto.priorSchoolTh ?? null, dto.priorQualificationTh ?? null,
            dto.priorGpax ?? null, dto.referralSource ?? null,
            dto.fatherPrefixTh ?? null, dto.fatherFirstNameTh ?? null, dto.fatherLastNameTh ?? null,
-           dto.fatherNationalId ?? null, dto.fatherOccupationTh ?? null,
+           this.nid(dto.fatherNationalId), dto.fatherOccupationTh ?? null,
            dto.fatherIncomeMonthly ?? null, dto.fatherPhone ?? null,
            dto.motherPrefixTh ?? null, dto.motherFirstNameTh ?? null, dto.motherLastNameTh ?? null,
-           dto.motherNationalId ?? null, dto.motherOccupationTh ?? null,
+           this.nid(dto.motherNationalId), dto.motherOccupationTh ?? null,
            dto.motherIncomeMonthly ?? null, dto.motherPhone ?? null],
         )
       ).rows[0];
@@ -274,7 +284,7 @@ export class AdmissionsService {
       `select a.id, a.application_no,
               trim(coalesce(a.prefix_th,'') || a.first_name_th || ' ' || a.last_name_th) as full_name,
               a.status, a.rank_no, a.score, a.submitted_at, a.reported_on,
-              a.student_id, a.referral_source,
+              a.student_id, a.referral_source, a.submitted_via,
               cur.name_th as admitted_curriculum
          from application a
          left join curriculum_version cv on cv.id = a.admitted_curriculum_version_id
@@ -451,8 +461,8 @@ class AdmissionsController {
 }
 
 @Module({
-  controllers: [AdmissionsController],
-  providers: [AdmissionsService],
+  controllers: [AdmissionsController, ApplyController],
+  providers: [AdmissionsService, ApplyService],
   exports: [AdmissionsService],
 })
 export class AdmissionsModule {}
