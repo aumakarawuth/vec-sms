@@ -18,7 +18,8 @@ Ubuntu 24.04 · Nginx · `vec.examkub.com`
 
 ## ขั้นที่ไม่แตะ examkub (1–4)
 
-**1. ชี้ DNS** — เพิ่ม A record `vec` ไปที่ IP เดียวกับ `examkub.com`
+**1. DNS** — เครื่องนี้เข้าทาง **Cloudflare Tunnel** จึงไม่ต้องเพิ่ม A record
+และไม่ต้องรู้ IP — Cloudflare สร้าง CNAME ชี้ไปที่ทันเนลให้เองในขั้นที่ 5
 
 **2. ติดตั้ง PostgreSQL 18 ข้างรุ่นเดิม** (ข้ามถ้ามีแล้ว — `ls /usr/lib/postgresql`)
 
@@ -76,11 +77,31 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+ทำนอกช่วงสอบ — `reload` ไม่ตัดการเชื่อมต่อที่ค้างอยู่ แต่ไม่มีเหตุผลให้เสี่ยง
+
+ไฟล์นี้ฟังแค่ `127.0.0.1:8081` จึงยังไม่มีใครจากภายนอกเข้าถึงได้ ตรวจด้วย
+
 ```bash
-sudo certbot --nginx -d vec.examkub.com
+curl -s -H 'Host: vec.examkub.com' http://127.0.0.1:8081/api/v1/health
 ```
 
-ทำนอกช่วงสอบ — `reload` ไม่ตัดการเชื่อมต่อที่ค้างอยู่ แต่ไม่มีเหตุผลให้เสี่ยง
+**เพิ่ม Public Hostname ในทันเนลเดิม** — Cloudflare Zero Trust → Networks →
+Tunnels → ทันเนลของ examkub → Public Hostname → Add
+
+| ช่อง | ค่า |
+|---|---|
+| Subdomain | `vec` |
+| Domain | `examkub.com` |
+| Type | `HTTP` |
+| URL | `localhost:8081` |
+
+ทันเนลที่จัดการผ่านหน้าเว็บเพิ่ม hostname ได้โดยไม่ restart cloudflared —
+ระบบสอบไม่สะดุด **ถ้าทันเนลจัดการด้วยไฟล์ `config.yml` บนเครื่องแทน**
+ต้องเพิ่ม ingress rule เหนือบรรทัด `http_status:404` แล้ว restart cloudflared
+ซึ่งตัดการเชื่อมต่อของ examkub ชั่วครู่ — ทำนอกช่วงสอบเท่านั้น
+
+**ไม่ใช้ certbot** — Cloudflare ปิดปลาย HTTPS ให้แล้ว
+และไอพีจริงของผู้ใช้มาจาก `CF-Connecting-IP` (ไฟล์ Nginx จัดการให้แล้ว)
 
 ## เปิดวิทยาลัยแรก (6–8)
 
