@@ -31,6 +31,7 @@ import { PageParams, parsePage, toPage } from '../../common/pagination/paginatio
 
 const ROLE_KINDS = [
   'registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin',
+  'secretary', 'hr',
 ] as const;
 
 class GrantRoleDto {

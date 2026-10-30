@@ -134,7 +134,8 @@ PGHOST=localhost PGPORT=5433 PGUSER=postgres PGCLIENTENCODING=UTF8 bash api/test
 cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_api_test" \
   ADMIN_DATABASE_URL="postgres://postgres@localhost:5433/vecsms_api_test" \
   JWT_SECRET=test-secret DEV_AUTH=true IP_HASH_SECRET=test-ip-salt JOBS_ENABLED=false PROVISION_KEY=test-provision-key \
-  THROTTLE_ENABLED=true \
+  THROTTLE_ENABLED=true MFA_DISABLED=false \
+  MFA_SECRET_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" \
   NATIONAL_ID_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" && \
   npm run test:e2e && npm run test:auth && npm run test:ratelimit && npm run test:hardening && npm run test:platform
 ```
@@ -145,6 +146,9 @@ cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_
 ปิดทั้งชุด แล้ว RATE-02/03/07/08 ล้มโดยที่**ไม่มีอะไรบอกว่าสาเหตุอยู่ในไฟล์
 ตั้งค่า** — อาการเหมือนโค้ดพัง ทั้งที่เป็นค่าที่ตั้งไว้เอง (ตัวแปรใน
 `process.env` ชนะค่าจาก `.env` เสมอ จึงกดทับได้จากบรรทัดคำสั่ง)
+**`MFA_DISABLED=false` กับ `MFA_SECRET_KEY` เป็นกับดักเดียวกัน** — `.env`
+ตั้ง `MFA_DISABLED=true` ไว้ ชุด auth จึงล้ม AUTH-24 ถึง 30 (ผู้ดูแลได้ token
+จริงทันทีโดยไม่ผ่านชั้นที่สอง) และไม่มีกุญแจ MFA ก็ล้มด้วย `key ... Received null`
 
 ```bash
 # API — ทดสอบโหลด (ต้องรัน test:e2e ก่อนหนึ่งครั้งเพื่อสร้างข้อมูลตัวอย่าง)

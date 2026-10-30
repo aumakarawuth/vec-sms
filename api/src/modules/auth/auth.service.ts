@@ -303,6 +303,9 @@ export class AuthService {
         ),
       );
     }
+    const roles = await this.db.runAs(ctx, (c) =>
+      this.rolesOf(c, cred.person_id, input.institutionId),
+    );
     const device = await this.db.runAs(ctx, (c) =>
       this.registerDevice(c, input, cred.person_id, role, policy),
     );
@@ -355,10 +358,11 @@ export class AuthService {
           mfaRequired: true,
           enrollmentRequired: !mfa.enrolled,
           challengeToken: await this.issueMfaChallenge(
-            input.institutionId, cred.person_id, role,
+            input.institutionId, cred.person_id, role, roles,
           ),
           mustChangePassword: cred.must_change,
           role,
+          roles,
         };
       }
 
@@ -366,12 +370,13 @@ export class AuthService {
         institutionId: input.institutionId,
         personId: cred.person_id,
         role,
+        roles,
         deviceId: input.deviceId,
         userAgent: input.userAgent,
         policy,
       });
 
-      return { ...tokens, mustChangePassword: cred.must_change, role };
+      return { ...tokens, mustChangePassword: cred.must_change, role, roles };
     });
   }
 
@@ -382,16 +387,21 @@ export class AuthService {
    * access token สำหรับผู้ที่ขโมยได้ ทั้งที่ยังไม่ผ่านชั้นที่สอง
    * และ AuthGuard ปฏิเสธ token ที่มี stage=mfa กับทุก endpoint อื่นอยู่แล้ว
    */
-  private issueMfaChallenge(institutionId: string, personId: string, role: string) {
+  private issueMfaChallenge(
+    institutionId: string,
+    personId: string,
+    role: string,
+    roles: string[],
+  ) {
     return this.jwt.signAsync(
-      { sub: personId, inst: institutionId, role, stage: 'mfa' },
+      { sub: personId, inst: institutionId, role, roles, stage: 'mfa' },
       { expiresIn: '5m' },
     );
   }
 
   /** อ่าน challenge token — ใช้เฉพาะเส้นทาง MFA ที่ยังไม่มี token จริง */
   async readMfaChallenge(token: string) {
-    let payload: { sub: string; inst: string; role: string; stage?: string };
+    let payload: { sub: string; inst: string; role: string; roles?: string[]; stage?: string };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
@@ -461,10 +471,17 @@ export class AuthService {
         [row.id],
       );
 
+      // คำนวณชุดบทบาทใหม่ทุกครั้งที่หมุน token แทนการเชื่อ app_role เดิมที่
+      // เก็บไว้ตอนล็อกอินครั้งก่อน — ถ้ามีการมอบ/ถอนบทบาทระหว่างนั้น (เช่น
+      // เพิ่งได้รับมอบบทบาทที่สอง) จะเห็นผลตั้งแต่การต่ออายุครั้งถัดไปเลย
+      // โดยไม่ต้องออกจากระบบแล้วเข้าใหม่
+      const roles = await this.rolesOf(c, row.person_id, institutionId);
+
       return this.issueTokens(c, {
         institutionId,
         personId: row.person_id,
         role: row.app_role as AppRole,
+        roles,
         deviceId: row.device_id ?? undefined,
         policy,
       });
@@ -829,6 +846,26 @@ export class AuthService {
   }
 
   /**
+   * ชุดบทบาททั้งหมดที่มีผลจริง — ต่างจาก roleOf() ตรงที่ไม่ยุบเหลือตัวเดียว
+   *
+   * คนที่มีทั้ง staff_role (เช่น academic) และเป็นครูผู้สอนด้วย
+   * (staff.is_teacher) จะได้ทั้ง 'academic' และ 'teacher' พร้อมกัน — ปิดช่องว่าง
+   * ที่ roleOf()/login_role_for() ยุบเหลือแค่บทบาทที่แรงที่สุด แล้วทำให้
+   * ความสามารถฝั่งครู (ส่งเกรดกลุ่มตัวเอง ฯลฯ) หายไปทั้งที่ RLS ยอมอยู่แล้ว
+   */
+  private async rolesOf(
+    c: PoolClient,
+    personId: string,
+    institutionId: string,
+  ): Promise<AppRole[]> {
+    const r = await c.query<{ roles: string[] | null }>(
+      `select login_roles_for($1, $2) as roles`,
+      [personId, institutionId],
+    );
+    return (r.rows[0]?.roles as AppRole[]) ?? [];
+  }
+
+  /**
    * ลงทะเบียนอุปกรณ์ และบอกว่าอนุญาตให้เข้าหรือไม่
    *
    * คืนผลแทนการโยนข้อผิดพลาด เพราะแถวของอุปกรณ์ที่รออนุมัติต้องถูกบันทึกไว้
@@ -911,13 +948,16 @@ export class AuthService {
       institutionId: string;
       personId: string;
       role: AppRole;
+      /** ชุดบทบาททั้งหมด — ไม่ระบุ (จากทางเข้าเก่าที่ยังไม่ผ่าน rolesOf()) ก็คือ [role] */
+      roles?: AppRole[];
       deviceId?: string;
       userAgent?: string;
       policy: Policy;
     },
   ) {
+    const roles = p.roles?.length ? p.roles : [p.role];
     const accessToken = await this.jwt.signAsync(
-      { sub: p.personId, inst: p.institutionId, role: p.role },
+      { sub: p.personId, inst: p.institutionId, role: p.role, roles },
       { expiresIn: `${p.policy.access_token_minutes}m` },
     );
 
@@ -955,6 +995,8 @@ export class AuthService {
        * ทั้งที่ token ในมือถูกต้องทุกอย่าง
        */
       role: p.role,
+      /** ชุดบทบาททั้งหมด — ให้หน้าจอ union สิทธิ์ของทุกฝ่ายที่ผู้ใช้มีพร้อมกัน */
+      roles,
     };
   }
 
@@ -1073,7 +1115,7 @@ export class AuthService {
      * ถัดไป** เพราะ mfa_verify_step กันการใช้ช่วงเดิมซ้ำ แปลว่าต้องนั่งรอ
      * ให้แอปเปลี่ยนตัวเลขก่อนถึงจะเข้าได้ ทั้งที่เพิ่งพิสูจน์ตัวตนไปเมื่อครู่
      */
-    session?: { role: AppRole; deviceId?: string; userAgent?: string },
+    session?: { role: AppRole; roles?: AppRole[]; deviceId?: string; userAgent?: string },
   ) {
     const ctx = this.authCtx(institutionId);
 
@@ -1110,6 +1152,7 @@ export class AuthService {
             institutionId,
             personId,
             role: session.role,
+            roles: session.roles,
             deviceId: session.deviceId,
             userAgent: session.userAgent,
             policy: await this.policyOf(c, institutionId),
@@ -1184,6 +1227,7 @@ export class AuthService {
         institutionId: claim.inst,
         personId: claim.sub,
         role: claim.role as AppRole,
+        roles: claim.roles as AppRole[] | undefined,
         deviceId,
         userAgent,
         policy: await this.policyOf(c, claim.inst),
@@ -1217,6 +1261,7 @@ export class AuthService {
         institutionId: claim.inst,
         personId: claim.sub,
         role: claim.role as AppRole,
+        roles: claim.roles as AppRole[] | undefined,
         policy: await this.policyOf(c, claim.inst),
       }),
     );

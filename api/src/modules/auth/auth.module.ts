@@ -208,7 +208,9 @@ class AuthController {
       ctx.actorId,
       dto.code,
       // เข้ามาด้วย token ชั่วคราว = ยังไม่มี token จริง ต้องออกให้ตอนตั้งเสร็จ
-      ctx.mfaPending ? { role: ctx.role, deviceId: dto.deviceId, userAgent } : undefined,
+      ctx.mfaPending
+        ? { role: ctx.role, roles: ctx.roles, deviceId: dto.deviceId, userAgent }
+        : undefined,
     );
   }
 
