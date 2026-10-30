@@ -178,11 +178,28 @@ for p in / /teacher /admin /vec /vec/ /vec/apply /vec/student /vec/verify; do pr
 ## อัปเดตรอบถัดไป
 
 ```bash
-cd /opt/vecsms/app && sudo -u vecsms git pull && sudo bash deploy/selfhost/install.sh
+sudo bash /opt/vecsms/app/deploy/selfhost/upgrade.sh
 ```
 
-**migration ใหม่ไม่ถูกรันโดย `install.sh`** — มันนำเข้าโครงสร้างเฉพาะฐานที่ยังว่าง
-การไล่ migration บนฐานที่มีข้อมูลจริงต้องสำรองก่อนและทำทีละไฟล์ (ยังไม่มีสคริปต์)
+ดึงโค้ด → บอกว่าจะใช้ migration ไหน → **สำรองฐานก่อนแตะสคีมา** → ไล่ migration
+(`db/deploy.sh` ข้ามไฟล์ที่ใช้แล้ว และหยุดถ้ามีคนแก้ไฟล์ที่ใช้ไปแล้ว) →
+`roles.sql` → build API → restart → ตรวจ health → build หน้าจอใหม่
+ถ้า API ไม่ขึ้นหลังอัปเดต ไฟล์สำรองอยู่ที่ `/opt/vecsms/backups`
+
+### ใช้ครั้งเดียว — ฐานที่ติดตั้งด้วย install.sh รุ่นแรก
+
+`install.sh` รุ่นแรกนำเข้าโครงสร้างจากไฟล์ dist ซึ่ง**ไม่บันทึก
+`schema_migrations`** ถ้าไล่ migration ทั้งสภาพนั้น `deploy.sh` จะรันใหม่ทั้ง
+95 ไฟล์ทับฐานที่มีข้อมูล (ทดสอบแล้ว) `upgrade.sh` จึงปฏิเสธจนกว่าจะ baseline
+
+```bash
+sudo bash /opt/vecsms/app/deploy/selfhost/baseline.sh 0095
+```
+
+เลขต้องตรงกับบรรทัด `migration ล่าสุด` ในหัวไฟล์ dist **ที่ใช้ติดตั้งจริง** —
+ต่ำไปจะรันซ้ำ สูงไปจะข้าม migration ที่ยังไม่เคยรันแล้วสคีมาขาดไปเงียบ ๆ
+(เครื่อง examkub ติดตั้งจาก dist ที่ 0095) · install.sh รุ่นปัจจุบันใช้
+`db/deploy.sh` แล้ว เครื่องใหม่จึงไม่ต้องทำขั้นนี้
 
 ## ข้อห้าม
 

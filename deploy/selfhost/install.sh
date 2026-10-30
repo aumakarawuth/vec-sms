@@ -62,9 +62,12 @@ if ! psql_su -tAc "select 1 from pg_database where datname = '$DB'" postgres | g
   psql_su -c "create database $DB" postgres
 fi
 
+# ใช้ db/deploy.sh ไม่ใช่ไฟล์ dist — dist สร้างตารางครบแต่ไม่บันทึก
+# schema_migrations แล้วการอัปเดตครั้งถัดไปจะไล่ migration ตั้งแต่ 0001 ใหม่
+# ฐานที่ติดตั้งด้วยรุ่นแรกของสคริปต์นี้ต้อง baseline.sh ก่อน (upgrade.sh บอกเอง)
 if ! psql_su -tAc "select to_regclass('public.institution') is not null" "$DB" | grep -q t; then
-  say "นำเข้าโครงสร้าง (vec-sms-schema.sql — ไม่ใช่ full ที่มีวิทยาลัยสมมติ)"
-  psql_su -f "$APP/db/dist/vec-sms-schema.sql" "$DB"
+  say "สร้างโครงสร้างด้วย db/deploy.sh (บันทึก schema_migrations ไปด้วย)"
+  sudo -u postgres env DATABASE_URL="postgresql:///$DB?host=/var/run/postgresql&port=$PG_PORT" bash "$APP/db/deploy.sh"
 fi
 
 say "ตั้งกลุ่มสิทธิ์ (roles.sql)"

@@ -25,4 +25,7 @@ chown -R vecsms:vecsms /opt/vecsms/www.new
 rm -rf /opt/vecsms/www.old
 [ -d /opt/vecsms/www ] && mv /opt/vecsms/www /opt/vecsms/www.old
 mv /opt/vecsms/www.new /opt/vecsms/www
+# จำไว้ให้ upgrade.sh build ใหม่ได้เองโดยไม่ต้องถามรหัสวิทยาลัยซ้ำ
+install -d -m 755 /etc/vecsms
+printf '%s\n' "$ID" > /etc/vecsms/web-institution-id
 echo "วางหน้าจอแล้วที่ /opt/vecsms/www"
