@@ -163,8 +163,17 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
     await c.query(
       `select set_config('app.institution_id', $1, true),
               set_config('app.actor_id',       $2, true),
-              set_config('app.role',           $3, true)`,
-      [ctx.institutionId, ctx.actorId ?? '', ctx.role],
+              set_config('app.role',           $3, true),
+              set_config('app.roles',          $4, true)`,
+      [
+        ctx.institutionId,
+        ctx.actorId ?? '',
+        ctx.role,
+        // ไม่ระบุ roles มาแปลว่าเป็นบริบทบทบาทเดียว (jobs/provisioning/auth) —
+        // current_app_roles() ฝั่ง DB fallback เป็น [app.role] อยู่แล้วเมื่อ
+        // ค่านี้ว่าง แต่ส่งให้ชัดเจนตรงนี้กันความไม่ตรงกันสองที่
+        (ctx.roles && ctx.roles.length > 0 ? ctx.roles : [ctx.role]).join(','),
+      ],
     );
   }
 

@@ -59,7 +59,13 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('ต้องแนบ Bearer token');
     }
 
-    let payload: { sub: string; inst: string; role: AppRole; stage?: string };
+    let payload: {
+      sub: string;
+      inst: string;
+      role: AppRole;
+      roles?: AppRole[];
+      stage?: string;
+    };
     try {
       payload = await this.jwt.verifyAsync(header.slice(7));
     } catch {
@@ -94,10 +100,16 @@ export class AuthGuard implements CanActivate {
       }
     }
 
+    // token เก่าที่ออกก่อนมี claim `roles` (ก่อนรองรับหลายบทบาทซ้อนกัน)
+    // จะไม่มี field นี้เลย — fallback เป็น [role] ให้พฤติกรรมเดิมยังใช้ได้
+    // จนกว่า access token จะหมดอายุแล้วขอใหม่ (สั้นแค่ 30 นาทีตามนโยบายเริ่มต้น)
+    const roles = payload.roles?.length ? payload.roles : [payload.role];
+
     req.userContext = {
       institutionId: payload.inst,
       actorId: payload.sub,
       role: payload.role,
+      roles,
       requestId: req.header('x-request-id') ?? undefined,
       mfaPending: mfaPending || undefined,
     };
@@ -106,7 +118,7 @@ export class AuthGuard implements CanActivate {
       ctx.getHandler(),
       ctx.getClass(),
     ]);
-    if (required?.length && !required.includes(payload.role)) {
+    if (required?.length && !required.some((r) => roles.includes(r))) {
       throw new ForbiddenException(
         `ต้องเป็นบทบาท ${required.join(' หรือ ')} จึงจะใช้คำสั่งนี้ได้`,
       );

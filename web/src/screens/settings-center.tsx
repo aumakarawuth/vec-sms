@@ -11,16 +11,21 @@ const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
   {key:'curriculum',title:'หลักสูตร',desc:'เลือกหลักสูตร สอศ. แก้ชื่อ และนำเข้าเป็นฉบับร่าง',path:'/curriculum-library',state:'ready'},
   {key:'education-level',title:'ระดับการศึกษา',desc:'กำหนดระดับและฉบับหลักสูตร (ปวช./ปวส.) ที่ใช้ในระบบ',path:'/education-levels',state:'ready'},
  ]},
+ {title:'ข้อมูลพื้นฐานและเอกสาร',subtitle:'รายการตัวเลือก ข้อความบนเอกสาร และบันทึกการเข้าถึง',items:[
+  {key:'options',title:'ข้อมูลพื้นฐาน',desc:'คำนำหน้า ศาสนา สัญชาติ เชื้อชาติ อาชีพ ธนาคาร สถานศึกษา วุฒิการศึกษา',path:'/settings-tools/options',state:'ready'},
+  {key:'document-texts',title:'ข้อความบนเอกสาร',desc:'เกณฑ์การสำเร็จการศึกษา หมายเหตุ และชื่อผู้ลงนามบนใบ รบ.',path:'/settings-tools/document-texts',state:'ready'},
+  {key:'audit',title:'บันทึกเหตุการณ์',desc:'ใครเข้าถึงหรือเปลี่ยนข้อมูลของใคร เมื่อไร (ผู้บริหารเท่านั้น)',path:'/settings-tools/audit',state:'ready'},
+ ]},
  {title:'เครื่องมือ',subtitle:'งานตามกำหนดเวลา นำเข้า/ส่งออกข้อมูล และสื่อ',items:[
   {key:'jobs',title:'งานตามกำหนดเวลา',desc:'ดูสถานะและสั่งรันงานประจำวันของระบบ (คำนวณสถิติ ส่งแจ้งเตือน ฯลฯ)',path:'/jobs',state:'ready'},
   {key:'import',title:'นำเข้าข้อมูล',desc:'นำเข้าข้อมูลนักศึกษาและบุคลากรจากไฟล์ พร้อมขั้นตรวจสอบก่อนบันทึกจริง',path:'/import',state:'ready'},
   {key:'government-exports',title:'ส่งออกข้อมูล',desc:'ออกไฟล์ข้อมูลตามรูปแบบที่หน่วยงานรัฐกำหนด (PVRS ฯลฯ)',path:'/government-exports',state:'ready'},
-  {key:'system-info',title:'System Informations',desc:'ข้อมูลเวอร์ชัน สถานะบริการ และสภาพแวดล้อมระบบ',state:'planned'},
-  {key:'images',title:'จัดการไฟล์รูปภาพ',desc:'รูปนักศึกษา บุคลากร ตราสถานศึกษา และไฟล์ประกอบ',state:'planned'},
-  {key:'qr',title:'QR Code',desc:'สร้างรหัสสำหรับเช็กอิน เอกสาร และการตรวจสอบ',state:'planned'},
  ]},
 ];
 const STATUS={ready:{label:'พร้อมใช้งาน',kind:'ok'},partial:{label:'ใช้งานได้บางส่วน',kind:'warn'},planned:{label:'หน้าต้นแบบ',kind:'info'}} as const;
 export function SettingsCenterScreen(){const all=GROUPS.flatMap(g=>g.items),selected=useRoute().query.get('module'),chosen=all.find(x=>x.key===selected);if(chosen&&!chosen.path)return <Preview x={chosen}/>;return <><PageHead title="ศูนย์การตั้งค่า" sub="หลักสูตร ข้อมูลพื้นฐาน และเครื่องมือระบบ"/><div className="registry-summary"><Stat t="รายการตั้งค่า" v={all.length} n="หนึ่งการ์ดต่อหนึ่งหน้าจอ" c="primary"/><Stat t="พร้อมใช้งาน" v={all.filter(x=>x.state==='ready').length} n="เชื่อมหน้าจอแล้ว" c="success"/><Stat t="กำลังเติมเต็ม" v={all.filter(x=>x.state!=='ready').length} n="บางส่วนและ Mockup" c="warning"/></div>{GROUPS.map(g=><section className="registry-section" key={g.title}><div className="registry-section-head"><div><span>{g.subtitle}</span><h3>{g.title}</h3></div><b>{g.items.length} เมนู</b></div><div className="operation-grid">{g.items.map(x=>{const s=STATUS[x.state];return <a className="operation-card" href={href(x.path??`/settings-center?module=${x.key}`)} key={x.key}><div className={`operation-icon ${x.state}`}>{x.path?'↗':'⚙'}</div><div><strong>{x.title}</strong><p>{x.desc}</p><Badge kind={s.kind}>{s.label}</Badge></div><span className="operation-arrow">›</span></a>})}</div></section>)}</>}
 function Stat({t,v,n,c}:{t:string;v:number;n:string;c:string}){return <div className={`registry-stat ${c}`}><span>{t}</span><strong>{v}</strong><small>{n}</small></div>}
 function Preview({x}:{x:Item}){return <><PageHead title={x.title} sub="เครื่องมือระบบฉบับต้นแบบ" actions={<a href={href('/settings-center')}>← กลับ</a>}/><Notice kind="info">หน้านี้เป็น Mockup การกดใช้งานจะยังไม่เปลี่ยนข้อมูลจริง</Notice><div className="registry-summary"><Stat t="สถานะระบบ" v={100} n="พร้อมให้บริการ (%)" c="success"/><Stat t="รายการทั้งหมด" v={12} n="ข้อมูลตัวอย่าง" c="primary"/><Stat t="รอตั้งค่า" v={3} n="ต้องดำเนินการ" c="warning"/></div><Card title={x.title}><div className="mock-chart">{[86,70,94,62,78,90].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div><p className="hint">{x.desc} หน้านี้เตรียมรูปแบบไว้เพื่อเชื่อม API และพื้นที่จัดเก็บในขั้นถัดไป</p></Card></>}
+
+/** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
+export const SUBNAV = GROUPS.flatMap((g) => g.items.map((x) => ({ ...x, group: g.title }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, group: x.group }));

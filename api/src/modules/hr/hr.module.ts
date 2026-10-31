@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -312,13 +313,14 @@ export class HrService {
  * จึงจำกัดไว้ที่งานบุคคลและผู้บริหาร — RLS กันซ้ำอีกชั้น และเปิดให้
  * บุคลากรเห็นของตัวเองผ่านนโยบาย restrictive ใน 0035
  */
-@Roles('registrar', 'director', 'admin')
+// hr ตั้งแต่ 0097 — ฐานข้อมูลเปิดให้งานบุคคลเขียนได้แล้ว (hr_writer())
+@Roles('registrar', 'hr', 'director', 'admin')
 @Controller('hr')
 class HrController {
   constructor(private readonly svc: HrService) {}
 
   /** โครงสร้างหน่วยงานเปิดกว้างกว่าเรื่องอื่น เพราะทุกคนต้องรู้ว่าสังกัดที่ไหน */
-  @Roles('registrar', 'academic', 'teacher', 'director', 'admin')
+  @Roles('registrar', 'academic', 'teacher', 'hr', 'director', 'admin')
   @Get('departments')
   departments() {
     return this.svc.departments();
@@ -389,9 +391,186 @@ class HrController {
   }
 }
 
+/**
+ * รายงานบุคลากรแบบ SISA (หมวดบุคลากร › ข้อมูลบุคลากร · ข้อมูลสถิติ · ฝึกอบรม)
+ *
+ * มิติของสถิติเลือกจากรายการตายตัวนี้เท่านั้น ชื่อมิติจาก query string ไม่เคย
+ * ถูกต่อเข้า SQL ตรง ๆ (หลักเดียวกับ STUDENT_DIMENSIONS ของ /reports)
+ *
+ * ─── ทำไมอายุงานนับจากการมอบหมายครั้งแรก ───
+ * สคีมาไม่มีช่อง "วันเริ่มงาน" แยก ส่วนการมอบหมายตำแหน่งครั้งแรก
+ * (staff_assignment.effective_from ที่เก่าที่สุด) คือวันที่บุคลากรเริ่มมีตำแหน่ง
+ * ในวิทยาลัยจริง คนที่ยังไม่เคยถูกมอบหมายอยู่ในแถว "ไม่ระบุ" ไม่ถูกเดา
+ */
+export const STAFF_DIMENSIONS: Record<string, { label: string; sql: string }> = {
+  employment: { label: 'ประเภทบุคลากร', sql: `case b.employment_kind when 'civil_servant' then 'ข้าราชการ'
+                  when 'permanent' then 'พนักงานประจำ' when 'contract' then 'พนักงานสัญญาจ้าง'
+                  when 'part_time' then 'ครูพิเศษ/ไม่เต็มเวลา' when 'industry_expert' then 'ผู้เชี่ยวชาญจากสถานประกอบการ'
+                  else b.employment_kind::text end` },
+  teacher:    { label: 'ครูผู้สอน / บุคลากรสนับสนุน', sql: `case when b.is_teacher then 'ครูผู้สอน' else 'บุคลากรสนับสนุน' end` },
+  department: { label: 'ฝ่าย/หน่วยงาน', sql: `coalesce((select d.name_th from staff_assignment a join department d on d.id = a.department_id
+                  where a.staff_id = b.id and a.is_primary and a.effective_to is null limit 1), 'ไม่ระบุ')` },
+  position:   { label: 'ตำแหน่ง', sql: `coalesce((select a.position_th from staff_assignment a
+                  where a.staff_id = b.id and a.is_primary and a.effective_to is null limit 1), 'ไม่ระบุ')` },
+  gender:     { label: 'เพศ', sql: `case b.gender when 'male' then 'ชาย' when 'female' then 'หญิง'
+                  when 'other' then 'อื่น ๆ' else 'ไม่ระบุ' end` },
+  age:        { label: 'ช่วงอายุ', sql: `case when b.birth_date is null then 'ไม่ระบุ'
+                  when age(b.birth_date) < interval '30 years' then '1. ต่ำกว่า 30 ปี'
+                  when age(b.birth_date) < interval '40 years' then '2. 30–39 ปี'
+                  when age(b.birth_date) < interval '50 years' then '3. 40–49 ปี'
+                  when age(b.birth_date) < interval '60 years' then '4. 50–59 ปี'
+                  else '5. 60 ปีขึ้นไป' end` },
+  service:    { label: 'อายุงาน', sql: `(select case when min(a.effective_from) is null then 'ไม่ระบุ'
+                  when age(min(a.effective_from)) < interval '1 year' then '1. ไม่ถึง 1 ปี'
+                  when age(min(a.effective_from)) < interval '5 years' then '2. 1–4 ปี'
+                  when age(min(a.effective_from)) < interval '10 years' then '3. 5–9 ปี'
+                  when age(min(a.effective_from)) < interval '20 years' then '4. 10–19 ปี'
+                  else '5. 20 ปีขึ้นไป' end
+                  from staff_assignment a where a.staff_id = b.id)` },
+  education:  { label: 'วุฒิการศึกษาล่าสุด', sql: `coalesce((select r.title_th from staff_record r
+                  where r.staff_id = b.id and r.kind = 'education'
+                  order by r.ended_on desc nulls last, r.started_on desc nulls last limit 1), 'ไม่ระบุ')` },
+  province:   { label: 'จังหวัดที่อยู่', sql: `coalesce((select a.province_th from person_address a
+                  where a.person_id = b.person_id order by case a.kind when 'current' then 1 else 2 end limit 1), 'ไม่ระบุ')` },
+};
+
+@Injectable()
+export class HrReportsService {
+  constructor(private readonly db: DbService) {}
+
+  /** จำนวนบุคลากรตามมิติ × เพศ — รูปเดียวกับตารางสถิติบุคลากรของ SISA */
+  async breakdown(dimension: string, activeOnly: boolean) {
+    const dim = STAFF_DIMENSIONS[dimension];
+    if (!dim) throw new BadRequestException('ไม่รู้จักมิติที่ขอ');
+    const rows = await this.db.query<{ value: string; gender: string; staff: string }>(
+      `with b as (
+         select st.id, st.person_id, st.employment_kind, st.is_teacher, pe.gender, pe.birth_date
+           from staff st join person pe on pe.id = st.person_id
+          where ($1::boolean is false or st.active))
+       select ${dim.sql} as value,
+              case b.gender when 'male' then 'ชาย' when 'female' then 'หญิง' else 'ไม่ระบุ' end as gender,
+              count(*) as staff
+         from b group by 1, 2 order by 1, 2`,
+      [activeOnly],
+    );
+    return { dimension, label: dim.label, rows: rows.map((r) => ({ value: r.value, gender: r.gender, staff: Number(r.staff) })) };
+  }
+
+  /** รายชื่อบุคลากรพร้อมข้อมูลที่ SISA แยกเป็นหลายรายงาน — ตำแหน่ง · อายุ · อายุงาน · วุฒิ · ใบอนุญาต */
+  async roster(activeOnly: boolean) {
+    return this.db.query(
+      `select st.id, st.staff_code, st.employment_kind, st.is_teacher, st.license_no, st.license_expires,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name,
+              pe.birth_date, extract(year from age(pe.birth_date))::int as age_years,
+              (select a.position_th from staff_assignment a where a.staff_id = st.id and a.is_primary and a.effective_to is null limit 1) as position_th,
+              (select d.name_th from staff_assignment a join department d on d.id = a.department_id
+                where a.staff_id = st.id and a.is_primary and a.effective_to is null limit 1) as department_th,
+              (select min(a.effective_from) from staff_assignment a where a.staff_id = st.id) as started_on,
+              (select r.title_th from staff_record r where r.staff_id = st.id and r.kind = 'education'
+                order by r.ended_on desc nulls last limit 1) as education_th
+         from staff st join person pe on pe.id = st.person_id
+        where ($1::boolean is false or st.active)
+        order by st.staff_code`,
+      [activeOnly],
+    );
+  }
+
+  /** ชั่วโมงอบรมรายคนในช่วงวันที่ — SISA "ฝึกอบรม › ชั่วโมงการฝึกอบรม / ปีการศึกษา" */
+  async trainingHours(from?: string, to?: string) {
+    return this.db.query(
+      `select st.id, st.staff_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name,
+              count(r.id) as courses, coalesce(sum(r.hours), 0) as hours
+         from staff st
+         join person pe on pe.id = st.person_id
+         left join staff_record r on r.staff_id = st.id and r.kind = 'training'
+              and ($1::date is null or r.started_on >= $1::date)
+              and ($2::date is null or r.started_on <= $2::date)
+        where st.active
+        group by st.id, st.staff_code, pe.prefix_th, pe.first_name_th, pe.last_name_th
+        order by hours desc, st.staff_code`,
+      [from || null, to || null],
+    );
+  }
+
+  /** วันลาที่อนุมัติแล้วรายคน × ประเภท — SISA "ข้อมูลสถิติ › การลา" */
+  async leaveTotals(from?: string, to?: string) {
+    return this.db.query(
+      `select st.id, st.staff_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name,
+              l.kind, sum(l.days) as days, count(*) as times
+         from staff_leave l
+         join staff st on st.id = l.staff_id
+         join person pe on pe.id = st.person_id
+        where l.status = 'approved'
+          and ($1::date is null or l.to_date >= $1::date)
+          and ($2::date is null or l.from_date <= $2::date)
+        group by st.id, st.staff_code, pe.prefix_th, pe.first_name_th, pe.last_name_th, l.kind
+        order by st.staff_code, l.kind`,
+      [from || null, to || null],
+    );
+  }
+
+  /** ผลงานและรางวัลของบุคลากร — SISA "ข้อมูลสถิติ › ข้อมูลผลงานและเกียรติประวัติ" */
+  async awards() {
+    return this.db.query(
+      `select r.id, r.title_th, r.organization_th, r.started_on, r.document_no, st.staff_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name
+         from staff_record r
+         join staff st on st.id = r.staff_id
+         join person pe on pe.id = st.person_id
+        where r.kind = 'award'
+        order by r.started_on desc nulls last
+        limit 1000`,
+    );
+  }
+}
+
+/**
+ * แยกคอนโทรลเลอร์จาก /hr เพื่อเปิดให้บทบาท hr (งานบุคคล) อ่านรายงานได้
+ * — /hr เดิมเปิดแค่ registrar/director/admin ส่วน 0095 ให้ hr อ่านระเบียน
+ * บุคลากรได้อยู่แล้ว (TEST 341) จึงไม่มีเหตุผลที่งานบุคคลจะดูรายงานของงาน
+ * ตัวเองไม่ได้ รายงานทุกตัวในนี้อ่านอย่างเดียว
+ */
+@Roles('registrar', 'hr', 'director', 'admin')
+@Controller('hr-reports')
+export class HrReportsController {
+  constructor(private readonly svc: HrReportsService) {}
+
+  @Get('dimensions')
+  dimensions() {
+    return Object.entries(STAFF_DIMENSIONS).map(([key, d]) => ({ key, label: d.label }));
+  }
+
+  @Get('breakdown')
+  breakdown(@Query('dimension') dimension: string, @Query('active') active = 'true') {
+    return this.svc.breakdown(dimension, active !== 'false');
+  }
+
+  @Get('roster')
+  roster(@Query('active') active = 'true') {
+    return this.svc.roster(active !== 'false');
+  }
+
+  @Get('training')
+  training(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.trainingHours(from, to);
+  }
+
+  @Get('leaves')
+  leaves(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.leaveTotals(from, to);
+  }
+
+  @Get('awards')
+  awards() {
+    return this.svc.awards();
+  }
+}
+
 @Module({
-  controllers: [HrController],
-  providers: [HrService],
+  controllers: [HrController, HrReportsController],
+  providers: [HrService, HrReportsService],
   exports: [HrService],
 })
 export class HrModule {}

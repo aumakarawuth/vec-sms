@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════
+# vecsms-api.service — API ของ vec-sms บนเครื่องเดียวกับ examkub
+#
+# ─── เรื่องสำคัญที่สุดของไฟล์นี้ ───
+# ระบบสอบต้องได้ทรัพยากรก่อนเสมอ ระบบสอบใช้งานเป็นช่วง แต่ช่วงนั้นคือ
+# ทั้งห้องสอบพร้อมกันในนาทีเดียว ถ้า vec-sms กำลังตรวจจบทั้งวิทยาลัยอยู่
+# ตอนนั้น นักเรียนที่กำลังทำข้อสอบคือคนที่รับผล
+#
+# จึงใช้ "น้ำหนัก" ไม่ใช่ "เพดานตายตัว" เป็นหลัก — CPUWeight/IOWeight
+# มีผลเฉพาะตอนแย่งกัน ตอนเครื่องว่าง vec-sms ใช้ได้เต็มที่ ตอนสอบจะถอยเอง
+# ส่วน MemoryMax เป็นเพดานจริงเพราะหน่วยความจำแย่งกันแบบนุ่มนวลไม่ได้ —
+# ถ้าหมดเครื่อง OOM killer อาจเลือกฆ่าโปรเซสของระบบสอบแทน
+# ═══════════════════════════════════════════════════════════════════
+
+[Unit]
+Description=vec-sms API
+After=network-online.target postgresql@18-vecsms.service
+Wants=network-online.target
+Requires=postgresql@18-vecsms.service
+
+[Service]
+Type=simple
+User=vecsms
+Group=vecsms
+WorkingDirectory=/opt/vecsms/app/api
+# ความลับอยู่ในไฟล์นี้ที่เดียว (chmod 600 เจ้าของ root) — ไม่อยู่ในรีโป
+EnvironmentFile=/etc/vecsms/vecsms.env
+ExecStart=/usr/bin/node dist/main.js
+Restart=on-failure
+RestartSec=5
+
+# ─── ถอยให้ระบบสอบ ───
+# ค่าเริ่มต้นของทุก service คือ 100 จึงได้ส่วนแบ่งราวหนึ่งในห้าเมื่อแย่งกับ examkub
+CPUWeight=20
+IOWeight=20
+Nice=5
+MemoryHigh=1200M
+MemoryMax=1500M
+
+# ─── กันความเสียหายลามถึง /opt/examkub ───
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/vecsms/run
+# ขีดนำหน้า = ถ้าไม่มีโฟลเดอร์นี้ก็ไม่ต้องล้ม (systemd จะไม่สตาร์ต unit ถ้าไม่มีขีด)
+InaccessiblePaths=-/opt/examkub
+
+[Install]
+WantedBy=multi-user.target

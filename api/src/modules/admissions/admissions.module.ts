@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  Header,
   Body,
   Controller,
   Get,
@@ -29,6 +31,7 @@ import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { hashNationalId } from '../../common/crypto/national-id';
 
 /**
  * งานรับสมัครนักศึกษาใหม่
@@ -39,7 +42,7 @@ import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
  *
  * ─── เลขบัตรประชาชนไม่ผ่านชั้นนี้แบบอ่านออก ───
  * ฐานข้อมูลเก็บเฉพาะค่าแฮช (หลักเดียวกับ person.national_id_hash ใน 0002)
- * ชั้นนี้จึงส่งเลขที่รับมาให้ `digest()` ในคำสั่ง SQL แล้วไม่เก็บไว้ที่ไหนอีก
+ * ชั้นนี้แฮชด้วยกุญแจ (hashNationalId) ก่อนส่งลงฐานข้อมูล แล้วไม่เก็บเลขไว้ที่ไหนอีก (0100)
  * ข้อจำกัดเดียวกับการนำเข้าข้อมูล — คอลัมน์ที่เข้ารหัสจริงรอเชื่อม KMS
  *
  * ─── ยังไม่เปิดให้ผู้สมัครกรอกเอง ───
@@ -97,6 +100,7 @@ class CreateApplicationDto {
   @IsOptional() @IsString() priorQualificationTh?: string;
   @IsOptional() @IsNumber() @Min(0) @Max(4) priorGpax?: number;
   @IsOptional() @IsString() referralSource?: string;
+  @IsOptional() @IsString() provinceTh?: string;
 
   @IsOptional() @IsString() fatherPrefixTh?: string;
   @IsOptional() @IsString() fatherFirstNameTh?: string;
@@ -197,6 +201,92 @@ export class AdmissionsService {
     );
   }
 
+  /**
+   * สถิติใบสมัครของรอบหนึ่งตามมิติ — SISA "รับสมัคร › ข้อมูลสถิติ" หกเมนู
+   * (ผู้ลงทะเบียน · เกรดเฉลี่ย · จังหวัด · ภูมิภาค · สถานศึกษา · การประชาสัมพันธ์)
+   * นับทุกใบที่ยื่นแล้ว ใบร่างไม่นับ — ร่างคือสิ่งที่เจ้าหน้าที่ยังกรอกไม่เสร็จ
+   */
+  async stats(roundId: string, dimension: string) {
+    const dim = ADMISSION_DIMENSIONS[dimension];
+    if (!dim) throw new BadRequestException('ไม่รู้จักมิติที่ขอ');
+    const rows = await this.db.query<{ value: string; applications: string; admitted: string }>(
+      `select ${dim.sql} as value, count(*) as applications,
+              count(*) filter (where a.status in ('passed', 'enrolled')) as admitted
+         from application a
+        where a.round_id = $1 and a.status <> 'draft'
+        group by 1 order by 2 desc, 1`,
+      [roundId],
+    );
+    let out = rows.map((r) => ({ value: r.value, applications: Number(r.applications), admitted: Number(r.admitted) }));
+    if (dimension === 'region') {
+      const m = new Map<string, { value: string; applications: number; admitted: number }>();
+      for (const r of out) {
+        const k = regionOf(r.value || null);
+        const cur = m.get(k) ?? { value: k, applications: 0, admitted: 0 };
+        cur.applications += r.applications; cur.admitted += r.admitted;
+        m.set(k, cur);
+      }
+      out = [...m.values()].sort((a, b) => b.applications - a.applications);
+    }
+    return { dimension, label: dim.label, rows: out };
+  }
+
+  /**
+   * ใบรายงานตัว — SISA "ใบรายงานตัว" ผู้ผ่านการคัดเลือกพิมพ์ไปกรอก/ลงชื่อ
+   * วันมอบตัว เป็นเอกสารทำงาน พิมพ์สดทุกครั้ง ไม่มีเลขที่ (หลักข้อ 4ก)
+   * ออกได้เฉพาะคนที่ผ่านการคัดเลือกแล้ว — ใบรายงานตัวของคนที่ยังไม่ผ่าน
+   * คือกระดาษที่ทำให้ผู้ปกครองเข้าใจผิดว่าลูกได้ที่เรียนแล้ว
+   */
+  async reportForm(id: string) {
+    const a = await this.db.queryOne<{
+      application_no: string; full_name: string; status: string; birth_date: string | null;
+      prior_school_th: string | null; phone: string | null; curriculum_th: string | null; round_name: string;
+      institution_name: string;
+    }>(
+      `select a.application_no, a.status::text, a.birth_date, a.prior_school_th, a.phone,
+              trim(coalesce(a.prefix_th, '') || a.first_name_th || ' ' || a.last_name_th) as full_name,
+              (select cur.name_th from curriculum_version cv join curriculum cur on cur.id = cv.curriculum_id
+                where cv.id = a.admitted_curriculum_version_id) as curriculum_th,
+              r.name_th as round_name,
+              (select name_th from institution where id = a.institution_id) as institution_name
+         from application a join admission_round r on r.id = a.round_id
+        where a.id = $1`,
+      [id],
+    );
+    if (!a) throw new NotFoundException('ไม่พบใบสมัคร');
+    if (!['passed', 'enrolled'].includes(a.status)) {
+      throw new BadRequestException('ออกใบรายงานตัวได้เฉพาะผู้ที่ผ่านการคัดเลือกแล้ว');
+    }
+    const line = (label: string, value: string | null) =>
+      `<tr><th>${esc(label)}</th><td>${value ? esc(value) : '<span class="blank"></span>'}</td></tr>`;
+    return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบรายงานตัว ${esc(a.application_no)}</title>
+<style>
+  @page { size: A4 portrait; margin: 18mm; }
+  body { font-family: 'TH Sarabun New', 'Sarabun', Tahoma, sans-serif; font-size: 15pt; color: #1c1c24; }
+  h1 { font-size: 20pt; text-align: center; margin: 0; } h2 { font-size: 15pt; text-align: center; font-weight: 400; margin: 2pt 0 14pt; }
+  table { width: 100%; border-collapse: collapse; } th { text-align: left; width: 34%; font-weight: 600; padding: 6pt 0; vertical-align: top; }
+  td { padding: 6pt 0; } .blank { display: inline-block; width: 100%; border-bottom: 0.6pt dotted #555; height: 12pt; }
+  .sign { margin-top: 36pt; display: grid; grid-template-columns: 1fr 1fr; gap: 24pt; text-align: center; }
+  .sign div { padding-top: 30pt; border-top: 0.6pt dotted #555; }
+  @media screen { body { background: #eef1f6; } .sheet { background: #fff; max-width: 210mm; margin: 24px auto; padding: 18mm; } }
+</style></head><body><div class="sheet">
+<h1>ใบรายงานตัวนักศึกษาใหม่</h1><h2>${esc(a.institution_name)} · ${esc(a.round_name)}</h2>
+<table>
+${line('เลขที่ใบสมัคร', a.application_no)}
+${line('ชื่อ - นามสกุล', a.full_name)}
+${line('วันเกิด', a.birth_date)}
+${line('หลักสูตรที่ได้รับคัดเลือก', a.curriculum_th)}
+${line('สถานศึกษาเดิม', a.prior_school_th)}
+${line('โทรศัพท์', a.phone)}
+${line('ชื่อผู้ปกครองที่มารายงานตัว', null)}
+${line('ความเกี่ยวข้องกับนักศึกษา', null)}
+${line('โทรศัพท์ผู้ปกครอง', null)}
+${line('วันที่รายงานตัว', null)}
+</table>
+<div class="sign"><div>ลงชื่อผู้ปกครอง</div><div>ลงชื่อเจ้าหน้าที่รับรายงานตัว</div></div>
+</div></body></html>`;
+  }
+
   async summary(roundId: string) {
     return this.db.query(
       `select curriculum_version_id, curriculum_th, shift,
@@ -213,6 +303,15 @@ export class AdmissionsService {
    * ซึ่งกินเลขที่ใบสมัครไปแล้วแต่ยื่นไม่ได้ (submit_application บังคับว่า
    * ต้องมีอันดับอย่างน้อยหนึ่ง)
    */
+  /**
+   * ค่าแฮชเลขบัตรแบบมีกุญแจ (HMAC) ตัวเดียวกับระเบียนนักศึกษา (0061) —
+   * เดิมส่งเลขเปล่าให้ digest(sha256) ในคำสั่ง SQL ซึ่งไล่ย้อนกลับได้ในไม่กี่นาที
+   * และแปลว่าเลขจริงเดินทางไปถึงฐานข้อมูล (ไปโผล่ใน log ของคำสั่งที่ช้าได้) (0100)
+   */
+  private hashOf(id?: string): Buffer | null {
+    return id ? hashNationalId(id, process.env.IP_HASH_SECRET ?? 'vec-sms') : null;
+  }
+
   async createApplication(dto: CreateApplicationDto) {
     return this.db.tx(async (c) => {
       const no = (
@@ -231,29 +330,31 @@ export class AdmissionsService {
               father_prefix_th, father_first_name_th, father_last_name_th,
               father_national_id_hash, father_occupation_th, father_income_monthly, father_phone,
               mother_prefix_th, mother_first_name_th, mother_last_name_th,
-              mother_national_id_hash, mother_occupation_th, mother_income_monthly, mother_phone)
+              mother_national_id_hash, mother_occupation_th, mother_income_monthly, mother_phone,
+              province_th, national_id_hash_v)
            values (current_institution_id(), $1, $2, $3, $4, $5,
-                   case when $6::text is not null then digest($6::text, 'sha256') end,
+                   $6::bytea,
                    $7, coalesce($8, 'undisclosed')::gender_kind,
                    $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18,
-                   case when $19::text is not null then digest($19::text, 'sha256') end,
+                   $19::bytea,
                    $20, $21, $22,
                    $23, $24, $25,
-                   case when $26::text is not null then digest($26::text, 'sha256') end,
-                   $27, $28, $29)
+                   $26::bytea,
+                   $27, $28, $29, nullif(btrim($30), ''), 2)
            returning id, application_no`,
           [dto.roundId, no, dto.prefixTh ?? null, dto.firstNameTh, dto.lastNameTh,
-           dto.nationalId ?? null, dto.birthDate ?? null, dto.gender ?? null,
+           this.hashOf(dto.nationalId), dto.birthDate ?? null, dto.gender ?? null,
            dto.phone ?? null, dto.email ?? null, dto.addressTh ?? null,
            dto.priorSchoolTh ?? null, dto.priorQualificationTh ?? null,
            dto.priorGpax ?? null, dto.referralSource ?? null,
            dto.fatherPrefixTh ?? null, dto.fatherFirstNameTh ?? null, dto.fatherLastNameTh ?? null,
-           dto.fatherNationalId ?? null, dto.fatherOccupationTh ?? null,
+           this.hashOf(dto.fatherNationalId), dto.fatherOccupationTh ?? null,
            dto.fatherIncomeMonthly ?? null, dto.fatherPhone ?? null,
            dto.motherPrefixTh ?? null, dto.motherFirstNameTh ?? null, dto.motherLastNameTh ?? null,
-           dto.motherNationalId ?? null, dto.motherOccupationTh ?? null,
-           dto.motherIncomeMonthly ?? null, dto.motherPhone ?? null],
+           this.hashOf(dto.motherNationalId), dto.motherOccupationTh ?? null,
+           dto.motherIncomeMonthly ?? null, dto.motherPhone ?? null,
+           dto.provinceTh ?? null],
         )
       ).rows[0];
 
@@ -370,6 +471,53 @@ export class AdmissionsService {
  * ข้อมูลผู้สมัครมีเลขบัตรประชาชนและข้อมูลผู้เยาว์ ครูผู้สอนไม่มีหน้าที่
  * เกี่ยวข้องกับการรับสมัคร จึงไม่อยู่ในรายชื่อ — RLS ในฐานข้อมูลกันซ้ำอีกชั้น
  */
+
+/**
+ * จังหวัด → ภาค (แบ่งหกภาคตามราชบัณฑิตยสถาน) — SISA "ข้อมูลสถิติ › ภูมิภาค"
+ * อยู่ที่ชั้นนี้ไม่ใช่ฐานข้อมูล เพราะเป็นข้อเท็จจริงทางภูมิศาสตร์ที่เหมือนกันทุก
+ * วิทยาลัย ไม่ใช่กฎธุรกิจ จังหวัดที่สะกดไม่ตรงตกไปอยู่ "ไม่ระบุ" ไม่ถูกเดา
+ */
+const REGION: Record<string, string[]> = {
+  'ภาคเหนือ': ['เชียงราย', 'เชียงใหม่', 'น่าน', 'พะเยา', 'แพร่', 'แม่ฮ่องสอน', 'ลำปาง', 'ลำพูน', 'อุตรดิตถ์'],
+  'ภาคตะวันออกเฉียงเหนือ': ['กาฬสินธุ์', 'ขอนแก่น', 'ชัยภูมิ', 'นครพนม', 'นครราชสีมา', 'บึงกาฬ', 'บุรีรัมย์', 'มหาสารคาม',
+    'มุกดาหาร', 'ยโสธร', 'ร้อยเอ็ด', 'เลย', 'ศรีสะเกษ', 'สกลนคร', 'สุรินทร์', 'หนองคาย', 'หนองบัวลำภู', 'อำนาจเจริญ',
+    'อุดรธานี', 'อุบลราชธานี'],
+  'ภาคกลาง': ['กรุงเทพมหานคร', 'กำแพงเพชร', 'ชัยนาท', 'นครนายก', 'นครปฐม', 'นครสวรรค์', 'นนทบุรี', 'ปทุมธานี',
+    'พระนครศรีอยุธยา', 'พิจิตร', 'พิษณุโลก', 'เพชรบูรณ์', 'ลพบุรี', 'สมุทรปราการ', 'สมุทรสงคราม', 'สมุทรสาคร',
+    'สระบุรี', 'สิงห์บุรี', 'สุโขทัย', 'สุพรรณบุรี', 'อ่างทอง', 'อุทัยธานี'],
+  'ภาคตะวันออก': ['จันทบุรี', 'ฉะเชิงเทรา', 'ชลบุรี', 'ตราด', 'ปราจีนบุรี', 'ระยอง', 'สระแก้ว'],
+  'ภาคตะวันตก': ['กาญจนบุรี', 'ตาก', 'ประจวบคีรีขันธ์', 'เพชรบุรี', 'ราชบุรี'],
+  'ภาคใต้': ['กระบี่', 'ชุมพร', 'ตรัง', 'นครศรีธรรมราช', 'นราธิวาส', 'ปัตตานี', 'พังงา', 'พัทลุง', 'ภูเก็ต', 'ยะลา',
+    'ระนอง', 'สงขลา', 'สตูล', 'สุราษฎร์ธานี'],
+};
+function regionOf(province: string | null): string {
+  if (!province) return 'ไม่ระบุ';
+  const p = province.replace(/^จ(ังหวัด|\.)\s*/, '').trim();
+  return Object.entries(REGION).find(([, list]) => list.includes(p))?.[0] ?? 'ไม่ระบุ';
+}
+
+/** มิติของสถิติรับสมัคร — ชื่อมิติเลือกจากรายการตายตัว ไม่ถูกต่อเข้า SQL ตรง ๆ */
+const ADMISSION_DIMENSIONS: Record<string, { label: string; sql: string }> = {
+  program:  { label: 'หลักสูตรอันดับ 1', sql: `coalesce((select cur.name_th from application_choice ch
+               join curriculum_version cv on cv.id = ch.curriculum_version_id
+               join curriculum cur on cur.id = cv.curriculum_id
+              where ch.application_id = a.id order by ch.preference limit 1), 'ไม่ระบุ')` },
+  status:   { label: 'สถานะใบสมัคร', sql: `a.status::text` },
+  gender:   { label: 'เพศ', sql: `case a.gender when 'male' then 'ชาย' when 'female' then 'หญิง' else 'ไม่ระบุ' end` },
+  gpa:      { label: 'เกรดเฉลี่ยเดิม', sql: `case when a.prior_gpax is null then 'ไม่ระบุ'
+               when a.prior_gpax < 2 then '1. ต่ำกว่า 2.00' when a.prior_gpax < 2.5 then '2. 2.00–2.49'
+               when a.prior_gpax < 3 then '3. 2.50–2.99' when a.prior_gpax < 3.5 then '4. 3.00–3.49'
+               else '5. 3.50–4.00' end` },
+  school:   { label: 'สถานศึกษาเดิม', sql: `coalesce(nullif(btrim(a.prior_school_th), ''), 'ไม่ระบุ')` },
+  province: { label: 'จังหวัด', sql: `coalesce(nullif(btrim(a.province_th), ''), 'ไม่ระบุ')` },
+  region:   { label: 'ภูมิภาค', sql: `coalesce(nullif(btrim(a.province_th), ''), '')` },
+  referral: { label: 'รู้จักวิทยาลัยจาก', sql: `coalesce(nullif(btrim(a.referral_source), ''), 'ไม่ระบุ')` },
+};
+
+function esc(v: unknown): string {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 @Roles('registrar', 'academic', 'director', 'admin')
 @Controller('admissions')
 class AdmissionsController {
@@ -401,6 +549,17 @@ class AdmissionsController {
   @Get('rounds/:id/summary')
   summary(@Param('id', ParseUuidPipe) id: string) {
     return this.svc.summary(id);
+  }
+
+  @Get('rounds/:id/stats')
+  stats(@Param('id', ParseUuidPipe) id: string, @Query('dimension') dimension = 'program') {
+    return this.svc.stats(id, dimension);
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('applications/:id/report-form/print')
+  reportForm(@Param('id', ParseUuidPipe) id: string) {
+    return this.svc.reportForm(id);
   }
 
   @Get('applications')

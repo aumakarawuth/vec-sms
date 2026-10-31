@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 /**
  * โครงหน้าจอและเส้นทาง
  *
@@ -16,7 +17,7 @@ import {
 import { AdmissionsScreen } from './screens/admissions';
 import { AttendanceScreen } from './screens/attendance';
 import { BehaviorScreen } from './screens/behavior';
-import { BehaviorCenterScreen } from './screens/behavior-center';
+import { BehaviorCenterScreen, SUBNAV as SUB_BEHAVIOR } from './screens/behavior-center';
 import { ChangeRequestsScreen } from './screens/change-requests';
 import { ClubsScreen } from './screens/clubs';
 import { CurriculumScreen } from './screens/curriculum';
@@ -25,8 +26,8 @@ import { DocumentsScreen } from './screens/documents';
 import { EducationLevelsScreen } from './screens/education-levels';
 import { DualScreen } from './screens/dual';
 import { ExamScheduleScreen } from './screens/exam-schedule';
-import { FinanceScreen } from './screens/finance';
-import { FinanceCenterScreen } from './screens/finance-center';
+import { FINANCE_SECTIONS, FinanceScreen, type FinanceSection } from './screens/finance';
+import { FinanceCenterScreen, SUBNAV as SUB_FINANCE } from './screens/finance-center';
 import { GradebookScreen } from './screens/gradebook';
 import { GradeLevelsScreen } from './screens/grade-levels';
 import { GraduationScreen } from './screens/graduation';
@@ -38,26 +39,32 @@ import { LettersScreen } from './screens/letters';
 import { LoginScreen } from './screens/login';
 import { MyScheduleScreen } from './screens/my-schedule';
 import { OnetScreen } from './screens/onet';
-import { PersonnelCenterScreen } from './screens/personnel-center';
+import { PersonnelCenterScreen, SUBNAV as SUB_PERSONNEL } from './screens/personnel-center';
 import { PersonnelSearchScreen } from './screens/personnel-search';
 import { PeriodsScreen } from './screens/periods';
 import { RegistrationScreen } from './screens/registration';
-import { RegistryCenterScreen } from './screens/registry-center';
+import { RegistryCenterScreen, SUBNAV as SUB_REGISTRY } from './screens/registry-center';
 import { RiskScreen } from './screens/risk';
 import { StudentLeaveScreen } from './screens/student-leave';
-import { SettingsCenterScreen } from './screens/settings-center';
+import { SettingsCenterScreen, SUBNAV as SUB_SETTINGS } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
+import { StudentStatisticsScreen } from './screens/student-statistics';
+import { MyAccountScreen } from './screens/my-account';
+import { GradeStatisticsScreen } from './screens/grade-statistics';
+import { SETTINGS_TOOL_SECTIONS, SettingsToolsScreen, type SettingsToolSection } from './screens/settings-tools';
+import { HR_REPORT_SECTIONS, HrReportsScreen, type HrReportSection } from './screens/hr-reports';
+import { STUDENT_TOOL_SECTIONS, StudentToolsScreen, type StudentToolSection } from './screens/student-tools';
 import { GradeReportsScreen } from './screens/grade-reports';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { AdvisorsScreen } from './screens/advisors';
-import { StudentCenterScreen } from './screens/student-center';
+import { StudentCenterScreen, SUBNAV as SUB_STUDENT } from './screens/student-center';
 import { SubjectDataScreen } from './screens/subject-data';
 import { SubjectGroupsScreen } from './screens/subject-groups';
 import { CompetenciesScreen } from './screens/competencies';
 import { AnnouncementsScreen } from './screens/announcements';
 import { TermCategoriesScreen } from './screens/term-categories';
 import { TimetableScreen } from './screens/timetable';
-import { TimetableCenterScreen } from './screens/timetable-center';
+import { TimetableCenterScreen, SUBNAV as SUB_TIMETABLE } from './screens/timetable-center';
 import { WorkloadScreen } from './screens/workload';
 
 interface NavItem {
@@ -77,12 +84,54 @@ const NAV_ICON: Record<string, string> = {
   '/finance-center': '฿',
 };
 
+/**
+ * เมนูย่อยของแต่ละศูนย์ — แสดงใต้ศูนย์ที่กำลังทำงานอยู่ในแถบซ้าย แบบเดียวกับ
+ * SISA ที่เมนูของหมวดค้างอยู่ด้านข้างตลอด ทุกฟังก์ชันของหมวดจึงห่างกันแค่คลิกเดียว
+ * และไม่ต้องพึ่งปุ่ม "← กลับ" ซึ่งเดิมแต่ละหน้าเขียนเองคนละแบบ และบางหน้า
+ * พากลับไปศูนย์ที่ผู้ใช้ไม่ได้มาจาก (เช่นเข้า /finance จากศูนย์นักศึกษา
+ * แต่ปุ่มกลับพาไปศูนย์อื่น)
+ */
+const SUBNAV: Record<string, { path: string; label: string; group?: string; roles?: Role[] }[]> = {
+  '/registry': SUB_REGISTRY,
+  '/student-center': SUB_STUDENT,
+  '/personnel-center': SUB_PERSONNEL,
+  '/timetable-center': SUB_TIMETABLE,
+  '/settings-center': SUB_SETTINGS,
+  '/behavior-center': SUB_BEHAVIOR,
+  '/finance-center': SUB_FINANCE,
+};
+
+const LAST_CENTER = 'vecsms.lastCenter';
+
+/** หน้าเดียวกันอยู่ได้หลายศูนย์ (เช่น /finance) — ยึดศูนย์ที่ผู้ใช้เพิ่งเข้ามาก่อน */
+function activeCenter(path: string, centers: string[]): string | undefined {
+  const own = (c: string) => path === c || path.startsWith(c + '/') ||
+    SUBNAV[c]?.some((x) => path === x.path || path.startsWith(x.path + '/'));
+  if (centers.includes(path)) {
+    try { sessionStorage.setItem(LAST_CENTER, path); } catch { /* เบราว์เซอร์ปิด storage — ใช้ตัวแรกที่เจอแทน */ }
+    return path;
+  }
+  let last: string | null = null;
+  try { last = sessionStorage.getItem(LAST_CENTER); } catch { /* ข้าม */ }
+  if (last && centers.includes(last) && own(last)) return last;
+  return centers.find(own);
+}
+
+function subLabel(center: string, path: string): string | undefined {
+  const items = SUBNAV[center] ?? [];
+  return [...items].sort((a, b) => b.path.length - a.path.length)
+    .find((x) => path === x.path || path.startsWith(x.path + '/'))?.label;
+}
+
 interface NavGroup {
   title: string;
   items: NavItem[];
 }
 
-const ALL: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin', 'teacher'];
+const ALL: Role[] = [
+  'registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin',
+  'secretary', 'hr', 'teacher',
+];
 
 /**
  * เมนูซ้ายเหลือแค่ทางเข้า "ศูนย์งาน" ทั้งห้า + การเงิน — ทุกหน้าจอจริงยังอยู่
@@ -98,7 +147,10 @@ const NAV: NavGroup[] = [
     items: [
       { path: '/registry', label: 'ศูนย์งานทะเบียน', roles: ALL },
       { path: '/student-center', label: 'ศูนย์นักศึกษา', roles: ['registrar', 'academic', 'student_affairs', 'director', 'admin'] },
-      { path: '/personnel-center', label: 'ศูนย์งานบุคลากร', roles: ['registrar', 'director', 'admin'] },
+      // ALL เพราะหน้านี้แบ่งเป็นการ์ดตามฝ่ายเอง (ครู/วิชาการ/ทะเบียน/การเงิน/
+      // บุคคล/เลขา/กิจการนักศึกษา) — ใครมีบทบาทไหนเห็นการ์ดฝ่ายนั้น ไม่ใช่
+      // ทั้งหน้าเปิด-ปิดตามบทบาทเดียว (ดูเหตุผลเต็มในตัวหน้าจอเอง)
+      { path: '/personnel-center', label: 'ศูนย์บุคลากร', roles: ALL },
       { path: '/timetable-center', label: 'ศูนย์งานตารางเรียน', roles: ['teacher', 'registrar', 'academic', 'director', 'admin'] },
       { path: '/settings-center', label: 'ศูนย์การตั้งค่า', roles: ['registrar', 'academic', 'director', 'admin'] },
       { path: '/behavior-center', label: 'ศูนย์งานพฤติกรรม', roles: ['teacher', 'student_affairs', 'academic', 'director', 'admin'] },
@@ -119,32 +171,53 @@ export function App() {
   if (s.stage !== 'ready') return <LoginScreen />;
 
   const role = s.role;
+  const roles = s.roles;
+  // .some แทน .includes(role) เดี่ยว — คนที่มีหลายบทบาทซ้อนกัน (เช่น
+  // วิชาการที่สอนด้วย) ต้องเห็นเมนูของทุกบทบาทที่ตัวเองมีพร้อมกัน ไม่ใช่
+  // แค่บทบาทหลักที่ระบบเลือกให้
   const visible = NAV.map((g) => ({
     ...g,
-    items: g.items.filter((i) => !role || i.roles.includes(role)),
+    items: g.items.filter((i) => roles.length === 0 || i.roles.some((r) => roles.includes(r))),
   })).filter((g) => g.items.length > 0);
+
+  const center = activeCenter(route.path, visible.flatMap((g) => g.items.map((i) => i.path)));
+  const centerLabel = visible.flatMap((g) => g.items).find((i) => i.path === center)?.label;
+  const pageLabel = center && route.path !== center ? subLabel(center, route.path) : undefined;
 
   return (
     <ScopeProvider>
       <div className="shell">
         <nav className="sidebar">
           <h1><span className="brand-mark">✦</span><span>VEC SCHOOL</span></h1>
-          <div className="who">
+          {/* กดชื่อเพื่อเปิดข้อมูลส่วนตัว — เปลี่ยนรหัสผ่านเองได้โดยไม่ต้องรอถูกบังคับ */}
+          <a className="who" href={href('/my-account')} title="ข้อมูลส่วนตัว · เปลี่ยนรหัสผ่าน">
             <span className="avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
             <span><strong>{s.username}</strong><small>{role ? ROLE_LABEL[role] : ''}</small></span>
-          </div>
+          </a>
 
           {visible.map((g) => (
             <div className="nav-group" key={g.title}>
               <span>{g.title}</span>
               {g.items.map((i) => (
-                <a
-                  key={i.path}
-                  href={href(i.path)}
-                  className={route.path.startsWith(i.path) ? 'active' : ''}
-                >
-                  <span className="nav-icon">{NAV_ICON[i.path] ?? '•'}</span>{i.label}
-                </a>
+                <div key={i.path}>
+                  <a href={href(i.path)} className={center === i.path ? 'active' : ''}>
+                    <span className="nav-icon">{NAV_ICON[i.path] ?? '•'}</span>{i.label}
+                  </a>
+                  {center === i.path && (
+                    <div className="subnav">
+                      {(SUBNAV[i.path] ?? [])
+                        .filter((x) => !Object.prototype.hasOwnProperty.call(SUBNAV, x.path))
+                        .filter((x) => !x.roles || roles.length === 0 || x.roles.some((r) => roles.includes(r)))
+                        .filter((x, n, all) => all.findIndex((y) => y.path === x.path) === n)
+                        .map((x, n, all) => (
+                          <Fragment key={x.path}>
+                          {x.group && x.group !== all[n - 1]?.group && <span className="subnav-group">{x.group}</span>}
+                          <a href={href(x.path)} className={route.path === x.path || route.path.startsWith(x.path + '/') ? 'active' : ''}>{x.label}</a>
+                          </Fragment>
+                        ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           ))}
@@ -159,9 +232,17 @@ export function App() {
             <ScopeSelect />
             <label className="global-search"><span>⌕</span><input aria-label="ค้นหาในระบบ" placeholder="ค้นหาในระบบ" /></label>
             <button className="icon-button" aria-label="การแจ้งเตือน">♢</button>
-            <span className="top-avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
+            <a className="top-avatar" href={href('/my-account')} title="ข้อมูลส่วนตัว">{(s.username ?? '?').slice(0, 1).toUpperCase()}</a>
           </header>
-          <div className="page-content"><Routes /></div>
+          <div className="page-content">
+            {center && route.path !== center && (
+              <nav className="crumbs" aria-label="ตำแหน่งปัจจุบัน">
+                <a href={href(center)}>{centerLabel}</a>
+                {pageLabel && <><span>›</span><b>{pageLabel}</b></>}
+              </nav>
+            )}
+            <Routes />
+          </div>
         </main>
       </div>
     </ScopeProvider>
@@ -207,6 +288,7 @@ function Routes() {
     return <StudentsScreen />;
   }
 
+  if (head === 'my-account') return <MyAccountScreen />;
   if (head === 'registry') return <RegistryCenterScreen />;
   if (head === 'subject-data') return <SubjectDataScreen />;
   if (head === 'subject-groups') return <SubjectGroupsScreen />;
@@ -252,7 +334,10 @@ function Routes() {
     if (second === 'remedial') return <RemedialScreen />;
     return <AcademicYearScreen />;
   }
-  if (head === 'finance') return <FinanceScreen />;
+  if (head === 'finance') {
+    const section = second && second in FINANCE_SECTIONS ? (second as FinanceSection) : 'payments';
+    return <FinanceScreen key={section} section={section} />;
+  }
   if (head === 'finance-center') return <FinanceCenterScreen />;
   if (head === 'leaves') return <StudentLeaveScreen />;
   if (head === 'letters') return <LettersScreen />;
@@ -261,7 +346,20 @@ function Routes() {
   if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'workload') return <WorkloadScreen />;
   if (head === 'advisors') return <AdvisorsScreen />;
-  if (head === 'statistics') return <StatisticsScreen />;
+  if (head === 'settings-tools' && second && second in SETTINGS_TOOL_SECTIONS) {
+    return <SettingsToolsScreen key={second} section={second as SettingsToolSection} />;
+  }
+  if (head === 'hr-reports' && second && second in HR_REPORT_SECTIONS) {
+    return <HrReportsScreen key={second} section={second as HrReportSection} />;
+  }
+  if (head === 'student-tools' && second && second in STUDENT_TOOL_SECTIONS) {
+    return <StudentToolsScreen key={second} section={second as StudentToolSection} />;
+  }
+  if (head === 'statistics') {
+    if (second === 'students') return <StudentStatisticsScreen />;
+    if (second === 'grades') return <GradeStatisticsScreen />;
+    return <StatisticsScreen />;
+  }
   if (head === 'grade-reports') return <GradeReportsScreen />;
   if (head === 'clubs') return <ClubsScreen />;
   if (head === 'onet') return <OnetScreen />;

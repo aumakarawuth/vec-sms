@@ -35,6 +35,16 @@ const FUNDING_KINDS = [
   'scholarship', 'sibling', 'staff_child', 'gov_subsidy', 'student_loan', 'employer', 'other',
 ] as const;
 
+class ReceiptSearchDto {
+  @IsOptional() @IsISO8601() from?: string;
+  @IsOptional() @IsISO8601() to?: string;
+  @IsOptional() @IsString() @MaxLength(40) docFrom?: string;
+  @IsOptional() @IsString() @MaxLength(40) docTo?: string;
+  @IsOptional() @IsIn(METHODS as unknown as string[]) method?: string;
+  @IsOptional() @IsIn(['active', 'void']) status?: string;
+  @IsOptional() @IsString() @MaxLength(100) q?: string;
+}
+
 class LateFeePolicyDto {
   @IsInt() @Min(2500) @Max(2700) effectiveFromYearBe: number;
   @IsOptional() @IsInt() @Min(0) @Max(365) graceDays?: number;
@@ -372,6 +382,165 @@ export class FinanceService {
     return renderDocument(doc);
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  // รายงานแบบ SISA (docs/sisa-function-audit-2026-10-31.md หมวดการเงิน)
+  // อ่านอย่างเดียวทั้งหมด — ตัวเลขใบเสร็จอ่านจาก payload ที่ตรึงไว้ ไม่ใช่
+  // join กลับไปที่ payment ด้วยเหตุผลเดียวกับ receipts() ด้านบน
+  // ─────────────────────────────────────────────────────────────────
+
+  /** ค้นใบเสร็จทั้งวิทยาลัย — SISA "ตรวจสอบสถานะใบเสร็จ" กับ "พิมพ์ใบเสร็จย้อนหลัง" */
+  async searchReceipts(f: ReceiptSearchDto) {
+    return this.db.query(
+      `select d.id, d.doc_no, d.issued_on, d.voided_at, d.void_reason,
+              (d.payload -> 'payment' ->> 'amount')::numeric as amount,
+              d.payload -> 'payment' ->> 'method'            as method,
+              d.payload -> 'student' ->> 'student_code'      as student_code,
+              d.payload -> 'student' ->> 'full_name'         as student_name,
+              d.payload ->> 'received_by'                    as received_by
+         from issued_document d
+        where d.kind = 'receipt'
+          and ($1::date is null or d.issued_on >= $1::date)
+          and ($2::date is null or d.issued_on <= $2::date)
+          and ($3::text is null or d.doc_no >= $3)
+          and ($4::text is null or d.doc_no <= $4)
+          and ($5::text is null or d.payload -> 'payment' ->> 'method' = $5)
+          and ($6::text is null
+               or ($6 = 'void' and d.voided_at is not null)
+               or ($6 = 'active' and d.voided_at is null))
+          and ($7::text is null
+               or d.payload -> 'student' ->> 'student_code' ilike '%' || $7 || '%'
+               or d.payload -> 'student' ->> 'full_name' ilike '%' || $7 || '%')
+        order by d.issued_on desc, d.doc_no desc
+        limit 500`,
+      [f.from ?? null, f.to ?? null, f.docFrom ?? null, f.docTo ?? null,
+       f.method ?? null, f.status ?? null, f.q?.trim() || null],
+    );
+  }
+
+  /**
+   * ปิดยอดตามผู้รับเงิน — SISA "รายงานรายรับ › ตามผู้รับชำระเงิน"
+   *
+   * ─── ทำไมนับจากใบเสร็จ ไม่ใช่ v_revenue_daily ───
+   * คำถามของแคชเชียร์ตอนเย็นคือ "เงินในลิ้นชักต้องมีเท่าไร" ซึ่งคือใบเสร็จ
+   * ที่ตัวเองออกทุกใบ ส่วน v_revenue_daily นับเฉพาะเงินที่กระทบยอดแล้ว
+   * ใบที่ยกเลิกแยกนับไว้ ไม่ใช่ตัดทิ้งเงียบ ๆ — ยอดยกเลิกคือสิ่งที่ผู้ตรวจถามก่อนเสมอ
+   */
+  async cashierSummary(from?: string, to?: string) {
+    const rows = await this.db.query<{
+      received_by: string | null; method: string; receipts: string; amount: string;
+      voided: string; voided_amount: string;
+    }>(
+      `select d.payload ->> 'received_by'         as received_by,
+              d.payload -> 'payment' ->> 'method' as method,
+              count(*) filter (where d.voided_at is null) as receipts,
+              coalesce(sum((d.payload -> 'payment' ->> 'amount')::numeric)
+                       filter (where d.voided_at is null), 0) as amount,
+              count(*) filter (where d.voided_at is not null) as voided,
+              coalesce(sum((d.payload -> 'payment' ->> 'amount')::numeric)
+                       filter (where d.voided_at is not null), 0) as voided_amount
+         from issued_document d
+        where d.kind = 'receipt'
+          and ($1::date is null or d.issued_on >= $1::date)
+          and ($2::date is null or d.issued_on <= $2::date)
+        group by 1, 2
+        order by 1, 2`,
+      [from || null, to || null],
+    );
+    return rows.map((r) => ({
+      receivedBy: r.received_by,
+      method: r.method,
+      receipts: Number(r.receipts),
+      amount: Number(r.amount),
+      voided: Number(r.voided),
+      voidedAmount: Number(r.voided_amount),
+    }));
+  }
+
+  /**
+   * สรุปการชำระแยกห้อง — SISA "สรุปการชำระเงิน › ตามห้องเรียน" และ
+   * "ค้างชำระ › ตามห้องเรียน" (ห้องคือ group_code ของปีการศึกษานั้น)
+   * นักศึกษาที่ยังไม่ถูกจัดห้องเป็นแถวหนึ่งเสมอ หลักเดียวกับหน้าลงทะเบียน
+   * — กรองทิ้งแล้วยอดรวมของทุกห้องจะไม่เท่ากับยอดของทั้งวิทยาลัย
+   */
+  async roomSummary(academicYearId: string, termId?: string) {
+    const rows = await this.db.query<{
+      study_year: number | null; group_code: string | null; students: string;
+      billed: string; paid: string; outstanding: string; owing: string;
+    }>(
+      `with inv as (
+         select i.student_id, sum(i.total) as billed, sum(i.paid_total) as paid
+           from invoice i
+           join term t on t.id = i.term_id
+          where t.academic_year_id = $1 and ($2::uuid is null or i.term_id = $2)
+            and i.status <> 'void'
+          group by i.student_id)
+       select p.study_year, p.group_code,
+              count(*)                                      as students,
+              coalesce(sum(inv.billed), 0)                  as billed,
+              coalesce(sum(inv.paid), 0)                    as paid,
+              coalesce(sum(inv.billed - inv.paid), 0)       as outstanding,
+              count(*) filter (where inv.billed > inv.paid) as owing
+         from inv
+         left join student_class_placement p
+           on p.student_id = inv.student_id and p.academic_year_id = $1
+        group by p.study_year, p.group_code
+        order by p.study_year nulls first, p.group_code nulls first`,
+      [academicYearId, termId ?? null],
+    );
+    return rows.map((r) => ({
+      studyYear: r.study_year,
+      groupCode: r.group_code,
+      students: Number(r.students),
+      billed: Number(r.billed),
+      paid: Number(r.paid),
+      outstanding: Number(r.outstanding),
+      owing: Number(r.owing),
+    }));
+  }
+
+  /** รายชื่อค้างชำระของห้องหนึ่ง — คลิกลงจากแถวของ roomSummary() */
+  async roomArrears(academicYearId: string, groupCode: string | null, termId?: string) {
+    return this.db.query(
+      `select s.id as student_id, s.student_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name,
+              sum(i.total) as billed, sum(i.paid_total) as paid,
+              sum(i.total - i.paid_total) as outstanding
+         from invoice i
+         join term t    on t.id = i.term_id
+         join student s on s.id = i.student_id
+         join person pe on pe.id = s.person_id
+         left join student_class_placement p
+           on p.student_id = s.id and p.academic_year_id = $1
+        where t.academic_year_id = $1 and ($3::uuid is null or i.term_id = $3)
+          and i.status <> 'void'
+          and p.group_code is not distinct from $2
+        group by s.id, s.student_code, pe.prefix_th, pe.first_name_th, pe.last_name_th
+       having sum(i.total - i.paid_total) > 0
+        order by s.student_code`,
+      [academicYearId, groupCode, termId ?? null],
+    );
+  }
+
+  /** นักศึกษาที่ได้รับทุน/ส่วนลด — SISA "รายงานนักศึกษาที่ได้รับทุน" */
+  async fundingReport(academicYearId: string) {
+    return this.db.query(
+      `select sf.id, s.student_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name,
+              fs.kind, fs.name_th as source_name, sf.percent_off, sf.amount,
+              fi.name_th as fee_item_name, sf.term_id, sf.document_no
+         from student_funding sf
+         join funding_source fs on fs.id = sf.funding_source_id
+         join student s         on s.id = sf.student_id
+         join person pe         on pe.id = s.person_id
+         left join fee_item fi  on fi.id = sf.fee_item_id
+        where sf.academic_year_id = $1
+        order by fs.name_th, s.student_code`,
+      [academicYearId],
+    );
+  }
+
   async aging() {
     return this.db.query(
       `select bucket, students, amount from v_ar_aging
@@ -680,6 +849,44 @@ class FinanceController {
   @Post('holds/refresh')
   holds() {
     return this.svc.refreshHolds();
+  }
+
+  @Roles('finance', 'director', 'admin')
+  @Get('receipts/search')
+  searchReceipts(@Query() f: ReceiptSearchDto) {
+    return this.svc.searchReceipts(f);
+  }
+
+  @Roles('finance', 'director', 'admin')
+  @Get('reports/cashier')
+  cashierSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.cashierSummary(from, to);
+  }
+
+  @Roles('finance', 'registrar', 'director', 'admin')
+  @Get('reports/rooms')
+  roomSummary(
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('termId') termId?: string,
+  ) {
+    return this.svc.roomSummary(academicYearId, termId || undefined);
+  }
+
+  /** groupCode ว่าง = กอง "ยังไม่จัดห้อง" */
+  @Roles('finance', 'registrar', 'director', 'admin')
+  @Get('reports/rooms/arrears')
+  roomArrears(
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('groupCode') groupCode?: string,
+    @Query('termId') termId?: string,
+  ) {
+    return this.svc.roomArrears(academicYearId, groupCode || null, termId || undefined);
+  }
+
+  @Roles('finance', 'registrar', 'director', 'admin')
+  @Get('reports/funding')
+  fundingReport(@Query('academicYearId', ParseUuidPipe) academicYearId: string) {
+    return this.svc.fundingReport(academicYearId);
   }
 
   @Roles('finance', 'registrar', 'director', 'admin')

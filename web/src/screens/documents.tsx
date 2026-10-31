@@ -14,7 +14,9 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { thaiDate, thaiDateTime } from '../core/fmt';
-import { href } from '../core/router';
+import { href, navigate, useRoute } from '../core/router';
+import { useScope } from '../core/scope';
+import { RoomNavigator } from '../ui/room-navigator';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead,
@@ -51,7 +53,21 @@ interface Doc {
 export function DocumentsScreen() {
   const canUse = useCan(...DOCUMENTS_ROLES);
   const [q, setQ] = useState('');
-  const [studentId, setStudentId] = useState('');
+  /*
+   * เลือกคนแบบ SISA — ไล่ลง หลักสูตร → ชั้นปี → ห้อง → นักศึกษา และเก็บไว้ใน URL
+   * ช่องค้นหายังอยู่สำหรับคนที่รู้รหัสอยู่แล้ว (นักศึกษาที่จบไปแล้วไม่มีห้องในปีนี้)
+   */
+  const route = useRoute();
+  const scope = useScope();
+  const studentId = route.query.get('student') ?? '';
+  const nav = { cur: route.query.get('cur'), studyYear: route.query.get('studyYear'), groupCode: route.query.get('groupCode') };
+  const setQuery = (patch: Record<string, string | null>) => {
+    const qq = new URLSearchParams(route.query);
+    for (const [k, v] of Object.entries(patch)) { if (v) qq.set(k, v); else qq.delete(k); }
+    navigate(`${route.path}?${qq.toString()}`);
+  };
+  const setStudentId = (id: string, name?: string) => { if (name) setPickedName(name); setQuery({ student: id || null }); };
+  const [pickedName, setPickedName] = useState('');
   const [kind, setKind] = useState('transcript');
   const [reason, setReason] = useState('');
   const [paper, setPaper] = useState<PrintPaper>(readPrintPaper);
@@ -65,7 +81,7 @@ export function DocumentsScreen() {
     [canUse, studentId],
   );
 
-  const student = students.data?.find((s) => s.id === studentId);
+  const student = students.data?.find((s) => s.id === studentId) ?? (pickedName ? { full_name: pickedName } : undefined);
 
   return (
     <>
@@ -75,7 +91,15 @@ export function DocumentsScreen() {
         <RestrictedNotice roles={DOCUMENTS_ROLES} />
       ) : (
       <>
-      <Card>
+      <RoomNavigator
+        academicYearId={scope.term?.academic_year_id ?? null}
+        value={nav}
+        onChange={(v) => setQuery({ ...v, student: null })}
+        studentId={studentId}
+        onStudent={(st) => setStudentId(st.id, `${st.student_code} ${st.full_name}`)}
+      />
+
+      <Card title="หรือค้นหาด้วยรหัส/ชื่อ (เช่น ผู้สำเร็จการศึกษาแล้ว)">
         <div className="row">
           <Field label="ค้นหานักศึกษา">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="รหัสหรือชื่อ" />

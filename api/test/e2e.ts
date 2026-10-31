@@ -2146,7 +2146,7 @@ async function main() {
       body: JSON.stringify({
         roundId, firstNameTh: 'ณัฐดนัย', lastNameTh: 'ผู้สมัครหนึ่ง',
         nationalId: '1100000000001', priorSchoolTh: 'โรงเรียนทดสอบวิทยา',
-        priorQualificationTh: 'ม.3', priorGpax: 2.85,
+        priorQualificationTh: 'ม.3', priorGpax: 2.85, provinceTh: 'นครปฐม',
         referralSource: 'เพจเฟซบุ๊กของวิทยาลัย',
         fatherFirstNameTh: 'สมชาย', fatherLastNameTh: 'ผู้สมัครหนึ่ง',
         fatherOccupationTh: 'รับราชการ', fatherIncomeMonthly: 30000, fatherPhone: '0811111111',
@@ -3920,7 +3920,7 @@ async function main() {
     const st = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
       body: JSON.stringify({
-        status: 'graduated', effectiveOn: '2569-03-31',
+        status: 'graduated', effectiveOn: '2026-03-31',
         reason: 'สำเร็จการศึกษาตามหลักสูตร', documentNo: 'คำสั่งที่ 12/2569',
       }),
     });
@@ -3943,7 +3943,7 @@ async function main() {
      */
     const noReason = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status: 'dismissed', effectiveOn: '2569-03-31' }),
+      body: JSON.stringify({ status: 'dismissed', effectiveOn: '2026-03-31' }),
     });
     expect(noReason.status === 400, `สถานะที่ออกจากสถานศึกษาต้องบังคับเหตุผล ได้ ${noReason.status}`);
 
@@ -3951,7 +3951,7 @@ async function main() {
     // จะได้จุดเดียวไปให้พ้น ๆ ซึ่งแย่กว่าไม่ถาม
     const back = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status: 'active', effectiveOn: '2569-04-01' }),
+      body: JSON.stringify({ status: 'active', effectiveOn: '2026-04-01' }),
     });
     expect(back.status < 400, `สถานะที่ยังอยู่ต้องไม่บังคับเหตุผล ได้ ${back.status}`);
     return 'กรอกได้ · ขึ้นใบ · บังคับเฉพาะสถานะที่ออกจริง';
@@ -3969,20 +3969,20 @@ async function main() {
      * ผ่านโดยไม่ได้ตรวจอะไร — ซึ่งแย่กว่าไม่มีเทสต์ เพราะดูเหมือนมีคนดูแลอยู่
      */
     const first = await registrar(`/graduation/students/${F.student}/completed-on`, {
-      method: 'PATCH', body: JSON.stringify({ completedOn: '2569-09-30' }),
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2026-09-30' }),
     });
     expect(first.status < 400,
       `แก้วันจบไม่ได้ ${first.status} ${JSON.stringify(first.body)} — ` +
       'ข้อนี้ต้องรันหลังเทสต์ที่อนุมัติจบให้นักศึกษาตัวอย่างแล้ว');
-    expect(String(first.body.completed_on).startsWith('2569-09-30'),
+    expect(String(first.body.completed_on).startsWith('2026-09-30'),
       `วันจบต้องเปลี่ยนจริง ได้ ${first.body.completed_on}`);
     const gpaxBefore = String(first.body.gpax);
 
     const r = await registrar(`/graduation/students/${F.student}/completed-on`, {
-      method: 'PATCH', body: JSON.stringify({ completedOn: '2570-03-31' }),
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2027-03-31' }),
     });
     expect(r.status < 400, `แก้วันจบรอบสองไม่ได้ ${r.status}`);
-    expect(String(r.body.completed_on).startsWith('2570-03-31'),
+    expect(String(r.body.completed_on).startsWith('2027-03-31'),
       `วันจบต้องเปลี่ยนได้อีก ได้ ${r.body.completed_on}`);
     expect(String(r.body.gpax) === gpaxBefore,
       `GPAX ต้องไม่เปลี่ยน — ${gpaxBefore} → ${r.body.gpax}`);
@@ -3990,7 +3990,7 @@ async function main() {
     // ฟิลด์ที่ไม่ได้ประกาศใน DTO ต้องถูกปฏิเสธ ไม่ใช่เมินเงียบ ๆ
     const sneaky = await registrar(`/graduation/students/${F.student}/completed-on`, {
       method: 'PATCH',
-      body: JSON.stringify({ completedOn: '2569-09-30', gpax: 4.0 }),
+      body: JSON.stringify({ completedOn: '2026-09-30', gpax: 4.0 }),
     });
     expect(sneaky.status === 400, `ฟิลด์แปลกปลอมต้องถูกปฏิเสธ ได้ ${sneaky.status}`);
     return 'แก้วันได้ · GPAX ไม่ขยับ · ฟิลด์แปลกปลอมถูกปฏิเสธ';
@@ -4578,7 +4578,7 @@ async function main() {
   await check('API-217 งานทะเบียนคัดลอกค่าเทอมไปปีใหม่ได้ แบบยังไม่เปิดใช้ และกดซ้ำได้โดยไม่ซ้อน', async () => {
     const newYear = await registrar('/academic/years', {
       method: 'POST',
-      body: JSON.stringify({ yearBe: 2570, startsOn: '2570-05-01', endsOn: '2571-03-31' }),
+      body: JSON.stringify({ yearBe: 2570, startsOn: '2027-05-01', endsOn: '2028-03-31' }),
     });
     expect(newYear.status === 201, `เตรียมปีการศึกษาใหม่ไม่สำเร็จ: ${JSON.stringify(newYear.body)}`);
 
@@ -5160,7 +5160,7 @@ async function main() {
   });
 
   await check('API-256 รายงานรายรับรวมยอดที่กระทบยอดแล้วเท่านั้น', async () => {
-    const r = await finance(`/finance/revenue?from=2000-01-01&to=2999-12-31`);
+    const r = await finance(`/finance/revenue?from=2000-01-01&to=2300-12-31`);
     expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
     expect(typeof r.body.total === 'number', 'ต้องมียอดรวม');
     expect(Array.isArray(r.body.byMethod), 'ต้องแยกตามช่องทางชำระ');
@@ -5173,6 +5173,491 @@ async function main() {
   await check('API-257 บทบาทอื่นที่ไม่ใช่งานการเงินขึ้นไปดูรายงานรายรับไม่ได้', async () => {
     const r = await teacher('/finance/revenue');
     expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
+  });
+
+  // ─── รายงานการเงินแบบ SISA — ค้นใบเสร็จ · ปิดยอดผู้รับเงิน · รายห้อง · ทุน ───
+
+  await check('API-258 ค้นใบเสร็จทั้งวิทยาลัยได้ และกรองด้วยช่องทางชำระได้จริง', async () => {
+    const all = await finance('/finance/receipts/search');
+    expect(all.status === 200, `ได้ ${all.status}: ${JSON.stringify(all.body)}`);
+    expect(all.body.length > 0, 'ชุดทดสอบรับชำระไปแล้ว ต้องมีใบเสร็จอย่างน้อยหนึ่งใบ');
+    const pp = await finance('/finance/receipts/search?method=promptpay');
+    expect(pp.body.every((r: any) => r.method === 'promptpay'), 'ตัวกรองช่องทางต้องมีผลจริง');
+    const none = await finance('/finance/receipts/search?from=2300-01-01');
+    expect(none.body.length === 0, 'ช่วงวันที่ในอนาคตต้องไม่มีใบเสร็จ');
+    return `${all.body.length} ใบ · promptpay ${pp.body.length} ใบ`;
+  });
+
+  await check('API-259 ปิดยอดตามผู้รับเงินรวมได้เท่ากับยอดใบเสร็จที่ไม่ถูกยกเลิก', async () => {
+    const sum = await finance('/finance/reports/cashier');
+    expect(sum.status === 200, `ได้ ${sum.status}: ${JSON.stringify(sum.body)}`);
+    const receipts = await finance('/finance/receipts/search?status=active');
+    const a = sum.body.reduce((t: number, r: any) => t + r.amount, 0);
+    const b = receipts.body.reduce((t: number, r: any) => t + Number(r.amount), 0);
+    // ใช้ได้เพราะชุดทดสอบมีใบเสร็จไม่ถึงเพดาน 500 ใบของการค้น
+    expect(Math.abs(a - b) < 0.01, `ยอดปิดผู้รับเงิน ${a} ต้องเท่ากับผลรวมใบเสร็จ ${b}`);
+    return `รวม ${a} บาท`;
+  });
+
+  await check('API-260 สรุปรายห้องรวมกันได้เท่ากับยอดทั้งวิทยาลัย (รวมกองที่ยังไม่จัดห้อง)', async () => {
+    const r = await finance(`/finance/reports/rooms?academicYearId=${AY}`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.length > 0, 'ชุดทดสอบออกใบแจ้งหนี้ไปแล้ว ต้องมีอย่างน้อยหนึ่งแถว');
+    for (const row of r.body) {
+      expect(Math.abs(row.billed - row.paid - row.outstanding) < 0.01, `ห้อง ${row.groupCode}: เรียกเก็บ − ชำระ ต้องเท่ากับค้าง`);
+    }
+    const owingRoom = r.body.find((x: any) => x.owing > 0);
+    if (owingRoom) {
+      const q = owingRoom.groupCode ? `&groupCode=${encodeURIComponent(owingRoom.groupCode)}` : '';
+      const list = await finance(`/finance/reports/rooms/arrears?academicYearId=${AY}${q}`);
+      expect(list.status === 200, `ได้ ${list.status}`);
+      expect(list.body.length === owingRoom.owing, `รายชื่อค้าง ${list.body.length} คน ต้องเท่ากับจำนวนในสรุป ${owingRoom.owing}`);
+    }
+    return `${r.body.length} ห้อง`;
+  });
+
+  // มอบเองในข้อนี้ — ส่วนลดของ API-236 ถูก API-237 ถอนไปแล้ว
+  await check('API-261 รายงานทุนเห็นส่วนลดที่เพิ่งมอบ และไม่เห็นที่ถอนไปแล้ว', async () => {
+    const src = await finance('/finance/funding-sources', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'other', nameTh: 'ทุนทดสอบ API-261' }),
+    });
+    expect(src.status === 201, `สร้างแหล่งทุนได้ ${src.status}: ${JSON.stringify(src.body)}`);
+    const grant = await finance(`/finance/students/${F.student}/funding`, {
+      method: 'POST',
+      body: JSON.stringify({ fundingSourceId: src.body.id, academicYearId: AY, amount: 500 }),
+    });
+    expect(grant.status === 201, `มอบทุนได้ ${grant.status}: ${JSON.stringify(grant.body)}`);
+    const r = await finance(`/finance/reports/funding?academicYearId=${AY}`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.some((x: any) => x.source_name === 'ทุนทดสอบ API-261'), 'ต้องเห็นทุนที่เพิ่งมอบ');
+    expect(!r.body.some((x: any) => x.source_name === 'ส่วนลดทดสอบ API-236'), 'ส่วนลดที่ถอนแล้วต้องไม่อยู่ในรายงาน');
+    return `${r.body.length} รายการ`;
+  });
+
+  await check('API-262 ครูค้นใบเสร็จและดูปิดยอดผู้รับเงินไม่ได้', async () => {
+    expect((await teacher('/finance/receipts/search')).status === 403, 'ค้นใบเสร็จต้องได้ 403');
+    expect((await teacher('/finance/reports/cashier')).status === 403, 'ปิดยอดต้องได้ 403');
+  });
+
+  // ─── สถิตินักศึกษาแบบ SISA — มิติเดียว × ชั้นปี ───
+
+  await check('API-263 ทุกมิติของสถิตินักศึกษารวมได้จำนวนคนเท่ากัน (ไม่มีมิติไหนทำคนหายหรือนับซ้ำ)', async () => {
+    const dims = await registrar('/reports/students/dimensions');
+    expect(dims.status === 200, `ได้ ${dims.status}`);
+    const totals: Record<string, number> = {};
+    for (const d of dims.body) {
+      const path = d.sensitive ? 'breakdown-sensitive' : 'breakdown';
+      const r = await registrar(`/reports/students/${path}?dimension=${d.key}&academicYearId=${AY}&status=all`);
+      expect(r.status === 200, `${d.key}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d.key] = r.body.rows.reduce((t: number, x: any) => t + x.students, 0);
+    }
+    const values = Object.values(totals);
+    expect(values.every((v) => v === values[0]), `ยอดรวมแต่ละมิติต้องเท่ากัน ได้ ${JSON.stringify(totals)}`);
+    return `${dims.body.length} มิติ · ${values[0]} คน`;
+  });
+
+  await check('API-264 มิติอ่อนไหวเปิดให้เฉพาะบทบาทที่เห็นข้อมูลอ่อนไหวทั้งวิทยาลัย', async () => {
+    const f = await finance(`/reports/students/breakdown-sensitive?dimension=religion&academicYearId=${AY}`);
+    expect(f.status === 403, `การเงินควรได้ 403 ได้ ${f.status}`);
+    const sneak = await finance(`/reports/students/breakdown?dimension=religion&academicYearId=${AY}`);
+    expect(sneak.status === 400, `เรียกมิติอ่อนไหวผ่านเส้นทางปกติควรได้ 400 ได้ ${sneak.status}`);
+    const ok = await finance(`/reports/students/breakdown?dimension=gender&academicYearId=${AY}`);
+    expect(ok.status === 200, `มิติทั่วไปต้องเปิดให้การเงินได้ ${ok.status}`);
+  });
+
+  // ─── เครื่องมืองานทะเบียนรายห้อง (SISA หมวดนักศึกษา) ───
+
+  await check('API-266 เปลี่ยนคำนำหน้าเฉพาะคนที่อายุครบ 15 ปีจริง ส่งคนที่ไม่เข้าเงื่อนไขมาก็ไม่ถูกแก้', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      await db.query(`update person set prefix_th = 'เด็กชาย', birth_date = current_date - interval '16 years' where id = $1`, [F.personStudent]);
+      await db.query(`update person set prefix_th = 'เด็กหญิง', birth_date = current_date - interval '14 years' where id = $1`, [F.personExamStudent]);
+      const c = await registrar('/student-tools/prefix-candidates');
+      expect(c.status === 200, `ได้ ${c.status}: ${JSON.stringify(c.body)}`);
+      expect(c.body.some((x: any) => x.person_id === F.personStudent && x.new_prefix === 'นาย'), 'อายุ 16 ต้องถูกเสนอเป็น นาย');
+      expect(!c.body.some((x: any) => x.person_id === F.personExamStudent), 'อายุ 14 ต้องไม่ถูกเสนอ');
+      const r = await registrar('/student-tools/prefix-apply', {
+        method: 'POST', body: JSON.stringify({ personIds: [F.personStudent, F.personExamStudent] }),
+      });
+      expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+      expect(r.body.updated === 1 && r.body.skipped === 1, `ต้องแก้ 1 ข้าม 1 ได้ ${JSON.stringify(r.body)}`);
+      const after = await db.query(`select id, prefix_th from person where id = any($1)`, [[F.personStudent, F.personExamStudent]]);
+      const m = Object.fromEntries(after.rows.map((x) => [x.id, x.prefix_th]));
+      expect(m[F.personStudent] === 'นาย' && m[F.personExamStudent] === 'เด็กหญิง', `ผลไม่ตรง ${JSON.stringify(m)}`);
+    } finally {
+      await db.end();
+    }
+  });
+
+  await check('API-267 ครูและการเงินเปลี่ยนคำนำหน้าเป็นกลุ่มไม่ได้', async () => {
+    const body = JSON.stringify({ personIds: [F.personStudent] });
+    expect((await teacher('/student-tools/prefix-apply', { method: 'POST', body })).status === 403, 'ครูต้องได้ 403');
+    expect((await finance('/student-tools/prefix-apply', { method: 'POST', body })).status === 403, 'การเงินต้องได้ 403');
+  });
+
+  await check('API-268 รายงานรับเข้า/ออกกรองตามชนิด และปฏิเสธชนิดที่ไม่รู้จัก', async () => {
+    const all = await registrar('/student-tools/status-changes?kind=all');
+    expect(all.status === 200, `ได้ ${all.status}: ${JSON.stringify(all.body)}`);
+    const grad = await registrar('/student-tools/status-changes?kind=graduate');
+    expect(grad.body.every((x: any) => x.to_status === 'graduated'), 'ชนิดสำเร็จการศึกษาต้องมีแต่ graduated');
+    const bad = await registrar('/student-tools/status-changes?kind=x%27%3Bdrop');
+    expect(bad.status === 400, `ชนิดแปลกต้องได้ 400 ได้ ${bad.status}`);
+    return `${all.body.length} รายการ`;
+  });
+
+  await check('API-269 ใบรายชื่อห้องพิมพ์ได้ และการเงินเปิดใบรายชื่อนักศึกษาไม่ได้', async () => {
+    const r = await registrar(`/student-tools/rooms/roster/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(r.status === 200, `ได้ ${r.status}`);
+    expect(String(r.body).includes('ใบรายชื่อนักศึกษา'), 'ต้องเป็นหน้ากระดาษใบรายชื่อ');
+    const f = await finance(`/student-tools/rooms/roster/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(f.status === 403, `การเงินควรได้ 403 ได้ ${f.status}`);
+    const lab = await registrar(`/student-tools/rooms/labels/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(lab.status === 200 && String(lab.body).includes('ฉลาก'), `ฉลากได้ ${lab.status}`);
+  });
+
+  await check('API-270 รายงานผลงานรวมทั้งวิทยาลัยเปิดได้', async () => {
+    const r = await registrar('/student-tools/achievements');
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    return `${r.body.length} รายการ`;
+  });
+
+  await check('API-265 ชื่อมิติที่ไม่รู้จักถูกปฏิเสธ ไม่ถูกต่อเข้า SQL', async () => {
+    const r = await registrar(`/reports/students/breakdown?dimension=${encodeURIComponent("gender; drop table student")}&academicYearId=${AY}`);
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  // ─── รายงานบุคลากรแบบ SISA ───
+  const hr = api(base, await token(app, base, F.personTeacher, 'hr'));
+
+  await check('API-272 ทุกมิติของสถิติบุคลากรรวมได้จำนวนคนเท่ากัน', async () => {
+    const dims = await hr('/hr-reports/dimensions');
+    expect(dims.status === 200, `งานบุคคลต้องเปิดรายงานได้ ได้ ${dims.status}`);
+    const totals: Record<string, number> = {};
+    for (const d of dims.body) {
+      const r = await hr(`/hr-reports/breakdown?dimension=${d.key}&active=false`);
+      expect(r.status === 200, `${d.key}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d.key] = r.body.rows.reduce((t: number, x: any) => t + x.staff, 0);
+    }
+    const v = Object.values(totals);
+    expect(v.every((x) => x === v[0]) && v[0] > 0, `ยอดรวมต้องเท่ากันทุกมิติ ได้ ${JSON.stringify(totals)}`);
+    const roster = await hr('/hr-reports/roster?active=false');
+    expect(roster.body.length === v[0], `รายชื่อ ${roster.body.length} คน ต้องเท่ากับยอดในสถิติ ${v[0]}`);
+    return `${dims.body.length} มิติ · ${v[0]} คน`;
+  });
+
+  await check('API-273 รายงานอบรม · การลา · ผลงานของบุคลากรเปิดได้ และครูเปิดไม่ได้', async () => {
+    for (const path of ['training', 'leaves', 'awards', 'roster']) {
+      const r = await hr(`/hr-reports/${path}`);
+      expect(r.status === 200 && Array.isArray(r.body), `${path}: ได้ ${r.status}`);
+      const t = await teacher(`/hr-reports/${path}`);
+      expect(t.status === 403, `${path}: ครูควรได้ 403 ได้ ${t.status}`);
+    }
+    const bad = await hr('/hr-reports/breakdown?dimension=x%3Bdrop');
+    expect(bad.status === 400, `มิติที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+  });
+
+  // ─── งานบุคคล/เลขาใช้งานหน้าของตัวเองได้จริง (0097) ───
+  const secretary = api(base, await token(app, base, F.personOther, 'secretary'));
+
+  // ─── การตั้งค่า: ข้อมูลพื้นฐาน · ข้อความบนเอกสาร · บันทึกเหตุการณ์ ───
+
+  // ─── รับสมัคร: สถิติแบบ SISA และใบรายงานตัว ───
+
+  // ─── ทะเบียนวัดผล: สถิติรายวิชาและเวลาเรียนแบบ SISA ───
+
+  // ─── ตัวนำทางกลางแบบ SISA: ประเภทวิชา → สาขา → หลักสูตร → ชั้นปี → ห้อง ───
+
+  await check('API-285 ต้นไม้ห้องนับนักศึกษาครบทุกคน (รวมคนที่ยังไม่ผูกหลักสูตร/ยังไม่จัดห้อง) และรายชื่อในห้องตรงกับยอด', async () => {
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    expect(tree.status === 200 && tree.body.length > 0, `ได้ ${tree.status}: ${JSON.stringify(tree.body).slice(0, 200)}`);
+    const total = tree.body.reduce((t: number, r: any) => t + r.students, 0);
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const real = await db.query(
+        `select count(*)::int as n from student_class_placement p join student s on s.id = p.student_id
+          where p.academic_year_id = $1 and s.status in ('active', 'on_leave', 'suspended')`, [AY]);
+      expect(total === real.rows[0].n, `ต้นไม้นับได้ ${total} คน แต่จัดห้องจริง ${real.rows[0].n} คน`);
+    } finally {
+      await db.end();
+    }
+    for (const r of tree.body) {
+      const q = `academicYearId=${AY}${r.groupCode ? `&groupCode=${encodeURIComponent(r.groupCode)}` : ''}${r.curriculumId ? `&curriculumId=${r.curriculumId}` : ''}`;
+      const list = await registrar(`/registry/room-students?${q}`);
+      const active = list.body.filter((x: any) => ['active', 'on_leave', 'suspended'].includes(x.status)).length;
+      if (r.curriculumId) expect(active === r.students, `${r.groupCode}: รายชื่อ ${active} คน ไม่ตรงกับยอดในต้นไม้ ${r.students}`);
+    }
+    const t = await teacher(`/registry/tree?academicYearId=${AY}`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${tree.body.length} แถว · ${total} คน`;
+  });
+
+  await check('API-286 รายงานผลการเรียนกรองตามห้องได้ — ทุกแถวเป็นคนในห้องนั้น และค่าที่ผิดรูปถูกปฏิเสธ', async () => {
+    const all = await registrar(`/reports/grades?allTerms=true`);
+    expect(all.status === 200, `ได้ ${all.status}`);
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    let checked = 0;
+    for (const r of tree.body) {
+      const g = r.groupCode ?? '-';
+      const filtered = await registrar(`/reports/grades?allTerms=true&roomYearId=${AY}&studyYear=${r.studyYear}&groupCode=${encodeURIComponent(g)}`);
+      expect(filtered.status === 200, `${g}: ได้ ${filtered.status}`);
+      const room = await registrar(`/registry/room-students?academicYearId=${AY}${r.groupCode ? `&groupCode=${encodeURIComponent(r.groupCode)}` : ''}`);
+      const codes = new Set(room.body.map((x: any) => x.student_code));
+      for (const row of filtered.body) expect(codes.has(row.student_code), `${row.student_code} ไม่ได้อยู่ห้อง ${g} แต่โผล่ในรายงาน`);
+      checked += filtered.body.length;
+    }
+    expect(checked <= all.body.length, `ผลรวมรายห้อง ${checked} เกินทั้งหมด ${all.body.length}`);
+    const bad = await registrar(`/reports/grades?allTerms=true&roomYearId=${AY}&studyYear=x`);
+    expect(bad.status === 400, `studyYear ผิดรูปควรได้ 400 ได้ ${bad.status}`);
+    return `${checked} แถวจาก ${all.body.length}`;
+  });
+
+  await check('API-287 รายชื่อผู้ลงทะเบียนของห้อง: มีครบทุกคนในห้อง (รวมคนที่ยังไม่ลง) และหน่วยกิตตรงกับการลงทะเบียนจริง', async () => {
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    let rooms = 0;
+    try {
+      for (const r of tree.body) {
+        if (!r.curriculumId) continue;
+        const g = r.groupCode ?? '-';
+        const list = await registrar(`/reports/terms/${TERM1}/room-registrations?studyYear=${r.studyYear}&groupCode=${encodeURIComponent(g)}`);
+        expect(list.status === 200, `${g}: ได้ ${list.status}`);
+        const real = await db.query(
+          `select count(*)::int as n from student_class_placement p join term t on t.academic_year_id = p.academic_year_id
+            where t.id = $1 and p.study_year = $2 and p.group_code is not distinct from $3`, [TERM1, r.studyYear, r.groupCode]);
+        expect(list.body.length === real.rows[0].n, `${g}: รายชื่อ ${list.body.length} คน แต่ในห้องมี ${real.rows[0].n}`);
+        for (const x of list.body) {
+          const cr = await db.query(
+            `select coalesce(sum(c.credits), 0)::numeric as n from enrollment e join student s on s.id = e.student_id
+               join class_section cs on cs.id = e.class_section_id join course c on c.id = cs.course_id
+              where s.student_code = $1 and e.term_id = $2 and e.status <> 'withdrawn'`, [x.student_code, TERM1]);
+          expect(Number(x.credits) === Number(cr.rows[0].n), `${x.student_code}: นก. ${x.credits} ไม่ตรงกับที่ลงจริง ${cr.rows[0].n}`);
+        }
+        rooms++;
+      }
+    } finally {
+      await db.end();
+    }
+    const html = await registrar(`/reports/terms/${TERM1}/room-registrations/print?studyYear=1&groupCode=-`);
+    expect(html.status === 200, `ใบพิมพ์ได้ ${html.status}`);
+    const t = await teacher(`/reports/terms/${TERM1}/room-registrations?studyYear=1&groupCode=-`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${rooms} ห้อง`;
+  });
+
+  await check('API-288 กลุ่มเรียนกรองตามห้องประจำ: ได้เฉพาะกลุ่มที่คนในห้องลงอยู่ และเป็นส่วนหนึ่งของทั้งหมด', async () => {
+    const all = await registrar(`/academic/sections?termId=${TERM1}`);
+    const ids = new Set(all.body.map((x: any) => x.id));
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const rooms = await db.query(
+        `select distinct pl.study_year, pl.group_code from student_class_placement pl join term t on t.academic_year_id = pl.academic_year_id where t.id = $1`, [TERM1]);
+      for (const r of rooms.rows) {
+        const g = r.group_code ?? '-';
+        const got = await registrar(`/academic/sections?termId=${TERM1}&studyYear=${r.study_year}&groupCode=${encodeURIComponent(g)}`);
+        expect(got.status === 200, `${g}: ได้ ${got.status}`);
+        const want = await db.query(
+          `select distinct e.class_section_id as id from enrollment e join term t on t.id = e.term_id
+             join student_class_placement pl on pl.student_id = e.student_id and pl.academic_year_id = t.academic_year_id
+            where e.term_id = $1 and e.status = 'enrolled' and pl.study_year = $2 and pl.group_code is not distinct from $3`,
+          [TERM1, r.study_year, r.group_code]);
+        expect(got.body.length === want.rows.length, `${g}: ได้ ${got.body.length} กลุ่ม ควรได้ ${want.rows.length}`);
+        for (const x of got.body) expect(ids.has(x.id), `${g}: ${x.id} ไม่อยู่ในรายการทั้งหมด`);
+      }
+    } finally {
+      await db.end();
+    }
+    const bad = await registrar(`/academic/sections?termId=${TERM1}&studyYear=0`);
+    expect(bad.status === 400, `studyYear=0 ควรได้ 400 ได้ ${bad.status}`);
+    return `${all.body.length} กลุ่มทั้งหมด`;
+  });
+
+  await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
+    const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
+    let rows = 0;
+    for (const room of rooms.body) {
+      const q = room.groupCode ? `?groupCode=${encodeURIComponent(room.groupCode)}` : '';
+      const r = await registrar(`/reports/terms/${TERM1}/room-scores${q}`);
+      expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+      for (const x of r.body) {
+        expect(Number(x.weighted) <= Number(x.weight_filled) + 0.01, `${x.course_code}: คะแนน ${x.weighted} เกินน้ำหนักที่กรอก ${x.weight_filled}`);
+        expect(Number(x.weight_filled) <= Number(x.weight_total) + 0.01, `${x.course_code}: น้ำหนักที่กรอกเกินน้ำหนักเต็ม`);
+      }
+      rows += r.body.length;
+    }
+    const t = await teacher(`/reports/terms/${TERM1}/room-scores`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${rows} แถว (นักศึกษา × วิชา)`;
+  });
+
+  await check('API-282 สรุปผลรายวิชา: การกระจายเกรดรวมได้เท่าจำนวนที่มีผล และกลุ่มที่ยังไม่ส่งเกรดยังอยู่ในรายการ', async () => {
+    const r = await registrar(`/reports/terms/${TERM1}/course-results`);
+    expect(r.status === 200 && r.body.length > 0, `ได้ ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+    for (const s of r.body) {
+      const dist = Object.values(s.distribution as Record<string, number>).reduce((t, n) => t + n, 0);
+      expect(dist === s.graded, `${s.courseCode} ${s.sectionNo}: กระจายเกรด ${dist} ต้องเท่ากับจำนวนที่มีผล ${s.graded}`);
+      expect(s.passed <= s.graded, `${s.courseCode}: ผ่านต้องไม่เกินจำนวนที่มีผล`);
+    }
+    const graded = r.body.filter((s: any) => s.graded > 0).length;
+    return `${r.body.length} กลุ่มเรียน · มีผลแล้ว ${graded} กลุ่ม`;
+  });
+
+  await check('API-283 ขาด ลา มาสาย แยกห้อง และครูเปิดสถิติทั้งวิทยาลัยไม่ได้', async () => {
+    const r = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    const t = await teacher(`/reports/terms/${TERM1}/course-results`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${r.body.length} ห้อง`;
+  });
+
+  await check('API-281 เลขบัตรในใบสมัครแฮชด้วยกุญแจ (ไม่ใช่ sha256 เปล่า) และติดป้ายรุ่น 2 ไปถึงตัวนักศึกษา', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const r = await db.query(
+        `select a.national_id_hash = digest('1100000000001', 'sha256') as plain,
+                a.national_id_hash is not null as has_hash, a.national_id_hash_v,
+                a.father_national_id_hash is null as father_none
+           from application a where a.id = $1`,
+        [appId],
+      );
+      const row = r.rows[0];
+      expect(row?.has_hash, 'ใบสมัครที่กรอกเลขบัตรต้องมีค่าแฮช');
+      expect(row.plain === false, 'ค่าแฮชต้องไม่ใช่ sha256 เปล่าที่ไล่ย้อนกลับได้');
+      expect(row.national_id_hash_v === 2, `ใบใหม่ต้องเป็นรุ่น 2 ได้ ${row.national_id_hash_v}`);
+      const p = await db.query(
+        `select pe.national_id_hash_v, pe.national_id_hash = a.national_id_hash as same
+           from application a join person pe on pe.national_id_hash = a.national_id_hash
+          where a.id = $1`,
+        [appId],
+      );
+      if (p.rows.length) {
+        expect(p.rows[0].national_id_hash_v === 2, `ตัวนักศึกษาที่รับเข้าต้องได้ป้ายรุ่น 2 ได้ ${p.rows[0].national_id_hash_v}`);
+      }
+      return p.rows.length ? 'รับเข้าแล้ว ป้ายรุ่น 2 ถึงตัวนักศึกษา' : 'ยังไม่ได้รับเข้า';
+    } finally {
+      await db.end();
+    }
+  });
+
+  await check('API-279 สถิติรับสมัครทุกมิติรวมได้จำนวนใบเท่ากัน และจังหวัดถูกจัดเข้าภาคถูกต้อง', async () => {
+    const dims = ['program', 'status', 'gender', 'gpa', 'school', 'province', 'region', 'referral'];
+    const totals: Record<string, number> = {};
+    for (const d of dims) {
+      const r = await registrar(`/admissions/rounds/${roundId}/stats?dimension=${d}`);
+      expect(r.status === 200, `${d}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d] = r.body.rows.reduce((t: number, x: any) => t + x.applications, 0);
+    }
+    const v = Object.values(totals);
+    expect(v.every((x) => x === v[0]) && v[0] > 0, `ยอดรวมต้องเท่ากันทุกมิติ ได้ ${JSON.stringify(totals)}`);
+    const region = await registrar(`/admissions/rounds/${roundId}/stats?dimension=region`);
+    expect(region.body.rows.some((x: any) => x.value === 'ภาคกลาง'), `นครปฐมต้องอยู่ภาคกลาง ได้ ${JSON.stringify(region.body.rows)}`);
+    const bad = await registrar(`/admissions/rounds/${roundId}/stats?dimension=x%3Bdrop`);
+    expect(bad.status === 400, `มิติที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+    return `${v[0]} ใบ`;
+  });
+
+  await check('API-280 ใบรายงานตัวออกได้เฉพาะผู้ผ่านการคัดเลือก', async () => {
+    const ok = await registrar(`/admissions/applications/${appId}/report-form/print`);
+    expect(ok.status === 200 && String(ok.body).includes('ใบรายงานตัว'), `ผู้ผ่านต้องพิมพ์ได้ ได้ ${ok.status}`);
+    const pending = await registrar('/admissions/applications', {
+      method: 'POST',
+      body: JSON.stringify({ roundId, firstNameTh: 'ยัง', lastNameTh: 'ไม่ผ่าน API-280', choices: [{ preference: 1, curriculumVersionId: CV }] }),
+    });
+    expect(pending.status === 201, `สร้างใบสมัครได้ ${pending.status}`);
+    const no = await registrar(`/admissions/applications/${pending.body.id}/report-form/print`);
+    expect(no.status === 400, `ผู้ที่ยังไม่ผ่านต้องได้ 400 ได้ ${no.status}`);
+    const f = await finance(`/admissions/applications/${appId}/report-form/print`);
+    expect(f.status === 403, `การเงินต้องได้ 403 ได้ ${f.status}`);
+  });
+
+  await check('API-276 ข้อมูลพื้นฐาน: ครูอ่านตัวเลือกได้แต่เพิ่มไม่ได้ · งานทะเบียนเพิ่มและปิดได้ · ซ้ำไม่ได้', async () => {
+    const list = await teacher('/settings/options?category=religion');
+    expect(list.status === 200 && list.body.some((x: any) => x.label_th === 'พุทธ'), `ครูต้องเห็นค่าตั้งต้น ได้ ${list.status}`);
+    const t = await teacher('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'religion', labelTh: 'ศาสนาของครู' }) });
+    expect(t.status === 403, `ครูเพิ่มต้องได้ 403 ได้ ${t.status}`);
+    const add = await registrar('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'occupation', labelTh: 'อาชีพทดสอบ API-276' }) });
+    expect(add.status === 201, `งานทะเบียนต้องเพิ่มได้ ได้ ${add.status}: ${JSON.stringify(add.body)}`);
+    const dup = await registrar('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'occupation', labelTh: 'อาชีพทดสอบ API-276' }) });
+    expect(dup.status >= 400 && dup.status < 500, `ซ้ำต้องถูกปฏิเสธเป็น 4xx ได้ ${dup.status}`);
+    const off = await registrar(`/settings/options/${add.body.id}`, { method: 'PATCH', body: JSON.stringify({ active: false }) });
+    expect(off.status === 200 && off.body.active === false, `ปิดรายการได้ ได้ ${off.status}`);
+    const bad = await registrar('/settings/options?category=x');
+    expect(bad.status === 400, `หมวดที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+  });
+
+  await check('API-277 ข้อความบนเอกสาร: แก้ได้เฉพาะคีย์ที่แม่แบบอ่านจริง และครูแก้ไม่ได้', async () => {
+    const set = await registrar('/settings/document-texts', {
+      method: 'POST', body: JSON.stringify({ key: 'transcript_criteria_5', textTh: 'เกณฑ์ทดสอบ API-277', textEn: 'Test criteria' }),
+    });
+    expect(set.status === 201, `ได้ ${set.status}: ${JSON.stringify(set.body)}`);
+    const read = await registrar('/settings/document-texts');
+    const row = read.body.find((x: any) => x.key === 'transcript_criteria_5');
+    expect(row?.textTh === 'เกณฑ์ทดสอบ API-277', `อ่านกลับต้องได้ค่าที่บันทึก ได้ ${JSON.stringify(row)}`);
+    const typo = await registrar('/settings/document-texts', { method: 'POST', body: JSON.stringify({ key: 'transcript_critera_5', textTh: 'สะกดผิด' }) });
+    expect(typo.status === 400, `คีย์สะกดผิดต้องได้ 400 ได้ ${typo.status}`);
+    const t = await teacher('/settings/document-texts', { method: 'POST', body: JSON.stringify({ key: 'transcript_criteria_5', textTh: 'ครูแก้' }) });
+    expect(t.status === 403, `ครูต้องได้ 403 ได้ ${t.status}`);
+  });
+
+  await check('API-278 บันทึกเหตุการณ์กรองตามช่วงวันที่ได้ และเปิดเฉพาะผู้บริหาร', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await admin(`/audit?from=${today}&to=${today}`);
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    const none = await admin('/audit?from=2001-01-01&to=2001-01-02');
+    expect(none.body.length === 0, 'ช่วงในอดีตก่อนมีระบบต้องว่าง');
+    const reg = await registrar('/audit');
+    expect(reg.status === 403, `งานทะเบียนต้องได้ 403 ได้ ${reg.status}`);
+    return `วันนี้ ${r.body.length} รายการ`;
+  });
+
+  await check('API-274 งานบุคคลสร้างแผนกและดูใบลาได้ ครูสร้างแผนกไม่ได้', async () => {
+    const d = await hr('/hr/departments', {
+      method: 'POST', body: JSON.stringify({ code: 'T274', nameTh: 'แผนกทดสอบ API-274', kind: 'office' }),
+    });
+    expect(d.status === 201, `งานบุคคลต้องสร้างแผนกได้ ได้ ${d.status}: ${JSON.stringify(d.body)}`);
+    const l = await hr('/hr/leaves');
+    expect(l.status === 200, `งานบุคคลต้องเห็นใบลาได้ ได้ ${l.status}`);
+    const t = await teacher('/hr/departments', {
+      method: 'POST', body: JSON.stringify({ code: 'T274B', nameTh: 'แผนกของครู', kind: 'office' }),
+    });
+    expect(t.status === 403, `ครูต้องได้ 403 ได้ ${t.status}`);
+  });
+
+  await check('API-275 เลขาลงประกาศได้ แต่ออกหนังสือถึงผู้ปกครองเองไม่ได้', async () => {
+    const a = await secretary('/announcements', {
+      method: 'POST', body: JSON.stringify({ titleTh: 'ประกาศ API-275', bodyTh: 'ทดสอบ', publishNow: false }),
+    });
+    expect(a.status === 201, `เลขาต้องลงประกาศได้ ได้ ${a.status}: ${JSON.stringify(a.body)}`);
+    const letter = await secretary('/documents/letters', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'conduct_certificate' }),
+    });
+    expect(letter.status === 403, `เลขาออกหนังสือเองต้องได้ 403 ได้ ${letter.status}`);
+  });
+
+  await check('API-271 วันที่ปี พ.ศ. ถูกปฏิเสธทุกทาง — body · query · ช่องซ้อนในอาร์เรย์ — และไม่มีอะไรถูกเขียน', async () => {
+    const before = await registrar(`/students/${F.student}/status-history`);
+    const body = await registrar(`/students/${F.student}/status`, {
+      method: 'POST', body: JSON.stringify({ status: 'on_leave', effectiveOn: '2569-06-01' }),
+    });
+    expect(body.status === 400, `body ควรได้ 400 ได้ ${body.status}`);
+    expect(String(body.body.message).includes('คริสต์ศักราช'), `ข้อความต้องบอกว่าต้องเป็นปี ค.ศ. ได้ ${JSON.stringify(body.body)}`);
+    const after = await registrar(`/students/${F.student}/status-history`);
+    expect(after.body.length === before.body.length, 'ถูกปฏิเสธแล้วต้องไม่มีประวัติเพิ่ม');
+    const query = await finance('/finance/receipts/search?from=2569-01-01');
+    expect(query.status === 400, `query ควรได้ 400 ได้ ${query.status}`);
+    const nested = await finance('/finance/bank-transactions', {
+      method: 'POST',
+      body: JSON.stringify({ transactions: [{ postedAt: '2569-08-20', amount: 10, counterparty: 'ทดสอบ' }] }),
+    });
+    expect(nested.status === 400, `ช่องในอาร์เรย์ควรได้ 400 ได้ ${nested.status}`);
+    // ค่าที่หน้าตาคล้ายแต่ไม่ใช่วันที่ ต้องไม่ถูกแตะ
+    const ok = await finance('/finance/receipts/search?docFrom=2569-0001');
+    expect(ok.status === 200, `เลขที่เอกสารที่มีขีดต้องไม่ถูกปฏิเสธ ได้ ${ok.status}`);
   });
 
   await app.close();

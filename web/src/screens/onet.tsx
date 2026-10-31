@@ -10,7 +10,9 @@ import { api } from '../core/api';
 import { num } from '../core/fmt';
 import { href } from '../core/router';
 import type { Role } from '../core/session';
-import { Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useCan } from '../ui/kit';
+import { useScope } from '../core/scope';
+import { AsyncView, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
+import { StudentPicker } from '../ui/room-navigator';
 
 const ONET_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
 
@@ -200,8 +202,47 @@ export function OnetScreen() {
           )
         )}
       </TableCard>
+
+      <StudentResultsCard />
       </>
       )}
     </>
+  );
+}
+
+interface StudentResult { exam_kind: string; exam_year_be: number; subject_code: string; subject_th: string; score: string }
+
+/** ผลรายคน — SISA ไล่ถึงห้อง/นักศึกษาแล้วดูคะแนนของคนนั้น ใช้ตัวนำทางกลางแบบเดียวกับหน้าอื่น */
+function StudentResultsCard() {
+  const yearId = useScope().term?.academic_year_id ?? null;
+  const [studentId, setStudentId] = useState('');
+  const [label, setLabel] = useState('');
+  const results = useAsync(
+    () => (studentId ? api.get<StudentResult[]>(`/onet/students/${studentId}`) : Promise.resolve([])),
+    [studentId],
+  );
+  return (
+    <TableCard title={label ? `ผลสอบรายคน — ${label}` : 'ผลสอบรายคน — ไล่จากห้องแล้วเลือกนักศึกษา'}>
+      <StudentPicker academicYearId={yearId} studentId={studentId} onPick={(st) => { setStudentId(st.id); setLabel(`${st.student_code} ${st.full_name}`); }} />
+      {studentId && (
+        <AsyncView state={results} empty="ยังไม่มีผลสอบของนักศึกษาคนนี้">
+          {(list) => (
+            <table>
+              <thead><tr><th style={{ width: 80 }}>ปี</th><th style={{ width: 80 }}>ประเภท</th><th>วิชา</th><th className="num" style={{ width: 90 }}>คะแนน</th></tr></thead>
+              <tbody>
+                {list.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.exam_year_be}</td>
+                    <td>{r.exam_kind}</td>
+                    <td><span className="mono">{r.subject_code}</span> {r.subject_th}</td>
+                    <td className="num">{num(Number(r.score), 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncView>
+      )}
+    </TableCard>
   );
 }
