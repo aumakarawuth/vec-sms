@@ -51,13 +51,16 @@ function sum(rows: TreeRow[], metric?: RoomMetric) {
 }
 
 export function RoomNavigator({
-  academicYearId, metric, metricLabel = 'ความคืบหน้า', value, onChange,
+  academicYearId, metric, metricLabel = 'ความคืบหน้า', value, onChange, studentId, onStudent,
 }: {
   academicYearId: string | null;
   metric?: RoomMetric;
   metricLabel?: string;
   value: NavSelection;
   onChange: (v: NavSelection) => void;
+  /** ส่งมาเมื่อหน้านั้นทำงานระดับรายคน — เพิ่มคอลัมน์ที่สี่เป็นรายชื่อในห้อง */
+  studentId?: string | null;
+  onStudent?: (s: RoomStudent) => void;
 }) {
   const tree = useAsync(
     () => (academicYearId ? api.get<TreeRow[]>(`/registry/tree${qs({ academicYearId })}`) : Promise.resolve([])),
@@ -65,13 +68,14 @@ export function RoomNavigator({
   );
   return (
     <AsyncView state={tree} empty="ยังไม่มีการจัดชั้นปี/ห้องประจำในปีการศึกษานี้ — จัดห้องได้ที่หน้างานวิชาการรายปี">
-      {(rows) => <Panels rows={rows} metric={metric} metricLabel={metricLabel} value={value} onChange={onChange} />}
+      {(rows) => <Panels rows={rows} metric={metric} metricLabel={metricLabel} value={value} onChange={onChange} academicYearId={academicYearId} studentId={studentId} onStudent={onStudent} />}
     </AsyncView>
   );
 }
 
-function Panels({ rows, metric, metricLabel, value, onChange }: {
+function Panels({ rows, metric, metricLabel, value, onChange, academicYearId, studentId, onStudent }: {
   rows: TreeRow[]; metric?: RoomMetric; metricLabel: string; value: NavSelection; onChange: (v: NavSelection) => void;
+  academicYearId: string | null; studentId?: string | null; onStudent?: (s: RoomStudent) => void;
 }) {
   const curKey = (r: TreeRow) => r.curriculumId ?? NONE;
   const curricula = [...new Map(rows.map((r) => [curKey(r), r])).values()];
@@ -95,7 +99,7 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
         <strong>ขอบเขต:</strong> {crumbs.length ? crumbs.join(' › ') : <span className="muted">เลือกหลักสูตรทางซ้าย แล้วไล่ลงไปถึงห้อง</span>}
         <span className="muted" style={{ marginLeft: 'auto' }}>ทั้งปีการศึกษา {total(rows)} คน</span>
       </div>
-      <div className="nav-cols">
+      <div className={onStudent ? 'nav-cols nav-cols-4' : 'nav-cols'}>
         <div className="nav-col">
           <table>
             <thead><tr><th>ประเภทวิชา · สาขาวิชา · หลักสูตร</th><th className="num">คน</th>{metric && <th className="num">{metricLabel}</th>}</tr></thead>
@@ -159,6 +163,13 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
             </tbody>
           </table>
         </div>
+        {onStudent && (
+          <div className="nav-col">
+            {academicYearId && value.groupCode
+              ? <StudentColumn academicYearId={academicYearId} value={value} studentId={studentId ?? null} onStudent={onStudent} />
+              : <table><thead><tr><th>นักศึกษา</th></tr></thead><tbody><tr><td className="muted">เลือกห้องก่อน</td></tr></tbody></table>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -166,3 +177,33 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
 
 /** ค่าใน URL `groupCode=-` = กองยังไม่จัดห้อง (null ใน API) */
 export const groupFromNav = (g: string | null) => (g === NONE ? null : g);
+
+export interface RoomStudent { id: string; student_code: string; class_number: number | null; status: string; full_name: string }
+
+/** ระดับสุดท้ายแบบ SISA — รายชื่อในห้อง เรียงตามเลขที่ */
+function StudentColumn({ academicYearId, value, studentId, onStudent }: {
+  academicYearId: string; value: NavSelection; studentId: string | null; onStudent: (s: RoomStudent) => void;
+}) {
+  const curriculumId = value.cur && value.cur !== NONE ? value.cur : undefined;
+  const list = useAsync(
+    () => api.get<RoomStudent[]>(`/registry/room-students${qs({ academicYearId, groupCode: groupFromNav(value.groupCode) ?? undefined, curriculumId })}`),
+    [academicYearId, value.groupCode, curriculumId],
+  );
+  return (
+    <AsyncView state={list} empty="ไม่มีนักศึกษาในห้องนี้">
+      {(rows) => (
+        <table>
+          <thead><tr><th style={{ width: 44 }}>เลขที่</th><th>นักศึกษา</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className={studentId === r.id ? 'sel' : ''} onClick={() => onStudent(r)}>
+                <td>{r.class_number ?? ''}</td>
+                <td>{r.student_code} {r.full_name}{r.status !== 'active' && <> <Badge>{r.status}</Badge></>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </AsyncView>
+  );
+}
