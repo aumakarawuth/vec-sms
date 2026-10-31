@@ -402,3 +402,12 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 .crumbs b { color: var(--ink-soft); font-weight: 600; }
 @media (max-width: 900px) { .subnav { display: none; } }
 .subnav-group { display: block; margin: 8px 0 2px; padding: 0 8px; font-size: 10.5px; color: #a1a3ae; }
+
+/* ─── สถิตินักศึกษา: รายการหัวข้อซ้าย · ตารางขวา (แบบเมนูรายงานของ SISA) ─── */
+.stats-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+.stats-dims { display: flex; flex-direction: column; gap: 2px; }
+.stats-dims button { text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+.stats-dims button:hover { background: #f3f5fb; }
+.stats-dims button.active { background: #dfe8ff; color: #344aa8; font-weight: 600; }
+.stats-dims small { color: #a1a3ae; font-weight: 400; }
+@media (max-width: 900px) { .stats-layout { grid-template-columns: 1fr; } }

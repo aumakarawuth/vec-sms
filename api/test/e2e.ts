@@ -5240,6 +5240,37 @@ async function main() {
     expect((await teacher('/finance/reports/cashier')).status === 403, 'ปิดยอดต้องได้ 403');
   });
 
+  // ─── สถิตินักศึกษาแบบ SISA — มิติเดียว × ชั้นปี ───
+
+  await check('API-263 ทุกมิติของสถิตินักศึกษารวมได้จำนวนคนเท่ากัน (ไม่มีมิติไหนทำคนหายหรือนับซ้ำ)', async () => {
+    const dims = await registrar('/reports/students/dimensions');
+    expect(dims.status === 200, `ได้ ${dims.status}`);
+    const totals: Record<string, number> = {};
+    for (const d of dims.body) {
+      const path = d.sensitive ? 'breakdown-sensitive' : 'breakdown';
+      const r = await registrar(`/reports/students/${path}?dimension=${d.key}&academicYearId=${AY}&status=all`);
+      expect(r.status === 200, `${d.key}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d.key] = r.body.rows.reduce((t: number, x: any) => t + x.students, 0);
+    }
+    const values = Object.values(totals);
+    expect(values.every((v) => v === values[0]), `ยอดรวมแต่ละมิติต้องเท่ากัน ได้ ${JSON.stringify(totals)}`);
+    return `${dims.body.length} มิติ · ${values[0]} คน`;
+  });
+
+  await check('API-264 มิติอ่อนไหวเปิดให้เฉพาะบทบาทที่เห็นข้อมูลอ่อนไหวทั้งวิทยาลัย', async () => {
+    const f = await finance(`/reports/students/breakdown-sensitive?dimension=religion&academicYearId=${AY}`);
+    expect(f.status === 403, `การเงินควรได้ 403 ได้ ${f.status}`);
+    const sneak = await finance(`/reports/students/breakdown?dimension=religion&academicYearId=${AY}`);
+    expect(sneak.status === 400, `เรียกมิติอ่อนไหวผ่านเส้นทางปกติควรได้ 400 ได้ ${sneak.status}`);
+    const ok = await finance(`/reports/students/breakdown?dimension=gender&academicYearId=${AY}`);
+    expect(ok.status === 200, `มิติทั่วไปต้องเปิดให้การเงินได้ ${ok.status}`);
+  });
+
+  await check('API-265 ชื่อมิติที่ไม่รู้จักถูกปฏิเสธ ไม่ถูกต่อเข้า SQL', async () => {
+    const r = await registrar(`/reports/students/breakdown?dimension=${encodeURIComponent("gender; drop table student")}&academicYearId=${AY}`);
+    expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
   await app.close();
 
   console.log('');

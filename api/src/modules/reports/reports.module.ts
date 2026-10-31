@@ -277,6 +277,39 @@ export class ReportsService {
   }
 
   /** จำนวนนักศึกษาต่อหลักสูตร — ใช้ตอบว่าสาขาไหนคนเยอะ/น้อยโดยไม่ต้องนับเอง */
+  /**
+   * จำนวนนักศึกษาแยกตามมิติหนึ่ง × ชั้นปี — ทุกเมนู "ข้อมูลสถิติ" ของ SISA
+   * คือตารางรูปนี้ (แถว = ค่าของมิติ · คอลัมน์ = ชั้นปี) ต่างกันแค่มิติ
+   * ชั้นปีมาจากการจัดห้องของปีการศึกษาที่เลือก คนที่ยังไม่ถูกจัดได้ชั้นปีว่าง
+   * และยังถูกนับเสมอ — ตัดทิ้งแล้วยอดรวมจะไม่เท่ากับจำนวนนักศึกษาจริง
+   */
+  async studentBreakdown(dimension: string, academicYearId: string, status: string) {
+    const dim = STUDENT_DIMENSIONS[dimension];
+    const where = STATUS_FILTER[status];
+    if (!dim || !where) throw new BadRequestException('ไม่รู้จักมิติหรือสถานะที่ขอ');
+    const rows = await this.db.query<{ value: string; study_year: number | null; students: string }>(
+      `with b as (
+         select s.id, s.person_id, s.travel_mode, s.parents_marital,
+                pe.gender, pe.birth_date, pe.nationality,
+                p.study_year, p.group_code
+           from student s
+           join person pe on pe.id = s.person_id
+           left join student_class_placement p
+             on p.student_id = s.id and p.academic_year_id = $1
+          where ${where})
+       select ${dim.sql} as value, b.study_year, count(*) as students
+         from b
+        group by 1, 2
+        order by 1, 2 nulls first`,
+      [academicYearId],
+    );
+    return {
+      dimension,
+      label: dim.label,
+      rows: rows.map((r) => ({ value: r.value, studyYear: r.study_year, students: Number(r.students) })),
+    };
+  }
+
   async byCurriculum() {
     return this.db.query(
       `select cur.name_th as curriculum_name, cv.edition_be, cur.shift,
@@ -292,6 +325,77 @@ export class ReportsService {
   }
 }
 
+
+/**
+ * มิติของรายงานสถิตินักศึกษาแบบ SISA ("ข้อมูลสถิติ" 19 เมนู) — แต่ละมิติคือ
+ * นิพจน์ SQL ที่เขียนตายตัวไว้ที่นี่ ชื่อมิติจาก query string ใช้เลือกคีย์
+ * เท่านั้น ไม่เคยถูกต่อเข้าไปใน SQL ตรง ๆ
+ *
+ * ─── ทำไมมิติอ่อนไหวแยกออกมา ───
+ * ศาสนา เชื้อชาติ ความพิการ และน้ำหนักส่วนสูงอยู่ใน `person_sensitive` ซึ่ง RLS
+ * ให้เห็นทั้งวิทยาลัยเฉพาะ registrar/student_affairs/director/admin (0053)
+ * บทบาทอื่นเรียกได้ก็จะได้ตัวเลขที่นับเฉพาะแถวที่ตัวเองเห็น — ยอดผิดโดยไม่มี
+ * อะไรฟ้อง จึงปฏิเสธตรง ๆ ดีกว่าคืนตัวเลขที่ดูเหมือนถูก
+ */
+export const STUDENT_DIMENSIONS: Record<string, { label: string; sql: string; sensitive?: boolean }> = {
+  room:        { label: 'ห้อง', sql: `coalesce(b.group_code, 'ยังไม่จัดห้อง')` },
+  program:     { label: 'สาขาวิชา/หลักสูตร', sql: `coalesce((select cur.name_th from student_curriculum sc
+                    join curriculum_version cv on cv.id = sc.curriculum_version_id
+                    join curriculum cur on cur.id = cv.curriculum_id
+                   where sc.student_id = b.id and sc.effective_to is null
+                   order by sc.effective_from desc limit 1), 'ยังไม่ผูกหลักสูตร')` },
+  gender:      { label: 'เพศ', sql: `case b.gender when 'male' then 'ชาย' when 'female' then 'หญิง'
+                    when 'other' then 'อื่น ๆ' else 'ไม่ระบุ' end` },
+  age:         { label: 'อายุ (ปี)', sql: `coalesce(extract(year from age(current_date, b.birth_date))::int::text, 'ไม่ระบุ')` },
+  nationality: { label: 'สัญชาติ', sql: `coalesce(nullif(b.nationality, ''), 'ไม่ระบุ')` },
+  province:    { label: 'จังหวัด (ตามทะเบียนบ้าน)', sql: `coalesce((select a.province_th from person_address a
+                   where a.person_id = b.person_id and a.kind = 'registered' limit 1), 'ไม่ระบุ')` },
+  travel:      { label: 'พาหนะที่ใช้มาเรียน', sql: `case b.travel_mode when 'walk' then 'เดิน'
+                    when 'motorcycle' then 'จักรยานยนต์' when 'car' then 'รถยนต์'
+                    when 'paid_transit' then 'รถโดยสาร (เสียค่าใช้จ่าย)' when 'free_transit' then 'รถโดยสาร (ไม่เสียค่าใช้จ่าย)'
+                    when 'loaned_bicycle' then 'จักรยานยืมเรียน' when 'school_van' then 'รถรับส่งของสถานศึกษา'
+                    when 'guardian' then 'ผู้ปกครองรับส่ง' when 'other' then 'อื่น ๆ' else 'ไม่ระบุ' end` },
+  marital:     { label: 'สถานภาพบิดา-มารดา', sql: `case b.parents_marital when 'together' then 'อยู่ด้วยกัน'
+                    when 'separated' then 'แยกกันอยู่' when 'divorced' then 'หย่าร้าง'
+                    when 'father_deceased' then 'บิดาเสียชีวิต' when 'mother_deceased' then 'มารดาเสียชีวิต'
+                    when 'both_deceased' then 'เสียชีวิตทั้งคู่' when 'unknown' then 'ไม่ทราบ' else 'ไม่ระบุ' end` },
+  fatherJob:   { label: 'อาชีพบิดา', sql: `coalesce((select nullif(sp.occupation_th, '') from student_parent sp
+                   where sp.student_id = b.id and sp.role = 'father'), 'ไม่ระบุ')` },
+  motherJob:   { label: 'อาชีพมารดา', sql: `coalesce((select nullif(sp.occupation_th, '') from student_parent sp
+                   where sp.student_id = b.id and sp.role = 'mother'), 'ไม่ระบุ')` },
+  income:      { label: 'รายได้บิดา-มารดารวมต่อเดือน', sql: `(select case
+                    when sum(sp.income_monthly) is null then 'ไม่ระบุ'
+                    when sum(sp.income_monthly) < 5000 then '1. ต่ำกว่า 5,000'
+                    when sum(sp.income_monthly) < 10000 then '2. 5,000–9,999'
+                    when sum(sp.income_monthly) < 20000 then '3. 10,000–19,999'
+                    when sum(sp.income_monthly) < 50000 then '4. 20,000–49,999'
+                    else '5. 50,000 ขึ้นไป' end
+                   from student_parent sp where sp.student_id = b.id)` },
+  priorSchool: { label: 'สถานศึกษาเดิม', sql: `coalesce((select nullif(pe.school_th, '') from student_prior_education pe
+                   where pe.student_id = b.id order by pe.completed_year_be desc nulls last limit 1), 'ไม่ระบุ')` },
+  religion:    { label: 'ศาสนา', sensitive: true, sql: `coalesce((select nullif(ps.religion, '') from person_sensitive ps
+                   where ps.person_id = b.person_id), 'ไม่ระบุ')` },
+  ethnicity:   { label: 'เชื้อชาติ', sensitive: true, sql: `coalesce((select nullif(ps.ethnicity, '') from person_sensitive ps
+                   where ps.person_id = b.person_id), 'ไม่ระบุ')` },
+  disability:  { label: 'ความพิการ', sensitive: true, sql: `coalesce((select ps.disability::text from person_sensitive ps
+                   where ps.person_id = b.person_id), 'ไม่มี/ไม่ระบุ')` },
+  bmi:         { label: 'ดัชนีมวลกาย (BMI)', sensitive: true, sql: `(select case
+                    when ps.weight_kg is null or ps.height_cm is null then 'ไม่ระบุ'
+                    when ps.weight_kg / power(ps.height_cm / 100, 2) < 18.5 then '1. ผอม (ต่ำกว่า 18.5)'
+                    when ps.weight_kg / power(ps.height_cm / 100, 2) < 23 then '2. สมส่วน (18.5–22.9)'
+                    when ps.weight_kg / power(ps.height_cm / 100, 2) < 25 then '3. ท้วม (23–24.9)'
+                    else '4. อ้วน (25 ขึ้นไป)' end
+                   from (select 1) one left join person_sensitive ps on ps.person_id = b.person_id)` },
+};
+
+const STATUS_FILTER: Record<string, string> = {
+  active:    `s.status = 'active'`,
+  current:   `s.status in ('active', 'on_leave', 'suspended')`,
+  graduated: `s.status = 'graduated'`,
+  left:      `s.status in ('withdrawn', 'transferred_out', 'dismissed')`,
+  all:       `true`,
+};
+
 @Roles('registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin')
 @Controller('reports')
 export class ReportsController {
@@ -305,6 +409,37 @@ export class ReportsController {
   @Get('by-curriculum')
   byCurriculum() {
     return this.svc.byCurriculum();
+  }
+
+  @Get('students/dimensions')
+  studentDimensions() {
+    return Object.entries(STUDENT_DIMENSIONS).map(([key, d]) => ({ key, label: d.label, sensitive: !!d.sensitive }));
+  }
+
+  @Get('students/breakdown')
+  studentBreakdown(
+    @Query('dimension') dimension: string,
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('status') status = 'active',
+  ) {
+    if (STUDENT_DIMENSIONS[dimension]?.sensitive) {
+      throw new BadRequestException('มิตินี้อยู่ในข้อมูลอ่อนไหว ใช้เส้นทาง students/breakdown-sensitive');
+    }
+    return this.svc.studentBreakdown(dimension, academicYearId, status);
+  }
+
+  /** เฉพาะบทบาทที่ RLS ให้เห็นข้อมูลอ่อนไหวทั้งวิทยาลัย — ดูเหตุผลที่ STUDENT_DIMENSIONS */
+  @Roles('registrar', 'student_affairs', 'director', 'admin')
+  @Get('students/breakdown-sensitive')
+  studentBreakdownSensitive(
+    @Query('dimension') dimension: string,
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('status') status = 'active',
+  ) {
+    if (!STUDENT_DIMENSIONS[dimension]?.sensitive) {
+      throw new BadRequestException('มิตินี้ไม่ใช่ข้อมูลอ่อนไหว ใช้เส้นทาง students/breakdown');
+    }
+    return this.svc.studentBreakdown(dimension, academicYearId, status);
   }
 
   @Get('grades')

@@ -48,6 +48,7 @@ import { RiskScreen } from './screens/risk';
 import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen, SUBNAV as SUB_SETTINGS } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
+import { StudentStatisticsScreen } from './screens/student-statistics';
 import { GradeReportsScreen } from './screens/grade-reports';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { AdvisorsScreen } from './screens/advisors';
@@ -338,7 +339,7 @@ function Routes() {
   if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'workload') return <WorkloadScreen />;
   if (head === 'advisors') return <AdvisorsScreen />;
-  if (head === 'statistics') return <StatisticsScreen />;
+  if (head === 'statistics') return second === 'students' ? <StudentStatisticsScreen /> : <StatisticsScreen />;
   if (head === 'grade-reports') return <GradeReportsScreen />;
   if (head === 'clubs') return <ClubsScreen />;
   if (head === 'onet') return <OnetScreen />;
