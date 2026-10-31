@@ -26,7 +26,7 @@ import { DocumentsScreen } from './screens/documents';
 import { EducationLevelsScreen } from './screens/education-levels';
 import { DualScreen } from './screens/dual';
 import { ExamScheduleScreen } from './screens/exam-schedule';
-import { FinanceScreen } from './screens/finance';
+import { FINANCE_SECTIONS, FinanceScreen, type FinanceSection } from './screens/finance';
 import { FinanceCenterScreen, SUBNAV as SUB_FINANCE } from './screens/finance-center';
 import { GradebookScreen } from './screens/gradebook';
 import { GradeLevelsScreen } from './screens/grade-levels';
@@ -326,7 +326,10 @@ function Routes() {
     if (second === 'remedial') return <RemedialScreen />;
     return <AcademicYearScreen />;
   }
-  if (head === 'finance') return <FinanceScreen />;
+  if (head === 'finance') {
+    const section = second && second in FINANCE_SECTIONS ? (second as FinanceSection) : 'payments';
+    return <FinanceScreen key={section} section={section} />;
+  }
   if (head === 'finance-center') return <FinanceCenterScreen />;
   if (head === 'leaves') return <StudentLeaveScreen />;
   if (head === 'letters') return <LettersScreen />;
