@@ -49,6 +49,7 @@ import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen, SUBNAV as SUB_SETTINGS } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
 import { StudentStatisticsScreen } from './screens/student-statistics';
+import { SETTINGS_TOOL_SECTIONS, SettingsToolsScreen, type SettingsToolSection } from './screens/settings-tools';
 import { HR_REPORT_SECTIONS, HrReportsScreen, type HrReportSection } from './screens/hr-reports';
 import { STUDENT_TOOL_SECTIONS, StudentToolsScreen, type StudentToolSection } from './screens/student-tools';
 import { GradeReportsScreen } from './screens/grade-reports';
@@ -341,6 +342,9 @@ function Routes() {
   if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'workload') return <WorkloadScreen />;
   if (head === 'advisors') return <AdvisorsScreen />;
+  if (head === 'settings-tools' && second && second in SETTINGS_TOOL_SECTIONS) {
+    return <SettingsToolsScreen key={second} section={second as SettingsToolSection} />;
+  }
   if (head === 'hr-reports' && second && second in HR_REPORT_SECTIONS) {
     return <HrReportsScreen key={second} section={second as HrReportSection} />;
   }

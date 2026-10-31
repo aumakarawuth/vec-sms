@@ -5361,6 +5361,48 @@ async function main() {
   // ─── งานบุคคล/เลขาใช้งานหน้าของตัวเองได้จริง (0097) ───
   const secretary = api(base, await token(app, base, F.personOther, 'secretary'));
 
+  // ─── การตั้งค่า: ข้อมูลพื้นฐาน · ข้อความบนเอกสาร · บันทึกเหตุการณ์ ───
+
+  await check('API-276 ข้อมูลพื้นฐาน: ครูอ่านตัวเลือกได้แต่เพิ่มไม่ได้ · งานทะเบียนเพิ่มและปิดได้ · ซ้ำไม่ได้', async () => {
+    const list = await teacher('/settings/options?category=religion');
+    expect(list.status === 200 && list.body.some((x: any) => x.label_th === 'พุทธ'), `ครูต้องเห็นค่าตั้งต้น ได้ ${list.status}`);
+    const t = await teacher('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'religion', labelTh: 'ศาสนาของครู' }) });
+    expect(t.status === 403, `ครูเพิ่มต้องได้ 403 ได้ ${t.status}`);
+    const add = await registrar('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'occupation', labelTh: 'อาชีพทดสอบ API-276' }) });
+    expect(add.status === 201, `งานทะเบียนต้องเพิ่มได้ ได้ ${add.status}: ${JSON.stringify(add.body)}`);
+    const dup = await registrar('/settings/options', { method: 'POST', body: JSON.stringify({ category: 'occupation', labelTh: 'อาชีพทดสอบ API-276' }) });
+    expect(dup.status >= 400 && dup.status < 500, `ซ้ำต้องถูกปฏิเสธเป็น 4xx ได้ ${dup.status}`);
+    const off = await registrar(`/settings/options/${add.body.id}`, { method: 'PATCH', body: JSON.stringify({ active: false }) });
+    expect(off.status === 200 && off.body.active === false, `ปิดรายการได้ ได้ ${off.status}`);
+    const bad = await registrar('/settings/options?category=x');
+    expect(bad.status === 400, `หมวดที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+  });
+
+  await check('API-277 ข้อความบนเอกสาร: แก้ได้เฉพาะคีย์ที่แม่แบบอ่านจริง และครูแก้ไม่ได้', async () => {
+    const set = await registrar('/settings/document-texts', {
+      method: 'POST', body: JSON.stringify({ key: 'transcript_criteria_5', textTh: 'เกณฑ์ทดสอบ API-277', textEn: 'Test criteria' }),
+    });
+    expect(set.status === 201, `ได้ ${set.status}: ${JSON.stringify(set.body)}`);
+    const read = await registrar('/settings/document-texts');
+    const row = read.body.find((x: any) => x.key === 'transcript_criteria_5');
+    expect(row?.textTh === 'เกณฑ์ทดสอบ API-277', `อ่านกลับต้องได้ค่าที่บันทึก ได้ ${JSON.stringify(row)}`);
+    const typo = await registrar('/settings/document-texts', { method: 'POST', body: JSON.stringify({ key: 'transcript_critera_5', textTh: 'สะกดผิด' }) });
+    expect(typo.status === 400, `คีย์สะกดผิดต้องได้ 400 ได้ ${typo.status}`);
+    const t = await teacher('/settings/document-texts', { method: 'POST', body: JSON.stringify({ key: 'transcript_criteria_5', textTh: 'ครูแก้' }) });
+    expect(t.status === 403, `ครูต้องได้ 403 ได้ ${t.status}`);
+  });
+
+  await check('API-278 บันทึกเหตุการณ์กรองตามช่วงวันที่ได้ และเปิดเฉพาะผู้บริหาร', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await admin(`/audit?from=${today}&to=${today}`);
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    const none = await admin('/audit?from=2001-01-01&to=2001-01-02');
+    expect(none.body.length === 0, 'ช่วงในอดีตก่อนมีระบบต้องว่าง');
+    const reg = await registrar('/audit');
+    expect(reg.status === 403, `งานทะเบียนต้องได้ 403 ได้ ${reg.status}`);
+    return `วันนี้ ${r.body.length} รายการ`;
+  });
+
   await check('API-274 งานบุคคลสร้างแผนกและดูใบลาได้ ครูสร้างแผนกไม่ได้', async () => {
     const d = await hr('/hr/departments', {
       method: 'POST', body: JSON.stringify({ code: 'T274', nameTh: 'แผนกทดสอบ API-274', kind: 'office' }),

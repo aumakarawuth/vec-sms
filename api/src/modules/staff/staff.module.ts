@@ -65,6 +65,8 @@ class AuditQueryDto {
   @IsOptional() @IsUuid() subjectId?: string;
   @IsOptional() @IsUuid() actorId?: string;
   @IsOptional() @IsString() entity?: string;
+  @IsOptional() @IsISO8601() from?: string;
+  @IsOptional() @IsISO8601() to?: string;
 }
 
 @Injectable()
@@ -282,9 +284,12 @@ export class StaffService {
         where ($1::uuid is null or al.subject_id = $1)
           and ($2::uuid is null or al.actor_id   = $2)
           and ($3::text is null or al.entity     = $3)
+          and ($4::date is null or al.occurred_at >= $4::date)
+          and ($5::date is null or al.occurred_at <  $5::date + 1)
         order by al.occurred_at desc
         limit 500`,
-      [filter.subjectId ?? null, filter.actorId ?? null, filter.entity ?? null],
+      [filter.subjectId ?? null, filter.actorId ?? null, filter.entity ?? null,
+       filter.from ?? null, filter.to ?? null],
     );
   }
 

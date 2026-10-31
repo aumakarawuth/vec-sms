@@ -33,6 +33,7 @@ import { PlatformModule } from './modules/platform/platform.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { GovernmentExportsModule } from './modules/government-exports/government-exports.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { ClubsModule } from './modules/clubs/clubs.module';
 import { OnetModule } from './modules/onet/onet.module';
 import { ExamScheduleModule } from './modules/exam-schedule/exam-schedule.module';
@@ -74,6 +75,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     SubscriptionModule,
     GovernmentExportsModule,
     ReportsModule,
+    SettingsModule,
     ClubsModule,
     OnetModule,
     ExamScheduleModule,

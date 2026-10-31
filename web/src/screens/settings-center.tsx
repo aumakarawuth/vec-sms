@@ -11,6 +11,11 @@ const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
   {key:'curriculum',title:'หลักสูตร',desc:'เลือกหลักสูตร สอศ. แก้ชื่อ และนำเข้าเป็นฉบับร่าง',path:'/curriculum-library',state:'ready'},
   {key:'education-level',title:'ระดับการศึกษา',desc:'กำหนดระดับและฉบับหลักสูตร (ปวช./ปวส.) ที่ใช้ในระบบ',path:'/education-levels',state:'ready'},
  ]},
+ {title:'ข้อมูลพื้นฐานและเอกสาร',subtitle:'รายการตัวเลือก ข้อความบนเอกสาร และบันทึกการเข้าถึง',items:[
+  {key:'options',title:'ข้อมูลพื้นฐาน',desc:'คำนำหน้า ศาสนา สัญชาติ เชื้อชาติ อาชีพ ธนาคาร สถานศึกษา วุฒิการศึกษา',path:'/settings-tools/options',state:'ready'},
+  {key:'document-texts',title:'ข้อความบนเอกสาร',desc:'เกณฑ์การสำเร็จการศึกษา หมายเหตุ และชื่อผู้ลงนามบนใบ รบ.',path:'/settings-tools/document-texts',state:'ready'},
+  {key:'audit',title:'บันทึกเหตุการณ์',desc:'ใครเข้าถึงหรือเปลี่ยนข้อมูลของใคร เมื่อไร (ผู้บริหารเท่านั้น)',path:'/settings-tools/audit',state:'ready'},
+ ]},
  {title:'เครื่องมือ',subtitle:'งานตามกำหนดเวลา นำเข้า/ส่งออกข้อมูล และสื่อ',items:[
   {key:'jobs',title:'งานตามกำหนดเวลา',desc:'ดูสถานะและสั่งรันงานประจำวันของระบบ (คำนวณสถิติ ส่งแจ้งเตือน ฯลฯ)',path:'/jobs',state:'ready'},
   {key:'import',title:'นำเข้าข้อมูล',desc:'นำเข้าข้อมูลนักศึกษาและบุคลากรจากไฟล์ พร้อมขั้นตรวจสอบก่อนบันทึกจริง',path:'/import',state:'ready'},
