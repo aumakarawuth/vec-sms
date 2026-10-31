@@ -575,6 +575,35 @@ export class ReportsService {
    * คู่กับ "เต็ม" = ผลรวมน้ำหนักของรายการที่มีคะแนนแล้ว เพื่อให้รู้ว่าคะแนนต่ำ
    * เพราะทำได้น้อย หรือเพราะครูยังกรอกไม่ครบ
    */
+  /**
+   * รายชื่อนักศึกษาที่ลงทะเบียนเรียนของห้องหนึ่ง — SISA "รายชื่อนักศึกษาที่ลงทะเบียนเรียน"
+   * หนึ่งแถวต่อหนึ่งคน พร้อมรายวิชาและหน่วยกิตรวมของภาคนั้น คนในห้องที่ยังไม่ได้ลง
+   * สักวิชาก็ต้องอยู่ในรายการด้วย (หน่วยกิต 0) — รายชื่อที่ตัดคนเหล่านั้นทิ้งคือรายชื่อ
+   * ที่ทำให้งานทะเบียนเข้าใจว่าทั้งห้องลงครบแล้ว
+   */
+  async roomRegistrations(termId: string, studyYear: number, groupCode: string | null) {
+    return this.db.query<{
+      student_code: string; class_number: number | null; full_name: string; status: string;
+      courses: string[] | null; credits: string;
+    }>(
+      `select s.student_code, s.class_number, s.status::text as status,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name,
+              array_agg(c.code order by c.code) filter (where c.id is not null) as courses,
+              coalesce(sum(c.credits), 0) as credits
+         from term t
+         join student_class_placement pl on pl.academic_year_id = t.academic_year_id
+         join student s on s.id = pl.student_id
+         join person pe on pe.id = s.person_id
+         left join enrollment e on e.student_id = s.id and e.term_id = t.id and e.status <> 'withdrawn'
+         left join class_section cs on cs.id = e.class_section_id
+         left join course c on c.id = cs.course_id
+        where t.id = $1 and pl.study_year = $2 and pl.group_code is not distinct from $3::text
+        group by s.id, s.student_code, s.class_number, s.status, pe.prefix_th, pe.first_name_th, pe.last_name_th
+        order by s.class_number nulls last, s.student_code`,
+      [termId, studyYear, groupCode],
+    );
+  }
+
   async roomScores(termId: string, groupCode: string | null) {
     return this.db.query(
       `select s.id as student_id, s.student_code, s.class_number,
@@ -716,6 +745,39 @@ export class ReportsController {
   }
 
   /** groupCode ว่าง = กอง "ยังไม่จัดห้อง" */
+  @Get('terms/:termId/room-registrations')
+  roomRegistrations(@Param('termId', ParseUuidPipe) termId: string, @Query('studyYear') studyYear?: string, @Query('groupCode') groupCode?: string) {
+    const y = Number(studyYear);
+    if (!Number.isInteger(y) || y < 1 || y > 9) throw new BadRequestException('studyYear ต้องเป็นชั้นปี 1–9');
+    return this.svc.roomRegistrations(termId, y, !groupCode || groupCode === '-' ? null : groupCode);
+  }
+
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('terms/:termId/room-registrations/print')
+  async roomRegistrationsPrint(
+    @Param('termId', ParseUuidPipe) termId: string,
+    @Query('studyYear') studyYear?: string,
+    @Query('groupCode') groupCode?: string,
+    @Query('scopeLabel') scopeLabel?: string,
+  ) {
+    const rows = await this.roomRegistrations(termId, studyYear, groupCode);
+    const body = `<table>
+  <thead><tr>
+    <th style="width:7%">เลขที่</th><th style="width:15%">รหัสนักศึกษา</th><th style="width:26%">ชื่อ — นามสกุล</th>
+    <th>รายวิชาที่ลงทะเบียน</th><th style="width:8%">นก.</th>
+  </tr></thead>
+  <tbody>${rows.length === 0 ? '<tr><td colspan="5" class="mid">— ไม่มีนักศึกษาในห้องนี้ —</td></tr>' : rows.map((r) => `<tr>
+    <td class="mid">${esc(r.class_number ?? '')}</td>
+    <td>${esc(r.student_code)}</td>
+    <td>${esc(r.full_name)}</td>
+    <td>${r.courses?.length ? esc(r.courses.join(' · ')) : '<span class="tag danger">ยังไม่ได้ลงทะเบียน</span>'}</td>
+    <td class="num">${esc(Number(r.credits))}</td>
+  </tr>`).join('')}</tbody>
+</table>`;
+    const pending = rows.filter((r) => !r.courses?.length).length;
+    return reportSheet('รายชื่อนักศึกษาที่ลงทะเบียนเรียน', `${scopeLabel ?? ''} — ${rows.length} คน · ยังไม่ได้ลงทะเบียน ${pending} คน`, body);
+  }
+
   @Get('terms/:termId/room-scores')
   roomScores(@Param('termId', ParseUuidPipe) termId: string, @Query('groupCode') groupCode?: string) {
     return this.svc.roomScores(termId, groupCode || null);

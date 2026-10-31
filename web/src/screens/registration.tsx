@@ -343,6 +343,19 @@ export function RegistrationScreen() {
             onChange={(v) => setQuery({ cur: v.cur, studyYear: v.studyYear, groupCode: v.groupCode })}
           />
 
+          {termId && roomKey && studyYear && (
+            <div className="row" style={{ justifyContent: 'flex-end', margin: '8px 0' }}>
+              <PrintButton
+                path={`/reports/terms/${termId}/room-registrations/print${qs({
+                  studyYear, groupCode: navGroup ?? undefined,
+                  scopeLabel: `${term ? `ภาคเรียนที่ ${term.ordinal}/${term.year_be}` : ''} · ชั้นปี ${studyYear} ห้อง ${groupCode ?? 'ยังไม่จัดห้อง'}`,
+                })}`}
+              >
+                ออกรายงานรายชื่อผู้ลงทะเบียน
+              </PrintButton>
+            </div>
+          )}
+
           {studyYear && (
             <AsyncView state={plan} empty="เลือกห้องจากรายการด้านบน">
               {(p) =>

@@ -5414,6 +5414,40 @@ async function main() {
     return `${checked} แถวจาก ${all.body.length}`;
   });
 
+  await check('API-287 รายชื่อผู้ลงทะเบียนของห้อง: มีครบทุกคนในห้อง (รวมคนที่ยังไม่ลง) และหน่วยกิตตรงกับการลงทะเบียนจริง', async () => {
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    let rooms = 0;
+    try {
+      for (const r of tree.body) {
+        if (!r.curriculumId) continue;
+        const g = r.groupCode ?? '-';
+        const list = await registrar(`/reports/terms/${TERM1}/room-registrations?studyYear=${r.studyYear}&groupCode=${encodeURIComponent(g)}`);
+        expect(list.status === 200, `${g}: ได้ ${list.status}`);
+        const real = await db.query(
+          `select count(*)::int as n from student_class_placement p join term t on t.academic_year_id = p.academic_year_id
+            where t.id = $1 and p.study_year = $2 and p.group_code is not distinct from $3`, [TERM1, r.studyYear, r.groupCode]);
+        expect(list.body.length === real.rows[0].n, `${g}: รายชื่อ ${list.body.length} คน แต่ในห้องมี ${real.rows[0].n}`);
+        for (const x of list.body) {
+          const cr = await db.query(
+            `select coalesce(sum(c.credits), 0)::numeric as n from enrollment e join student s on s.id = e.student_id
+               join class_section cs on cs.id = e.class_section_id join course c on c.id = cs.course_id
+              where s.student_code = $1 and e.term_id = $2 and e.status <> 'withdrawn'`, [x.student_code, TERM1]);
+          expect(Number(x.credits) === Number(cr.rows[0].n), `${x.student_code}: นก. ${x.credits} ไม่ตรงกับที่ลงจริง ${cr.rows[0].n}`);
+        }
+        rooms++;
+      }
+    } finally {
+      await db.end();
+    }
+    const html = await registrar(`/reports/terms/${TERM1}/room-registrations/print?studyYear=1&groupCode=-`);
+    expect(html.status === 200, `ใบพิมพ์ได้ ${html.status}`);
+    const t = await teacher(`/reports/terms/${TERM1}/room-registrations?studyYear=1&groupCode=-`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${rooms} ห้อง`;
+  });
+
   await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
     const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
     let rows = 0;
