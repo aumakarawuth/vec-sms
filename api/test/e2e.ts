@@ -5358,6 +5358,33 @@ async function main() {
     expect(bad.status === 400, `มิติที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
   });
 
+  // ─── งานบุคคล/เลขาใช้งานหน้าของตัวเองได้จริง (0097) ───
+  const secretary = api(base, await token(app, base, F.personOther, 'secretary'));
+
+  await check('API-274 งานบุคคลสร้างแผนกและดูใบลาได้ ครูสร้างแผนกไม่ได้', async () => {
+    const d = await hr('/hr/departments', {
+      method: 'POST', body: JSON.stringify({ code: 'T274', nameTh: 'แผนกทดสอบ API-274', kind: 'office' }),
+    });
+    expect(d.status === 201, `งานบุคคลต้องสร้างแผนกได้ ได้ ${d.status}: ${JSON.stringify(d.body)}`);
+    const l = await hr('/hr/leaves');
+    expect(l.status === 200, `งานบุคคลต้องเห็นใบลาได้ ได้ ${l.status}`);
+    const t = await teacher('/hr/departments', {
+      method: 'POST', body: JSON.stringify({ code: 'T274B', nameTh: 'แผนกของครู', kind: 'office' }),
+    });
+    expect(t.status === 403, `ครูต้องได้ 403 ได้ ${t.status}`);
+  });
+
+  await check('API-275 เลขาลงประกาศได้ แต่ออกหนังสือถึงผู้ปกครองเองไม่ได้', async () => {
+    const a = await secretary('/announcements', {
+      method: 'POST', body: JSON.stringify({ titleTh: 'ประกาศ API-275', bodyTh: 'ทดสอบ', publishNow: false }),
+    });
+    expect(a.status === 201, `เลขาต้องลงประกาศได้ ได้ ${a.status}: ${JSON.stringify(a.body)}`);
+    const letter = await secretary('/documents/letters', {
+      method: 'POST', body: JSON.stringify({ studentId: F.student, kind: 'conduct_certificate' }),
+    });
+    expect(letter.status === 403, `เลขาออกหนังสือเองต้องได้ 403 ได้ ${letter.status}`);
+  });
+
   await check('API-271 วันที่ปี พ.ศ. ถูกปฏิเสธทุกทาง — body · query · ช่องซ้อนในอาร์เรย์ — และไม่มีอะไรถูกเขียน', async () => {
     const before = await registrar(`/students/${F.student}/status-history`);
     const body = await registrar(`/students/${F.student}/status`, {

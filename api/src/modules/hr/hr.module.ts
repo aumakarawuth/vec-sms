@@ -313,13 +313,14 @@ export class HrService {
  * จึงจำกัดไว้ที่งานบุคคลและผู้บริหาร — RLS กันซ้ำอีกชั้น และเปิดให้
  * บุคลากรเห็นของตัวเองผ่านนโยบาย restrictive ใน 0035
  */
-@Roles('registrar', 'director', 'admin')
+// hr ตั้งแต่ 0097 — ฐานข้อมูลเปิดให้งานบุคคลเขียนได้แล้ว (hr_writer())
+@Roles('registrar', 'hr', 'director', 'admin')
 @Controller('hr')
 class HrController {
   constructor(private readonly svc: HrService) {}
 
   /** โครงสร้างหน่วยงานเปิดกว้างกว่าเรื่องอื่น เพราะทุกคนต้องรู้ว่าสังกัดที่ไหน */
-  @Roles('registrar', 'academic', 'teacher', 'director', 'admin')
+  @Roles('registrar', 'academic', 'teacher', 'hr', 'director', 'admin')
   @Get('departments')
   departments() {
     return this.svc.departments();
