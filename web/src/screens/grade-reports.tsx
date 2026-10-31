@@ -22,6 +22,7 @@ import {
   AsyncView, Badge, Card, Notice, PageHead, PrintButton, RestrictedNotice, TableCard, useAsync, useCan, type Async,
 } from '../ui/kit';
 import { useTermPicker } from '../ui/term-picker';
+import { RoomNavigator, type NavSelection } from '../ui/room-navigator';
 
 /** ทั้งคอนโทรลเลอร์ /reports/* (รวม /grades /failing-students /curriculum-check /weekly-attendance) ผูก @Roles ไว้ทั้งชุด */
 const REPORTS_ROLES: Role[] = ['registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin'];
@@ -100,10 +101,13 @@ function Stat({ label, value, tone = 'primary' }: { label: string; value: string
   );
 }
 
-function CurriculumCheckCard() {
+function CurriculumCheckCard({ academicYearId }: { academicYearId: string | null }) {
   const [typed, setTyped] = useState('');
   const [q, setQ] = useState('');
   const [studentId, setStudentId] = useState('');
+  /* ไล่จากห้องแบบ SISA หรือค้นหาด้วยรหัส — สองทางเลือกคนคนเดียวกัน */
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
+  const [picked, setPicked] = useState<{ student_code: string; full_name: string } | null>(null);
 
   const students = useAsync(
     () => (q ? api.get<StudentRow[]>(`/students${qs({ q, limit: 20 })}`) : Promise.resolve([])),
@@ -113,7 +117,7 @@ function CurriculumCheckCard() {
     () => (studentId ? api.get<CurriculumRow[]>(`/reports/curriculum-check/${studentId}`) : Promise.resolve([])),
     [studentId],
   );
-  const student = students.data?.find((s) => s.id === studentId);
+  const student = students.data?.find((s) => s.id === studentId) ?? picked;
 
   return (
     <TableCard
@@ -138,13 +142,20 @@ function CurriculumCheckCard() {
         </div>
       }
     >
+      <RoomNavigator
+        academicYearId={academicYearId}
+        value={nav}
+        onChange={setNav}
+        studentId={studentId}
+        onStudent={(st) => { setPicked(st); setStudentId(st.id); }}
+      />
       {q && !studentId && (
         <div style={{ padding: '8px 0' }}>
           <AsyncView state={students} empty="ไม่พบนักศึกษาที่ตรงกับคำค้น">
             {(list) => (
               <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
                 {list.map((s) => (
-                  <button key={s.id} className="ghost" onClick={() => setStudentId(s.id)}>
+                  <button key={s.id} className="ghost" onClick={() => { setPicked(null); setStudentId(s.id); }}>
                     {s.student_code} {s.full_name}
                   </button>
                 ))}
@@ -154,7 +165,7 @@ function CurriculumCheckCard() {
         </div>
       )}
       {!studentId ? (
-        <div className="empty">ค้นหาแล้วเลือกนักศึกษาหนึ่งคน — แผนการเรียนตามหลักสูตรและสถานะรายวิชาจะปรากฏที่นี่</div>
+        <div className="empty">ไล่จากห้องหรือค้นหา แล้วเลือกนักศึกษาหนึ่งคน — แผนการเรียนตามหลักสูตรและสถานะรายวิชาจะปรากฏที่นี่</div>
       ) : (
         <AsyncView state={rows} empty="นักศึกษาคนนี้ยังไม่ได้ผูกหลักสูตร">
           {(list) => (
@@ -488,7 +499,7 @@ export function GradeReportsScreen() {
         ในหน้าลงทะเบียนเรียนเสริม/เรียนปรับเกรดรายคน
       </Notice>
 
-      <CurriculumCheckCard />
+      <CurriculumCheckCard academicYearId={term?.academic_year_id ?? null} />
 
       <WeeklyAttendanceCard terms={terms} />
       </>
