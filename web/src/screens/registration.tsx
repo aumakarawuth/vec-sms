@@ -23,6 +23,7 @@
  * มิฉะนั้นเจ้าหน้าที่จะไม่รู้ว่าต้องตามใคร
  */
 import { useEffect, useState } from 'react';
+import { groupFromNav, RoomNavigator, roomKeyOf } from '../ui/room-navigator';
 import { api, qs } from '../core/api';
 import { fetchSections, type Section } from '../core/catalog';
 import { num } from '../core/fmt';
@@ -196,8 +197,10 @@ export function RegistrationScreen() {
    * ถ้าเก็บใน state ล้วน คนรับจะเปิดมาที่รายการห้องเปล่า ๆ แล้วต้องเดาต่อ
    */
   const studyYear = route.query.get('studyYear');
-  const groupCode = route.query.get('groupCode');
-  const roomKey = studyYear ? `${studyYear}/${groupCode ?? ''}` : '';
+  const navGroup = route.query.get('groupCode');
+  const groupCode = groupFromNav(navGroup);
+  const cur = route.query.get('cur');
+  const roomKey = studyYear && navGroup ? `${studyYear}/${groupCode ?? ''}` : '';
 
   const setQuery = (patch: Record<string, string | null>) => {
     const q = new URLSearchParams(route.query);
@@ -215,7 +218,7 @@ export function RegistrationScreen() {
 
   const plan = useAsync(
     () =>
-      termId && studyYear
+      termId && roomKey
         ? api.get<RoomPlan>(
             `/registration/rooms/plan${qs({ termId, studyYear, groupCode })}`,
           )
@@ -332,12 +335,12 @@ export function RegistrationScreen() {
 
       {tab === 'room' ? (
         <>
-          <RoomList
-            rooms={rooms}
-            selected={studyYear ? { studyYear, groupCode } : null}
-            onPick={(r) =>
-              setQuery({ studyYear: String(r.study_year), groupCode: r.group_code })
-            }
+          <RoomNavigator
+            academicYearId={term?.academic_year_id ?? null}
+            metricLabel="ลงแล้ว"
+            metric={new Map((rooms.data ?? []).map((r) => [roomKeyOf(r.study_year, r.group_code), { done: Number(r.students_registered), total: Number(r.students_total) }]))}
+            value={{ cur, studyYear, groupCode: navGroup }}
+            onChange={(v) => setQuery({ cur: v.cur, studyYear: v.studyYear, groupCode: v.groupCode })}
           />
 
           {studyYear && (
@@ -447,76 +450,6 @@ export function RegistrationScreen() {
         <PerStudentTab termId={termId} />
       )}
     </>
-  );
-}
-
-/* ─── รายการห้อง ──────────────────────────────────────────────────── */
-
-function RoomList({
-  rooms,
-  selected,
-  onPick,
-}: {
-  rooms: ReturnType<typeof useAsync<Room[]>>;
-  selected: { studyYear: string; groupCode: string | null } | null;
-  onPick: (r: Room) => void;
-}) {
-  return (
-    <TableCard
-      title="ห้องเรียนในปีการศึกษานี้"
-      actions={
-        <span style={{ color: 'var(--ink-soft)', fontSize: 12 }}>
-          ห้องที่ยังลงไม่ครบอยู่บนสุด
-        </span>
-      }
-    >
-      <AsyncView
-        state={rooms}
-        empty="ยังไม่มีการจัดชั้นปี/ห้องประจำในปีการศึกษานี้ — จัดห้องได้ที่หน้างานวิชาการรายปี"
-      >
-        {(list) => (
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 220 }}>ห้อง</th>
-                <th className="num" style={{ width: 110 }}>นักศึกษา</th>
-                <th className="num" style={{ width: 110 }}>ลงแล้ว</th>
-                <th className="num" style={{ width: 110 }}>ยังไม่ลง</th>
-                <th style={{ width: 120 }}>ความคืบหน้า</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((r) => {
-                const isSel =
-                  selected !== null &&
-                  String(r.study_year) === selected.studyYear &&
-                  (r.group_code ?? '') === (selected.groupCode ?? '');
-                const done = Number(r.students_pending) === 0;
-                return (
-                  <tr
-                    key={`${r.study_year}/${r.group_code ?? ''}`}
-                    style={{ cursor: 'pointer', fontWeight: isSel ? 600 : undefined }}
-                    onClick={() => onPick(r)}
-                  >
-                    <td>{roomLabel(r)}</td>
-                    <td className="num">{r.students_total}</td>
-                    <td className="num">{r.students_registered}</td>
-                    <td className="num">{r.students_pending}</td>
-                    <td>
-                      <Badge kind={done ? 'ok' : Number(r.students_registered) === 0 ? 'warn' : 'info'}>
-                        {r.pct ?? '0.00'}%
-                      </Badge>
-                    </td>
-                    <td>{isSel ? 'กำลังดูอยู่' : 'เปิด'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </AsyncView>
-    </TableCard>
   );
 }
 

@@ -411,3 +411,15 @@ button.link { border: none; background: none; color: var(--brand); padding: 0; }
 .stats-dims button.active { background: #dfe8ff; color: #344aa8; font-weight: 600; }
 .stats-dims small { color: #a1a3ae; font-weight: 400; }
 @media (max-width: 900px) { .stats-layout { grid-template-columns: 1fr; } }
+
+/* ตัวนำทางกลางแบบ SISA — คอลัมน์ไล่ลง หลักสูตร → ชั้นปี → ห้อง */
+.navigator { padding: 0; }
+.nav-bar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.nav-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); }
+.nav-col { max-height: 340px; overflow: auto; border-right: 1px solid var(--line); }
+.nav-col:last-child { border-right: 0; }
+.nav-col tbody tr:not(.nav-group):not(.nav-sub) { cursor: pointer; }
+.nav-col tr.sel td { background: var(--accent-soft, #e8f0fe); font-weight: 600; }
+.nav-col tr.nav-group td { font-weight: 700; background: var(--bg-soft, #f5f5f5); cursor: default; }
+.nav-col tr.nav-sub td { color: var(--ink-soft); padding-left: 14px; cursor: default; }
+@media (max-width: 900px) { .nav-cols { grid-template-columns: 1fr; } .nav-col { border-right: 0; border-bottom: 1px solid var(--line); } }
