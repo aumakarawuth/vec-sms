@@ -12,11 +12,12 @@
  * ซึ่งทำให้คะแนนตก สองอย่างนี้ต่างกันมากและแก้ย้อนหลังยากทั้งคู่
  */
 import { useEffect, useState } from 'react';
-import { api } from '../core/api';
-import { fetchSections, type Section } from '../core/catalog';
+import { api, qs } from '../core/api';
+import { type Section } from '../core/catalog';
 import { num, pct } from '../core/fmt';
 import { href } from '../core/router';
-import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
+import { ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync, useCan } from '../ui/kit';
+import { RoomNavigator, type NavSelection } from '../ui/room-navigator';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const CATEGORY: Record<string, string> = {
@@ -90,12 +91,20 @@ const NEXT_STAGE: Record<string, string> = {
 };
 
 export function GradebookScreen() {
-  const { terms, termId, setTerm } = useTermPicker();
+  const { terms, termId, term, setTerm } = useTermPicker();
   const [sectionId, setSectionId] = useState('');
+  /*
+   * อนุมัติเกรดของ SISA ไล่ถึงห้องก่อนแล้วจึงเลือกรายวิชา — งานทะเบียนตรวจทีละห้อง
+   * ไม่ใช่ทีละวิชาของทั้งวิทยาลัย ครูไม่เห็นตัวนำทาง (เหตุผลเดียวกับหน้าเช็คชื่อ)
+   */
+  const isStaff = useCan('registrar', 'academic', 'director', 'admin');
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
 
   const sections = useAsync(
-    () => (termId ? fetchSections(termId) : Promise.resolve([])),
-    [termId],
+    () => (termId
+      ? api.get<Section[]>(`/academic/sections${qs({ termId, ...(nav.groupCode ? { studyYear: nav.studyYear ?? undefined, groupCode: nav.groupCode } : {}) })}`)
+      : Promise.resolve([])),
+    [termId, nav.studyYear, nav.groupCode],
   );
 
   useEffect(() => setSectionId(''), [termId]);
@@ -116,10 +125,14 @@ export function GradebookScreen() {
         }
       />
 
+      {isStaff && (
+        <RoomNavigator academicYearId={term?.academic_year_id ?? null} value={nav} onChange={(v) => { setNav(v); setSectionId(''); }} />
+      )}
+
       <Card>
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
-            <span>กลุ่มเรียน</span>
+            <span>กลุ่มเรียน{nav.groupCode ? ' ที่คนในห้องนี้ลงอยู่' : ''}</span>
             <AsyncView state={sections} empty="ภาคเรียนนี้ยังไม่มีกลุ่มเรียน">
               {(rows) => (
                 <select value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
