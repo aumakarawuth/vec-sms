@@ -5328,6 +5328,36 @@ async function main() {
     expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
   });
 
+  // ─── รายงานบุคลากรแบบ SISA ───
+  const hr = api(base, await token(app, base, F.personTeacher, 'hr'));
+
+  await check('API-272 ทุกมิติของสถิติบุคลากรรวมได้จำนวนคนเท่ากัน', async () => {
+    const dims = await hr('/hr-reports/dimensions');
+    expect(dims.status === 200, `งานบุคคลต้องเปิดรายงานได้ ได้ ${dims.status}`);
+    const totals: Record<string, number> = {};
+    for (const d of dims.body) {
+      const r = await hr(`/hr-reports/breakdown?dimension=${d.key}&active=false`);
+      expect(r.status === 200, `${d.key}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d.key] = r.body.rows.reduce((t: number, x: any) => t + x.staff, 0);
+    }
+    const v = Object.values(totals);
+    expect(v.every((x) => x === v[0]) && v[0] > 0, `ยอดรวมต้องเท่ากันทุกมิติ ได้ ${JSON.stringify(totals)}`);
+    const roster = await hr('/hr-reports/roster?active=false');
+    expect(roster.body.length === v[0], `รายชื่อ ${roster.body.length} คน ต้องเท่ากับยอดในสถิติ ${v[0]}`);
+    return `${dims.body.length} มิติ · ${v[0]} คน`;
+  });
+
+  await check('API-273 รายงานอบรม · การลา · ผลงานของบุคลากรเปิดได้ และครูเปิดไม่ได้', async () => {
+    for (const path of ['training', 'leaves', 'awards', 'roster']) {
+      const r = await hr(`/hr-reports/${path}`);
+      expect(r.status === 200 && Array.isArray(r.body), `${path}: ได้ ${r.status}`);
+      const t = await teacher(`/hr-reports/${path}`);
+      expect(t.status === 403, `${path}: ครูควรได้ 403 ได้ ${t.status}`);
+    }
+    const bad = await hr('/hr-reports/breakdown?dimension=x%3Bdrop');
+    expect(bad.status === 400, `มิติที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+  });
+
   await check('API-271 วันที่ปี พ.ศ. ถูกปฏิเสธทุกทาง — body · query · ช่องซ้อนในอาร์เรย์ — และไม่มีอะไรถูกเขียน', async () => {
     const before = await registrar(`/students/${F.student}/status-history`);
     const body = await registrar(`/students/${F.student}/status`, {
