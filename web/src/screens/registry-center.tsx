@@ -57,3 +57,6 @@ export function RegistryCenterScreen() {
 
 function Stat({title,value,note,tone}:{title:string;value:number;note:string;tone:string}) { return <div className={`registry-stat ${tone}`}><span>{title}</span><strong>{value}</strong><small>{note}</small></div>; }
 function Preview({item}:{item:Item}) { return <><PageHead title={item.title} sub="โครงหน้าจอสำหรับเชื่อมข้อมูลภายหลัง" actions={<a href={href('/registry')}>← กลับ</a>}/><Notice kind="info">ยังไม่มี API เฉพาะ ข้อมูลในหน้านี้เป็น Mockup และไม่บันทึกลงฐานข้อมูล</Notice><div className="registry-summary"><Stat title="รายการทั้งหมด" value={24} note="ข้อมูลตัวอย่าง" tone="primary"/><Stat title="กำลังดำเนินการ" value={18} note="ภาคเรียนปัจจุบัน" tone="success"/><Stat title="รอตรวจสอบ" value={6} note="ต้องดำเนินการ" tone="warning"/></div><Card title={`ภาพรวม ${item.title}`}><div className="mock-chart">{[48,72,58,88,66,94].map((h)=><i key={h} style={{height:`${h}%`}}/>)}</div><p className="hint">{item.description} ตัวเลขและกราฟเป็นตัวอย่างเพื่อยืนยันรูปแบบก่อนพัฒนา API จริง</p></Card></>; }
+
+/** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
+export const SUBNAV = GROUPS.flatMap((g) => g.items).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title }));

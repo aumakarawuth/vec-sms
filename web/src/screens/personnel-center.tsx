@@ -217,3 +217,6 @@ function Preview({ item }: { item: Item }) {
     </>
   );
 }
+
+/** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
+export const SUBNAV = DEPARTMENTS.flatMap((d) => d.items.map((x) => ({ ...x, roles: d.roles }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, roles: x.roles }));
