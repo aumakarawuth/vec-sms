@@ -34,6 +34,7 @@ import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { GovernmentExportsModule } from './modules/government-exports/government-exports.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { RegistryModule } from './modules/registry/registry.module';
 import { ClubsModule } from './modules/clubs/clubs.module';
 import { OnetModule } from './modules/onet/onet.module';
 import { ExamScheduleModule } from './modules/exam-schedule/exam-schedule.module';
@@ -76,6 +77,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     GovernmentExportsModule,
     ReportsModule,
     SettingsModule,
+    RegistryModule,
     ClubsModule,
     OnetModule,
     ExamScheduleModule,

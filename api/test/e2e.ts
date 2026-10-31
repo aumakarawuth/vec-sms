@@ -5367,6 +5367,33 @@ async function main() {
 
   // ─── ทะเบียนวัดผล: สถิติรายวิชาและเวลาเรียนแบบ SISA ───
 
+  // ─── ตัวนำทางกลางแบบ SISA: ประเภทวิชา → สาขา → หลักสูตร → ชั้นปี → ห้อง ───
+
+  await check('API-285 ต้นไม้ห้องนับนักศึกษาครบทุกคน (รวมคนที่ยังไม่ผูกหลักสูตร/ยังไม่จัดห้อง) และรายชื่อในห้องตรงกับยอด', async () => {
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    expect(tree.status === 200 && tree.body.length > 0, `ได้ ${tree.status}: ${JSON.stringify(tree.body).slice(0, 200)}`);
+    const total = tree.body.reduce((t: number, r: any) => t + r.students, 0);
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const real = await db.query(
+        `select count(*)::int as n from student_class_placement p join student s on s.id = p.student_id
+          where p.academic_year_id = $1 and s.status in ('active', 'on_leave', 'suspended')`, [AY]);
+      expect(total === real.rows[0].n, `ต้นไม้นับได้ ${total} คน แต่จัดห้องจริง ${real.rows[0].n} คน`);
+    } finally {
+      await db.end();
+    }
+    for (const r of tree.body) {
+      const q = `academicYearId=${AY}${r.groupCode ? `&groupCode=${encodeURIComponent(r.groupCode)}` : ''}${r.curriculumId ? `&curriculumId=${r.curriculumId}` : ''}`;
+      const list = await registrar(`/registry/room-students?${q}`);
+      const active = list.body.filter((x: any) => ['active', 'on_leave', 'suspended'].includes(x.status)).length;
+      if (r.curriculumId) expect(active === r.students, `${r.groupCode}: รายชื่อ ${active} คน ไม่ตรงกับยอดในต้นไม้ ${r.students}`);
+    }
+    const t = await teacher(`/registry/tree?academicYearId=${AY}`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${tree.body.length} แถว · ${total} คน`;
+  });
+
   await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
     const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
     let rows = 0;
