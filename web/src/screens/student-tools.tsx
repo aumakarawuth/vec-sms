@@ -5,11 +5,12 @@
  * พิมพ์สดทุกครั้ง ไม่มีเลขที่ (หลักข้อ 4ก)
  */
 import { useState } from 'react';
+import { groupFromNav, RoomNavigator, type NavSelection } from '../ui/room-navigator';
 import { api, qs } from '../core/api';
 import { thaiDate } from '../core/fmt';
 import { useScope } from '../core/scope';
 import {
-  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
+  ActionButton, AsyncView, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
 
 export const STUDENT_TOOL_SECTIONS = {
@@ -101,54 +102,36 @@ function StatusChanges() {
   );
 }
 
-interface Room { study_year: number; group_code: string | null; students_total: number }
-
 function Rosters() {
   const scope = useScope();
   const [blank, setBlank] = useState('10');
-  const rooms = useAsync(
-    () => (scope.termId ? api.get<Room[]>(`/registration/rooms${qs({ termId: scope.termId })}`) : Promise.resolve([])),
-    [scope.termId],
-  );
-  const q = (r: Room) => qs({ academicYearId: scope.yearId, groupCode: r.group_code ?? undefined });
+  /* เลือกห้องแบบเดียวกับทุกหน้าของงานทะเบียน แล้วปุ่มพิมพ์อยู่บนแถบของห้องนั้น (แบบ SISA) */
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
+  const g = groupFromNav(nav.groupCode);
+  const q = qs({ academicYearId: scope.yearId, groupCode: g ?? undefined });
   return (
     <>
-      <Card title="ตัวเลือกการพิมพ์">
-        <Field label="ช่องว่างท้ายใบรายชื่อ (ให้ครูขีด)">
-          <select value={blank} onChange={(e) => setBlank(e.target.value)}>
-            {[0, 5, 10, 15, 20].map((n) => <option key={n} value={n}>{n} ช่อง</option>)}
-          </select>
-        </Field>
-      </Card>
-      <TableCard title="ห้องประจำของปีการศึกษาที่เลือกด้านบน">
-        <AsyncView state={rooms} empty="ยังไม่มีห้อง — จัดนักศึกษาเข้าห้องที่ “จัดห้องเรียน” ก่อน">
-          {(list) => (
-            <table>
-              <thead>
-                <tr>
-                  <th>ห้อง</th>
-                  <th className="num" style={{ width: 100 }}>นักศึกษา</th>
-                  <th style={{ width: 260 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((r) => (
-                  <tr key={`${r.study_year}|${r.group_code}`}>
-                    <td>{r.group_code ? `ชั้นปี ${r.study_year} · ห้อง ${r.group_code}` : <Badge kind="warn">ยังไม่จัดห้อง</Badge>}</td>
-                    <td className="num">{r.students_total}</td>
-                    <td>
-                      <div className="row" style={{ gap: 6 }}>
-                        <PrintButton path={`/student-tools/rooms/roster/print${q(r)}&blankCols=${blank}`}>ใบรายชื่อ</PrintButton>
-                        <PrintButton path={`/student-tools/rooms/labels/print${q(r)}`}>ฉลากที่อยู่</PrintButton>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <RoomNavigator academicYearId={scope.yearId || null} value={nav} onChange={setNav} />
+      <Card title={nav.groupCode ? `พิมพ์ของห้อง — ${g ? `ชั้นปี ${nav.studyYear} · ห้อง ${g}` : 'ยังไม่จัดห้อง'}` : 'พิมพ์ — เลือกห้องจากตัวนำทางด้านบน'}>
+        <div className="row" style={{ alignItems: 'end' }}>
+          <Field label="ช่องว่างท้ายใบรายชื่อ (ให้ครูขีด)">
+            <select value={blank} onChange={(e) => setBlank(e.target.value)}>
+              {[0, 5, 10, 15, 20].map((n) => <option key={n} value={n}>{n} ช่อง</option>)}
+            </select>
+          </Field>
+          {nav.groupCode ? (
+            <div className="row shrink" style={{ gap: 6 }}>
+              <PrintButton path={`/student-tools/rooms/roster/print${q}&blankCols=${blank}`}>ใบรายชื่อ</PrintButton>
+              <PrintButton path={`/student-tools/rooms/labels/print${q}`}>ฉลากที่อยู่</PrintButton>
+            </div>
+          ) : (
+            <div className="row shrink" style={{ gap: 6 }}>
+              <button disabled>ใบรายชื่อ</button>
+              <button disabled>ฉลากที่อยู่</button>
+            </div>
           )}
-        </AsyncView>
-      </TableCard>
+        </div>
+      </Card>
     </>
   );
 }
