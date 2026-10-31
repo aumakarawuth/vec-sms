@@ -2146,7 +2146,7 @@ async function main() {
       body: JSON.stringify({
         roundId, firstNameTh: 'ณัฐดนัย', lastNameTh: 'ผู้สมัครหนึ่ง',
         nationalId: '1100000000001', priorSchoolTh: 'โรงเรียนทดสอบวิทยา',
-        priorQualificationTh: 'ม.3', priorGpax: 2.85,
+        priorQualificationTh: 'ม.3', priorGpax: 2.85, provinceTh: 'นครปฐม',
         referralSource: 'เพจเฟซบุ๊กของวิทยาลัย',
         fatherFirstNameTh: 'สมชาย', fatherLastNameTh: 'ผู้สมัครหนึ่ง',
         fatherOccupationTh: 'รับราชการ', fatherIncomeMonthly: 30000, fatherPhone: '0811111111',
@@ -5362,6 +5362,39 @@ async function main() {
   const secretary = api(base, await token(app, base, F.personOther, 'secretary'));
 
   // ─── การตั้งค่า: ข้อมูลพื้นฐาน · ข้อความบนเอกสาร · บันทึกเหตุการณ์ ───
+
+  // ─── รับสมัคร: สถิติแบบ SISA และใบรายงานตัว ───
+
+  await check('API-279 สถิติรับสมัครทุกมิติรวมได้จำนวนใบเท่ากัน และจังหวัดถูกจัดเข้าภาคถูกต้อง', async () => {
+    const dims = ['program', 'status', 'gender', 'gpa', 'school', 'province', 'region', 'referral'];
+    const totals: Record<string, number> = {};
+    for (const d of dims) {
+      const r = await registrar(`/admissions/rounds/${roundId}/stats?dimension=${d}`);
+      expect(r.status === 200, `${d}: ได้ ${r.status} ${JSON.stringify(r.body)}`);
+      totals[d] = r.body.rows.reduce((t: number, x: any) => t + x.applications, 0);
+    }
+    const v = Object.values(totals);
+    expect(v.every((x) => x === v[0]) && v[0] > 0, `ยอดรวมต้องเท่ากันทุกมิติ ได้ ${JSON.stringify(totals)}`);
+    const region = await registrar(`/admissions/rounds/${roundId}/stats?dimension=region`);
+    expect(region.body.rows.some((x: any) => x.value === 'ภาคกลาง'), `นครปฐมต้องอยู่ภาคกลาง ได้ ${JSON.stringify(region.body.rows)}`);
+    const bad = await registrar(`/admissions/rounds/${roundId}/stats?dimension=x%3Bdrop`);
+    expect(bad.status === 400, `มิติที่ไม่รู้จักต้องได้ 400 ได้ ${bad.status}`);
+    return `${v[0]} ใบ`;
+  });
+
+  await check('API-280 ใบรายงานตัวออกได้เฉพาะผู้ผ่านการคัดเลือก', async () => {
+    const ok = await registrar(`/admissions/applications/${appId}/report-form/print`);
+    expect(ok.status === 200 && String(ok.body).includes('ใบรายงานตัว'), `ผู้ผ่านต้องพิมพ์ได้ ได้ ${ok.status}`);
+    const pending = await registrar('/admissions/applications', {
+      method: 'POST',
+      body: JSON.stringify({ roundId, firstNameTh: 'ยัง', lastNameTh: 'ไม่ผ่าน API-280', choices: [{ preference: 1, curriculumVersionId: CV }] }),
+    });
+    expect(pending.status === 201, `สร้างใบสมัครได้ ${pending.status}`);
+    const no = await registrar(`/admissions/applications/${pending.body.id}/report-form/print`);
+    expect(no.status === 400, `ผู้ที่ยังไม่ผ่านต้องได้ 400 ได้ ${no.status}`);
+    const f = await finance(`/admissions/applications/${appId}/report-form/print`);
+    expect(f.status === 403, `การเงินต้องได้ 403 ได้ ${f.status}`);
+  });
 
   await check('API-276 ข้อมูลพื้นฐาน: ครูอ่านตัวเลือกได้แต่เพิ่มไม่ได้ · งานทะเบียนเพิ่มและปิดได้ · ซ้ำไม่ได้', async () => {
     const list = await teacher('/settings/options?category=religion');

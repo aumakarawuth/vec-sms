@@ -21,7 +21,7 @@ import { num, thaiDate } from '../core/fmt';
 import { href } from '../core/router';
 import type { Role } from '../core/session';
 import {
-  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
+  ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, RestrictedNotice, TableCard, useAsync, useCan,
 } from '../ui/kit';
 
 const ADMISSIONS_ROLES: Role[] = ['registrar', 'academic', 'director', 'admin'];
@@ -224,6 +224,8 @@ function CreateApplicationCard({
   const [gender, setGender] = useState('');
   const [priorSchoolTh, setPriorSchoolTh] = useState('');
   const [priorGpax, setPriorGpax] = useState('');
+  const [provinceTh, setProvinceTh] = useState('');
+  const [referralSource, setReferralSource] = useState('');
   const [choice1, setChoice1] = useState('');
   const [choice2, setChoice2] = useState('');
 
@@ -280,6 +282,12 @@ function CreateApplicationCard({
             value={priorGpax} onChange={(e) => setPriorGpax(e.target.value)}
             style={{ maxWidth: 90 }}
           />
+        </Field>
+        <Field label="จังหวัด">
+          <input value={provinceTh} onChange={(e) => setProvinceTh(e.target.value)} placeholder="เช่น นครปฐม" />
+        </Field>
+        <Field label="รู้จักวิทยาลัยจาก">
+          <input value={referralSource} onChange={(e) => setReferralSource(e.target.value)} placeholder="เช่น เพจเฟซบุ๊ก · แนะแนวที่โรงเรียน" />
         </Field>
       </div>
       <div className="row">
@@ -340,6 +348,8 @@ function CreateApplicationCard({
                 ...(gender ? { gender } : {}),
                 ...(priorSchoolTh.trim() ? { priorSchoolTh: priorSchoolTh.trim() } : {}),
                 ...(priorGpax ? { priorGpax: Number(priorGpax) } : {}),
+                ...(provinceTh.trim() ? { provinceTh: provinceTh.trim() } : {}),
+                ...(referralSource.trim() ? { referralSource: referralSource.trim() } : {}),
                 ...(fatherFirstNameTh.trim() ? { fatherFirstNameTh: fatherFirstNameTh.trim() } : {}),
                 ...(fatherLastNameTh.trim() ? { fatherLastNameTh: fatherLastNameTh.trim() } : {}),
                 ...(fatherOccupationTh.trim() ? { fatherOccupationTh: fatherOccupationTh.trim() } : {}),
@@ -707,6 +717,8 @@ export function AdmissionsScreen() {
             </div>
           </Card>
 
+          <AdmissionStatsCard roundId={round.id} />
+
           <TableCard title="ใบสมัครในรอบนี้">
             <AsyncView state={applications} empty="ยังไม่มีใบสมัครในรอบนี้">
               {(rows) => (
@@ -772,6 +784,9 @@ export function AdmissionsScreen() {
                                   </ActionButton>
                                 </>
                               )}
+                              {(a.status === 'passed' || a.status === 'enrolled') && (
+                                <PrintButton path={`/admissions/applications/${a.id}/report-form/print`}>ใบรายงานตัว</PrintButton>
+                              )}
                               {a.status === 'passed' && (
                                 <AdmitForm
                                   applicationId={a.id}
@@ -806,5 +821,58 @@ export function AdmissionsScreen() {
       </>
       )}
     </>
+  );
+}
+
+const STAT_DIMS: Record<string, string> = {
+  program: 'หลักสูตรอันดับ 1', status: 'สถานะ', gender: 'เพศ', gpa: 'เกรดเฉลี่ยเดิม',
+  school: 'สถานศึกษาเดิม', province: 'จังหวัด', region: 'ภูมิภาค', referral: 'รู้จักวิทยาลัยจาก',
+};
+
+/**
+ * สถิติรับสมัครแบบ SISA ("ข้อมูลสถิติ" หกเมนู) — หัวข้อเดียวต่อครั้ง เลือกจากปุ่ม
+ * นับเฉพาะใบที่ยื่นแล้ว (ใบร่างไม่นับ) พร้อมจำนวนที่ผ่านการคัดเลือกของแต่ละแถว
+ */
+function AdmissionStatsCard({ roundId }: { roundId: string }) {
+  const [dim, setDim] = useState('program');
+  const data = useAsync(
+    () => api.get<{ label: string; rows: { value: string; applications: number; admitted: number }[] }>(
+      `/admissions/rounds/${roundId}/stats${qs({ dimension: dim })}`),
+    [roundId, dim],
+  );
+  return (
+    <TableCard
+      title="สถิติผู้สมัคร"
+      actions={
+        <select value={dim} onChange={(e) => setDim(e.target.value)} aria-label="หัวข้อสถิติ">
+          {Object.entries(STAT_DIMS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      }
+    >
+      <AsyncView state={data}>
+        {(b) => (b.rows.length === 0 ? <p className="muted">ยังไม่มีใบสมัครที่ยื่นแล้ว</p> : (
+          <table>
+            <thead>
+              <tr>
+                <th>{b.label}</th>
+                <th className="num" style={{ width: 110 }}>ผู้สมัคร</th>
+                <th className="num" style={{ width: 110 }}>ผ่านการคัดเลือก</th>
+                <th className="num" style={{ width: 90 }}>ร้อยละ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {b.rows.map((r) => (
+                <tr key={r.value}>
+                  <td>{r.value || 'ไม่ระบุ'}</td>
+                  <td className="num">{r.applications}</td>
+                  <td className="num">{r.admitted}</td>
+                  <td className="num">{((r.applications / b.rows.reduce((t, x) => t + x.applications, 0)) * 100).toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+      </AsyncView>
+    </TableCard>
   );
 }
