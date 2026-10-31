@@ -5266,6 +5266,63 @@ async function main() {
     expect(ok.status === 200, `มิติทั่วไปต้องเปิดให้การเงินได้ ${ok.status}`);
   });
 
+  // ─── เครื่องมืองานทะเบียนรายห้อง (SISA หมวดนักศึกษา) ───
+
+  await check('API-266 เปลี่ยนคำนำหน้าเฉพาะคนที่อายุครบ 15 ปีจริง ส่งคนที่ไม่เข้าเงื่อนไขมาก็ไม่ถูกแก้', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      await db.query(`update person set prefix_th = 'เด็กชาย', birth_date = current_date - interval '16 years' where id = $1`, [F.personStudent]);
+      await db.query(`update person set prefix_th = 'เด็กหญิง', birth_date = current_date - interval '14 years' where id = $1`, [F.personExamStudent]);
+      const c = await registrar('/student-tools/prefix-candidates');
+      expect(c.status === 200, `ได้ ${c.status}: ${JSON.stringify(c.body)}`);
+      expect(c.body.some((x: any) => x.person_id === F.personStudent && x.new_prefix === 'นาย'), 'อายุ 16 ต้องถูกเสนอเป็น นาย');
+      expect(!c.body.some((x: any) => x.person_id === F.personExamStudent), 'อายุ 14 ต้องไม่ถูกเสนอ');
+      const r = await registrar('/student-tools/prefix-apply', {
+        method: 'POST', body: JSON.stringify({ personIds: [F.personStudent, F.personExamStudent] }),
+      });
+      expect(r.status === 201, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+      expect(r.body.updated === 1 && r.body.skipped === 1, `ต้องแก้ 1 ข้าม 1 ได้ ${JSON.stringify(r.body)}`);
+      const after = await db.query(`select id, prefix_th from person where id = any($1)`, [[F.personStudent, F.personExamStudent]]);
+      const m = Object.fromEntries(after.rows.map((x) => [x.id, x.prefix_th]));
+      expect(m[F.personStudent] === 'นาย' && m[F.personExamStudent] === 'เด็กหญิง', `ผลไม่ตรง ${JSON.stringify(m)}`);
+    } finally {
+      await db.end();
+    }
+  });
+
+  await check('API-267 ครูและการเงินเปลี่ยนคำนำหน้าเป็นกลุ่มไม่ได้', async () => {
+    const body = JSON.stringify({ personIds: [F.personStudent] });
+    expect((await teacher('/student-tools/prefix-apply', { method: 'POST', body })).status === 403, 'ครูต้องได้ 403');
+    expect((await finance('/student-tools/prefix-apply', { method: 'POST', body })).status === 403, 'การเงินต้องได้ 403');
+  });
+
+  await check('API-268 รายงานรับเข้า/ออกกรองตามชนิด และปฏิเสธชนิดที่ไม่รู้จัก', async () => {
+    const all = await registrar('/student-tools/status-changes?kind=all');
+    expect(all.status === 200, `ได้ ${all.status}: ${JSON.stringify(all.body)}`);
+    const grad = await registrar('/student-tools/status-changes?kind=graduate');
+    expect(grad.body.every((x: any) => x.to_status === 'graduated'), 'ชนิดสำเร็จการศึกษาต้องมีแต่ graduated');
+    const bad = await registrar('/student-tools/status-changes?kind=x%27%3Bdrop');
+    expect(bad.status === 400, `ชนิดแปลกต้องได้ 400 ได้ ${bad.status}`);
+    return `${all.body.length} รายการ`;
+  });
+
+  await check('API-269 ใบรายชื่อห้องพิมพ์ได้ และการเงินเปิดใบรายชื่อนักศึกษาไม่ได้', async () => {
+    const r = await registrar(`/student-tools/rooms/roster/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(r.status === 200, `ได้ ${r.status}`);
+    expect(String(r.body).includes('ใบรายชื่อนักศึกษา'), 'ต้องเป็นหน้ากระดาษใบรายชื่อ');
+    const f = await finance(`/student-tools/rooms/roster/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(f.status === 403, `การเงินควรได้ 403 ได้ ${f.status}`);
+    const lab = await registrar(`/student-tools/rooms/labels/print?academicYearId=${AY}&groupCode=9%2F1`);
+    expect(lab.status === 200 && String(lab.body).includes('ฉลาก'), `ฉลากได้ ${lab.status}`);
+  });
+
+  await check('API-270 รายงานผลงานรวมทั้งวิทยาลัยเปิดได้', async () => {
+    const r = await registrar('/student-tools/achievements');
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    return `${r.body.length} รายการ`;
+  });
+
   await check('API-265 ชื่อมิติที่ไม่รู้จักถูกปฏิเสธ ไม่ถูกต่อเข้า SQL', async () => {
     const r = await registrar(`/reports/students/breakdown?dimension=${encodeURIComponent("gender; drop table student")}&academicYearId=${AY}`);
     expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);

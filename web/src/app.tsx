@@ -49,6 +49,7 @@ import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen, SUBNAV as SUB_SETTINGS } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
 import { StudentStatisticsScreen } from './screens/student-statistics';
+import { STUDENT_TOOL_SECTIONS, StudentToolsScreen, type StudentToolSection } from './screens/student-tools';
 import { GradeReportsScreen } from './screens/grade-reports';
 import { StudentDetailScreen, StudentsScreen } from './screens/students';
 import { AdvisorsScreen } from './screens/advisors';
@@ -339,6 +340,9 @@ function Routes() {
   if (head === 'exam-schedule') return <ExamScheduleScreen />;
   if (head === 'workload') return <WorkloadScreen />;
   if (head === 'advisors') return <AdvisorsScreen />;
+  if (head === 'student-tools' && second && second in STUDENT_TOOL_SECTIONS) {
+    return <StudentToolsScreen key={second} section={second as StudentToolSection} />;
+  }
   if (head === 'statistics') return second === 'students' ? <StudentStatisticsScreen /> : <StatisticsScreen />;
   if (head === 'grade-reports') return <GradeReportsScreen />;
   if (head === 'clubs') return <ClubsScreen />;

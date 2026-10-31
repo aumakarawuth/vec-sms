@@ -1,8 +1,10 @@
-import { BadRequestException, Controller, Get, Header, Injectable, Module, Param, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Injectable, Module, Param, Post, Query } from '@nestjs/common';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray } from 'class-validator';
+import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { thaiDate } from '../documents/templates';
-import { ParseUuidPipe, UUID_PATTERN } from '../../common/validation/uuid';
+import { IsUuidArray, ParseUuidPipe, UUID_PATTERN } from '../../common/validation/uuid';
 
 function esc(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -308,6 +310,168 @@ export class ReportsService {
       label: dim.label,
       rows: rows.map((r) => ({ value: r.value, studyYear: r.study_year, students: Number(r.students) })),
     };
+  }
+
+  /**
+   * รายงานการรับเข้า/ออก — SISA "รายงานการรับเข้า/ออก ของนักศึกษา"
+   * อ่านจาก student_status_history ซึ่งบันทึกทุกครั้งที่สถานะเปลี่ยน (0002)
+   * "รับเข้า" คือแถวแรกของนักศึกษาแต่ละคน (from_status ว่าง) ส่วนชนิดอื่น
+   * ดูจากสถานะปลายทาง
+   */
+  async statusChanges(kind: string, from?: string, to?: string) {
+    const KIND: Record<string, string> = {
+      admit: `h.from_status is null`,
+      leave: `h.to_status = 'on_leave'`,
+      out: `h.to_status in ('withdrawn', 'transferred_out', 'dismissed')`,
+      graduate: `h.to_status = 'graduated'`,
+      back: `h.to_status = 'active' and h.from_status is not null`,
+      all: `true`,
+    };
+    const where = KIND[kind];
+    if (!where) throw new BadRequestException('ไม่รู้จักชนิดรายงาน');
+    return this.db.query(
+      `select h.id, h.effective_on, h.from_status, h.to_status, h.reason, h.document_no,
+              s.id as student_id, s.student_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name
+         from student_status_history h
+         join student s on s.id = h.student_id
+         join person pe on pe.id = s.person_id
+        where ${where}
+          and ($1::date is null or h.effective_on >= $1::date)
+          and ($2::date is null or h.effective_on <= $2::date)
+        order by h.effective_on desc, s.student_code
+        limit 1000`,
+      [from || null, to || null],
+    );
+  }
+
+  /** นักศึกษาในห้องประจำหนึ่งห้อง เรียงตามเลขที่ — ใช้ทั้งใบรายชื่อและฉลากที่อยู่ */
+  private roomStudents(academicYearId: string, groupCode: string | null) {
+    return this.db.query<{
+      student_code: string; full_name: string; class_number: number | null; gender: string;
+      address: string | null;
+    }>(
+      `select s.student_code, s.class_number, pe.gender::text as gender,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name,
+              (select concat_ws(' ', a.address_line,
+                                case when a.subdistrict_th is not null then 'ต.' || a.subdistrict_th end,
+                                case when a.district_th is not null then 'อ.' || a.district_th end,
+                                case when a.province_th is not null then 'จ.' || a.province_th end,
+                                a.postal_code)
+                 from person_address a
+                where a.person_id = pe.id
+                order by case a.kind when 'current' then 1 when 'registered' then 2 else 3 end
+                limit 1) as address
+         from student_class_placement p
+         join student s on s.id = p.student_id
+         join person pe on pe.id = s.person_id
+        where p.academic_year_id = $1
+          and p.group_code is not distinct from $2
+          and s.status in ('active', 'on_leave', 'suspended')
+        order by s.class_number nulls last, s.student_code`,
+      [academicYearId, groupCode],
+    );
+  }
+
+  /**
+   * ใบรายชื่อห้องประจำ — SISA "ใบรายชื่อ › ห้อง/ทุกวัน" เป็นเอกสารทำงาน
+   * พิมพ์สดทุกครั้ง ไม่มีเลขที่ (หลักข้อ 4ก) คอลัมน์ว่างไว้ให้ครูขีดเอง
+   * คอลัมน์แรกเป็นเลขที่ในห้องถ้า**ทุกคน**มี มิฉะนั้นเป็นลำดับแถวทั้งใบ —
+   * ไม่ปนกัน (บทเรียนเดียวกับ API-143)
+   */
+  async roomRosterPrint(academicYearId: string, groupCode: string | null, blankCols: number) {
+    const rows = await this.roomStudents(academicYearId, groupCode);
+    const useNumber = rows.length > 0 && rows.every((r) => r.class_number !== null);
+    const cols = Math.max(0, Math.min(blankCols, 20));
+    const body = `<table><thead><tr><th class="mid" style="width:40pt">${useNumber ? 'เลขที่' : 'ลำดับ'}</th>
+      <th style="width:90pt">รหัสนักศึกษา</th><th>ชื่อ - นามสกุล</th>
+      ${Array.from({ length: cols }, () => '<th style="width:22pt"></th>').join('')}</tr></thead><tbody>
+      ${rows.map((r, i) => `<tr><td class="mid">${useNumber ? r.class_number : i + 1}</td>
+        <td>${esc(r.student_code)}</td><td>${esc(r.full_name)}</td>
+        ${Array.from({ length: cols }, () => '<td style="border-left:0.5pt solid #e3e5ec"></td>').join('')}</tr>`).join('')}
+      </tbody></table>`;
+    return reportSheet(`ใบรายชื่อนักศึกษา ห้อง ${groupCode ?? 'ยังไม่จัดห้อง'}`,
+      `${rows.length} คน · พิมพ์ ${thaiDate(new Date().toISOString())}`, body);
+  }
+
+  /**
+   * ฉลากที่อยู่ — SISA "ใบรายชื่อ › ฉลากที่อยู่นักศึกษา" ใช้แปะซองจดหมาย
+   * ถึงผู้ปกครอง เลือกที่อยู่ปัจจุบันก่อนทะเบียนบ้าน คนที่ไม่มีที่อยู่ในระบบ
+   * ไม่ได้ฉลาก แต่ถูกนับและบอกชื่อท้ายแผ่น — ตัดเงียบ ๆ แล้วซองจะขาดไปโดยไม่มีใครรู้
+   */
+  async addressLabelsPrint(academicYearId: string, groupCode: string | null) {
+    const rows = await this.roomStudents(academicYearId, groupCode);
+    const withAddr = rows.filter((r) => r.address);
+    const missing = rows.filter((r) => !r.address);
+    const labels = withAddr.map((r) => `<div class="label"><b>ผู้ปกครองของ ${esc(r.full_name)}</b>
+      <div>${esc(r.address)}</div></div>`).join('');
+    const body = `<style>
+        .labels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6pt; }
+        .label { border: 0.5pt dashed #c9ccd6; padding: 8pt; min-height: 70pt; font-size: 12pt; break-inside: avoid; }
+        @page { size: A4 portrait; margin: 10mm; }
+      </style><div class="labels">${labels}</div>
+      ${missing.length ? `<p class="foot">ไม่มีที่อยู่ในระบบ ${missing.length} คน: ${missing.map((m) => esc(m.full_name)).join(' · ')}</p>` : ''}`;
+    return reportSheet(`ฉลากที่อยู่ ห้อง ${groupCode ?? 'ยังไม่จัดห้อง'}`,
+      `${withAddr.length} ฉลาก จาก ${rows.length} คน`, body);
+  }
+
+  /**
+   * รายงานผลงานรวม — SISA "ข้อมูลผลงานและเกียรติประวัติ" (ข้อมูลรายคนอยู่ใน
+   * แท็บผลงานของแฟ้มนักศึกษาแล้ว หน้านี้คือมุมมองรวมทั้งวิทยาลัย)
+   */
+  async achievements(from?: string, to?: string) {
+    return this.db.query(
+      `select a.id, a.title_th, a.category_th, a.level_th, a.issuer_th, a.awarded_on,
+              s.id as student_id, s.student_code,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name
+         from student_achievement a
+         join student s on s.id = a.student_id
+         join person pe on pe.id = s.person_id
+        where ($1::date is null or a.awarded_on >= $1::date)
+          and ($2::date is null or a.awarded_on <= $2::date)
+        order by a.awarded_on desc
+        limit 1000`,
+      [from || null, to || null],
+    );
+  }
+
+  /**
+   * ผู้ที่ถึงเวลาเปลี่ยนคำนำหน้า — อายุครบ 15 ปีแล้วแต่ยังเป็น เด็กชาย/เด็กหญิง
+   * (พ.ร.บ.คำนำหน้านาม: อายุ 15 ปีขึ้นไปใช้ นาย/นางสาว) คนที่ไม่มีวันเกิด
+   * ในระบบไม่ถูกเสนอ เพราะเดาอายุไม่ได้
+   */
+  async prefixCandidates() {
+    return this.db.query<{ person_id: string; student_code: string; full_name: string; prefix_th: string; new_prefix: string; birth_date: string }>(
+      `select pe.id as person_id, s.student_code, pe.prefix_th, pe.birth_date,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' '
+                   || coalesce(pe.last_name_th, '')) as full_name,
+              case pe.prefix_th when 'เด็กชาย' then 'นาย' when 'ด.ช.' then 'นาย' else 'นางสาว' end as new_prefix
+         from student s
+         join person pe on pe.id = s.person_id
+        where s.status in ('active', 'on_leave', 'suspended')
+          and pe.prefix_th in ('เด็กชาย', 'เด็กหญิง', 'ด.ช.', 'ด.ญ.')
+          and pe.birth_date is not null
+          and pe.birth_date <= current_date - interval '15 years'
+        order by s.student_code`,
+    );
+  }
+
+  /** เปลี่ยนเฉพาะคนที่ยังเข้าเงื่อนไขตอนกด — รายการที่ส่งมาเป็นแค่ตัวเลือก ไม่ใช่ข้อเท็จจริง */
+  async applyPrefix(personIds: string[]) {
+    const rows = await this.db.query<{ id: string }>(
+      `update person pe
+          set prefix_th = case pe.prefix_th when 'เด็กชาย' then 'นาย' when 'ด.ช.' then 'นาย' else 'นางสาว' end
+        where pe.id = any($1::uuid[])
+          and pe.prefix_th in ('เด็กชาย', 'เด็กหญิง', 'ด.ช.', 'ด.ญ.')
+          and pe.birth_date <= current_date - interval '15 years'
+          and exists (select 1 from student s where s.person_id = pe.id)
+        returning pe.id`,
+      [personIds],
+    );
+    return { updated: rows.length, skipped: personIds.length - rows.length };
   }
 
   async byCurriculum() {
@@ -666,8 +830,64 @@ export class ReportsController {
   }
 }
 
+class PrefixApplyDto {
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(500) @IsUuidArray() personIds!: string[];
+}
+
+/**
+ * เครื่องมือของงานทะเบียนที่ทำกับนักศึกษาทีละห้อง/ทั้งวิทยาลัย
+ * แยกคอนโทรลเลอร์จาก /reports เพราะสิทธิ์ต่างกัน — /reports เปิดให้การเงิน
+ * ด้วย แต่ใบรายชื่อและฉลากมีชื่อและที่อยู่ของผู้เยาว์ ซึ่งการเงินไม่จำเป็นต้องเห็น
+ */
+@Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+@Controller('student-tools')
+export class StudentToolsController {
+  constructor(private readonly svc: ReportsService) {}
+
+  @Get('status-changes')
+  statusChanges(@Query('kind') kind = 'all', @Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.statusChanges(kind, from, to);
+  }
+
+  @Get('achievements')
+  achievements(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.svc.achievements(from, to);
+  }
+
+  /** groupCode ว่าง = กอง "ยังไม่จัดห้อง" */
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('rooms/roster/print')
+  roster(
+    @Query('academicYearId', ParseUuidPipe) academicYearId: string,
+    @Query('groupCode') groupCode?: string,
+    @Query('blankCols') blankCols = '10',
+  ) {
+    return this.svc.roomRosterPrint(academicYearId, groupCode || null, Number(blankCols) || 0);
+  }
+
+  @Roles('registrar', 'student_affairs', 'director', 'admin')
+  @Header('content-type', 'text/html; charset=utf-8')
+  @Get('rooms/labels/print')
+  labels(@Query('academicYearId', ParseUuidPipe) academicYearId: string, @Query('groupCode') groupCode?: string) {
+    return this.svc.addressLabelsPrint(academicYearId, groupCode || null);
+  }
+
+  @Roles('registrar', 'director', 'admin')
+  @Get('prefix-candidates')
+  prefixCandidates() {
+    return this.svc.prefixCandidates();
+  }
+
+  @Roles('registrar', 'director', 'admin')
+  @Audit('person')
+  @Post('prefix-apply')
+  applyPrefix(@Body() dto: PrefixApplyDto) {
+    return this.svc.applyPrefix(dto.personIds);
+  }
+}
+
 @Module({
-  controllers: [ReportsController],
+  controllers: [ReportsController, StudentToolsController],
   providers: [ReportsService],
 })
 export class ReportsModule {}
