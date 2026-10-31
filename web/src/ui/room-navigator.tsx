@@ -9,7 +9,7 @@
  * ข้อมูลมาจาก `/registry/tree` (แถวแบนระดับห้อง) แล้วรวมขึ้นที่นี่ ไม่นับซ้ำที่ฐานข้อมูล
  * กอง "ยังไม่ผูกหลักสูตร" กับ "ยังไม่จัดห้อง" แสดงเสมอ — ซ่อนแล้วไม่มีใครเห็นงานที่ค้าง
  */
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { api, qs } from '../core/api';
 import { AsyncView, Badge, useAsync } from './kit';
 
@@ -206,4 +206,17 @@ function StudentColumn({ academicYearId, value, studentId, onStudent }: {
       )}
     </AsyncView>
   );
+}
+
+/**
+ * ตัวเลือกนักศึกษาหนึ่งคนสำหรับฟอร์ม — แทนกล่อง `<select>` ที่โหลด `/students?limit=200`
+ * ซึ่งวิทยาลัยพันคนเลือกคนที่ 201 ไม่ได้เลย (กับดักเดียวกับข้อ 19 ใน CLAUDE.md)
+ */
+export function StudentPicker({ academicYearId, studentId, onPick }: {
+  academicYearId: string | null;
+  studentId: string;
+  onPick: (s: RoomStudent) => void;
+}) {
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
+  return <RoomNavigator academicYearId={academicYearId} value={nav} onChange={setNav} studentId={studentId} onStudent={onPick} />;
 }
