@@ -328,9 +328,10 @@ class StaffController {
     return this.svc.list(q, role, parsePage(limit, offset));
   }
 
+  // secretary/hr ด้วย — สิทธิตาม PDPA มาตรา 30 เป็นของเจ้าของข้อมูลทุกคน ไม่ใช่ของบางบทบาท
   @Roles(
-    'student', 'guardian', 'teacher', 'registrar',
-    'academic', 'finance', 'student_affairs', 'director', 'admin',
+    'student', 'guardian', 'teacher', 'registrar', 'academic', 'finance',
+    'student_affairs', 'secretary', 'hr', 'director', 'admin',
   )
   @Get('me')
   me() {

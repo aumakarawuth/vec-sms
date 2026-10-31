@@ -49,6 +49,7 @@ import { StudentLeaveScreen } from './screens/student-leave';
 import { SettingsCenterScreen, SUBNAV as SUB_SETTINGS } from './screens/settings-center';
 import { StatisticsScreen } from './screens/statistics';
 import { StudentStatisticsScreen } from './screens/student-statistics';
+import { MyAccountScreen } from './screens/my-account';
 import { GradeStatisticsScreen } from './screens/grade-statistics';
 import { SETTINGS_TOOL_SECTIONS, SettingsToolsScreen, type SettingsToolSection } from './screens/settings-tools';
 import { HR_REPORT_SECTIONS, HrReportsScreen, type HrReportSection } from './screens/hr-reports';
@@ -188,10 +189,11 @@ export function App() {
       <div className="shell">
         <nav className="sidebar">
           <h1><span className="brand-mark">✦</span><span>VEC SCHOOL</span></h1>
-          <div className="who">
+          {/* กดชื่อเพื่อเปิดข้อมูลส่วนตัว — เปลี่ยนรหัสผ่านเองได้โดยไม่ต้องรอถูกบังคับ */}
+          <a className="who" href={href('/my-account')} title="ข้อมูลส่วนตัว · เปลี่ยนรหัสผ่าน">
             <span className="avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
             <span><strong>{s.username}</strong><small>{role ? ROLE_LABEL[role] : ''}</small></span>
-          </div>
+          </a>
 
           {visible.map((g) => (
             <div className="nav-group" key={g.title}>
@@ -230,7 +232,7 @@ export function App() {
             <ScopeSelect />
             <label className="global-search"><span>⌕</span><input aria-label="ค้นหาในระบบ" placeholder="ค้นหาในระบบ" /></label>
             <button className="icon-button" aria-label="การแจ้งเตือน">♢</button>
-            <span className="top-avatar">{(s.username ?? '?').slice(0, 1).toUpperCase()}</span>
+            <a className="top-avatar" href={href('/my-account')} title="ข้อมูลส่วนตัว">{(s.username ?? '?').slice(0, 1).toUpperCase()}</a>
           </header>
           <div className="page-content">
             {center && route.path !== center && (
@@ -286,6 +288,7 @@ function Routes() {
     return <StudentsScreen />;
   }
 
+  if (head === 'my-account') return <MyAccountScreen />;
   if (head === 'registry') return <RegistryCenterScreen />;
   if (head === 'subject-data') return <SubjectDataScreen />;
   if (head === 'subject-groups') return <SubjectGroupsScreen />;
