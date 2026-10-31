@@ -98,18 +98,18 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
       <div className="nav-cols">
         <div className="nav-col">
           <table>
-            <thead><tr><th>ประเภทวิชา · สาขาวิชา · หลักสูตร</th><th className="num">คน</th><th className="num">{metricLabel}</th></tr></thead>
+            <thead><tr><th>ประเภทวิชา · สาขาวิชา · หลักสูตร</th><th className="num">คน</th>{metric && <th className="num">{metricLabel}</th>}</tr></thead>
             <tbody>
               {curricula.map((c) => {
                 const rs = rows.filter((r) => curKey(r) === curKey(c));
                 const head: ReactElement[] = [];
                 if (c.programTypeName !== lastType) {
                   lastType = c.programTypeName; lastProgram = undefined;
-                  head.push(<tr key={`t${c.programTypeId}`} className="nav-group"><td colSpan={3}>{c.programTypeName ?? 'ยังไม่ผูกหลักสูตร'}</td></tr>);
+                  head.push(<tr key={`t${c.programTypeId}`} className="nav-group"><td colSpan={metric ? 3 : 2}>{c.programTypeName ?? 'ยังไม่ผูกหลักสูตร'}</td></tr>);
                 }
                 if (c.curriculumId && c.programName !== lastProgram) {
                   lastProgram = c.programName;
-                  head.push(<tr key={`p${c.programId}`} className="nav-sub"><td colSpan={3}>{c.programName}</td></tr>);
+                  head.push(<tr key={`p${c.programId}`} className="nav-sub"><td colSpan={metric ? 3 : 2}>{c.programName}</td></tr>);
                 }
                 return [
                   ...head,
@@ -117,7 +117,7 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
                       onClick={() => onChange({ cur: curKey(c), studyYear: null, groupCode: null })}>
                     <td style={{ paddingLeft: 24 }}>{c.curriculumId ? `${c.curriculumName}${c.shift ? ` (${SHIFT[c.shift] ?? c.shift})` : ''}` : <em>นักศึกษาที่ยังไม่ผูกหลักสูตร</em>}</td>
                     <td className="num">{total(rs)}</td>
-                    <td className="num"><Pct m={sum(rs, metric)} /></td>
+                    {metric && <td className="num"><Pct m={sum(rs, metric)} /></td>}
                   </tr>,
                 ];
               })}
@@ -126,16 +126,16 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
         </div>
         <div className="nav-col">
           <table>
-            <thead><tr><th>ระดับชั้น</th><th className="num">คน</th><th className="num">{metricLabel}</th></tr></thead>
+            <thead><tr><th>ระดับชั้น</th><th className="num">คน</th>{metric && <th className="num">{metricLabel}</th>}</tr></thead>
             <tbody>
-              {!value.cur ? <tr><td colSpan={3} className="muted">เลือกหลักสูตรก่อน</td></tr> : years.map((y) => {
+              {!value.cur ? <tr><td colSpan={metric ? 3 : 2} className="muted">เลือกหลักสูตรก่อน</td></tr> : years.map((y) => {
                 const rs = inCur.filter((r) => r.studyYear === y.studyYear);
                 const k = String(y.studyYear ?? '');
                 return (
                   <tr key={k} className={value.studyYear === k ? 'sel' : ''} onClick={() => onChange({ ...value, studyYear: k, groupCode: null })}>
                     <td>{y.levelLabel ?? `ชั้นปี ${y.studyYear}`}</td>
                     <td className="num">{total(rs)}</td>
-                    <td className="num"><Pct m={sum(rs, metric)} /></td>
+                    {metric && <td className="num"><Pct m={sum(rs, metric)} /></td>}
                   </tr>
                 );
               })}
@@ -144,15 +144,15 @@ function Panels({ rows, metric, metricLabel, value, onChange }: {
         </div>
         <div className="nav-col">
           <table>
-            <thead><tr><th>ห้อง</th><th className="num">คน</th><th className="num">{metricLabel}</th></tr></thead>
+            <thead><tr><th>ห้อง</th><th className="num">คน</th>{metric && <th className="num">{metricLabel}</th>}</tr></thead>
             <tbody>
-              {value.studyYear === null ? <tr><td colSpan={3} className="muted">เลือกระดับชั้นก่อน</td></tr> : inYear.map((r) => {
+              {value.studyYear === null ? <tr><td colSpan={metric ? 3 : 2} className="muted">เลือกระดับชั้นก่อน</td></tr> : inYear.map((r) => {
                 const g = r.groupCode ?? NONE;
                 return (
                   <tr key={g} className={value.groupCode === g ? 'sel' : ''} onClick={() => onChange({ ...value, groupCode: g })}>
                     <td>{r.groupCode ?? <em>ยังไม่จัดห้อง</em>}</td>
                     <td className="num">{r.students}</td>
-                    <td className="num"><Pct m={metric?.get(roomKeyOf(r.studyYear, r.groupCode))} /></td>
+                    {metric && <td className="num"><Pct m={metric?.get(roomKeyOf(r.studyYear, r.groupCode))} /></td>}
                   </tr>
                 );
               })}

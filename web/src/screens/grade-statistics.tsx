@@ -3,10 +3,11 @@
  * การกระจายเกรด · คะแนนเฉลี่ย) และ ขาด ลา มาสาย แยกห้อง ของภาคเรียนที่เลือก
  * ด้านบน · อ่านอย่างเดียว
  */
-import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
+import { navigate, useRoute } from '../core/router';
 import { useScope } from '../core/scope';
+import { groupFromNav, RoomNavigator } from '../ui/room-navigator';
 import type { Role } from '../core/session';
 import { AsyncView, Badge, PageHead, RestrictedNotice, TableCard, useAsync, useCan } from '../ui/kit';
 
@@ -23,7 +24,8 @@ interface RoomRow {
 
 export function GradeStatisticsScreen() {
   const can = useCan(...ROLES);
-  const termId = useScope().termId;
+  const scope = useScope();
+  const termId = scope.termId;
   const courses = useAsync(
     () => (can && termId ? api.get<CourseRow[]>(`/reports/terms/${termId}/course-results`) : Promise.resolve([])),
     [can, termId],
@@ -78,7 +80,7 @@ export function GradeStatisticsScreen() {
         </AsyncView>
       </TableCard>
 
-      {termId && <RoomScoresCard termId={termId} />}
+      {termId && <RoomScoresCard termId={termId} academicYearId={scope.term?.academic_year_id ?? null} />}
 
       <TableCard title="ขาด ลา มาสาย แยกห้อง (นับเป็นคาบ)">
         <AsyncView state={rooms} empty="ยังไม่มีการเช็คชื่อในภาคเรียนนี้">
@@ -123,37 +125,28 @@ interface ScoreRow {
   section_id: string; course_code: string; course_name: string;
   weighted: string; weight_filled: string; weight_total: string;
 }
-interface Room { study_year: number; group_code: string | null }
 
 /**
  * ผลรวมคะแนนเก็บของห้อง — SISA "ผลรวมคะแนนเก็บ" ตาราง นักศึกษา × รายวิชา
  * คะแนนสูตรเดียวกับตอนตัดเกรด ช่องที่ครูยังกรอกไม่ครบแสดงสัดส่วนที่กรอกแล้วด้วย
  */
-function RoomScoresCard({ termId }: { termId: string }) {
-  const rooms = useAsync(() => api.get<Room[]>(`/registration/rooms${qs({ termId })}`), [termId]);
-  const [room, setRoom] = useState<string>('');
+function RoomScoresCard({ termId, academicYearId }: { termId: string; academicYearId: string | null }) {
+  /* เลือกห้องผ่านตัวนำทางกลางแบบเดียวกับหน้าลงทะเบียน และเก็บไว้ใน URL ให้ส่งลิงก์ต่อได้ */
+  const route = useRoute();
+  const nav = { cur: route.query.get('cur'), studyYear: route.query.get('studyYear'), groupCode: route.query.get('groupCode') };
+  const room = nav.groupCode ?? '';
   const data = useAsync(
-    () => (room ? api.get<ScoreRow[]>(`/reports/terms/${termId}/room-scores${qs({ groupCode: room === '-' ? undefined : room })}`) : Promise.resolve([])),
+    () => (room ? api.get<ScoreRow[]>(`/reports/terms/${termId}/room-scores${qs({ groupCode: groupFromNav(room) ?? undefined })}`) : Promise.resolve([])),
     [termId, room],
   );
+  const setNav = (v: typeof nav) => {
+    const q = new URLSearchParams(route.query);
+    for (const [k, x] of Object.entries(v)) { if (x) q.set(k, x); else q.delete(k); }
+    navigate(`${route.path}?${q.toString()}`);
+  };
   return (
-    <TableCard
-      title="ผลรวมคะแนนเก็บของห้อง"
-      actions={
-        <AsyncView state={rooms}>
-          {(list) => (
-            <select value={room} onChange={(e) => setRoom(e.target.value)} aria-label="ห้อง">
-              <option value="">— เลือกห้อง —</option>
-              {list.map((r) => (
-                <option key={`${r.study_year}|${r.group_code}`} value={r.group_code ?? '-'}>
-                  {r.group_code ? `ชั้นปี ${r.study_year} · ${r.group_code}` : 'ยังไม่จัดห้อง'}
-                </option>
-              ))}
-            </select>
-          )}
-        </AsyncView>
-      }
-    >
+    <TableCard title="ผลรวมคะแนนเก็บของห้อง">
+      <RoomNavigator academicYearId={academicYearId} value={nav} onChange={setNav} />
       {!room ? <p className="muted">เลือกห้องเพื่อดูคะแนนเก็บของทุกคนในทุกวิชา</p> : (
         <AsyncView state={data} empty="ห้องนี้ยังไม่มีการลงทะเบียนในภาคเรียนนี้">
           {(list) => {
