@@ -3,7 +3,8 @@
  * การกระจายเกรด · คะแนนเฉลี่ย) และ ขาด ลา มาสาย แยกห้อง ของภาคเรียนที่เลือก
  * ด้านบน · อ่านอย่างเดียว
  */
-import { api } from '../core/api';
+import { useState } from 'react';
+import { api, qs } from '../core/api';
 import { num } from '../core/fmt';
 import { useScope } from '../core/scope';
 import type { Role } from '../core/session';
@@ -77,6 +78,8 @@ export function GradeStatisticsScreen() {
         </AsyncView>
       </TableCard>
 
+      {termId && <RoomScoresCard termId={termId} />}
+
       <TableCard title="ขาด ลา มาสาย แยกห้อง (นับเป็นคาบ)">
         <AsyncView state={rooms} empty="ยังไม่มีการเช็คชื่อในภาคเรียนนี้">
           {(list) => (
@@ -112,5 +115,88 @@ export function GradeStatisticsScreen() {
         </AsyncView>
       </TableCard>
     </>
+  );
+}
+
+interface ScoreRow {
+  student_id: string; student_code: string; class_number: number | null; full_name: string;
+  section_id: string; course_code: string; course_name: string;
+  weighted: string; weight_filled: string; weight_total: string;
+}
+interface Room { study_year: number; group_code: string | null }
+
+/**
+ * ผลรวมคะแนนเก็บของห้อง — SISA "ผลรวมคะแนนเก็บ" ตาราง นักศึกษา × รายวิชา
+ * คะแนนสูตรเดียวกับตอนตัดเกรด ช่องที่ครูยังกรอกไม่ครบแสดงสัดส่วนที่กรอกแล้วด้วย
+ */
+function RoomScoresCard({ termId }: { termId: string }) {
+  const rooms = useAsync(() => api.get<Room[]>(`/registration/rooms${qs({ termId })}`), [termId]);
+  const [room, setRoom] = useState<string>('');
+  const data = useAsync(
+    () => (room ? api.get<ScoreRow[]>(`/reports/terms/${termId}/room-scores${qs({ groupCode: room === '-' ? undefined : room })}`) : Promise.resolve([])),
+    [termId, room],
+  );
+  return (
+    <TableCard
+      title="ผลรวมคะแนนเก็บของห้อง"
+      actions={
+        <AsyncView state={rooms}>
+          {(list) => (
+            <select value={room} onChange={(e) => setRoom(e.target.value)} aria-label="ห้อง">
+              <option value="">— เลือกห้อง —</option>
+              {list.map((r) => (
+                <option key={`${r.study_year}|${r.group_code}`} value={r.group_code ?? '-'}>
+                  {r.group_code ? `ชั้นปี ${r.study_year} · ${r.group_code}` : 'ยังไม่จัดห้อง'}
+                </option>
+              ))}
+            </select>
+          )}
+        </AsyncView>
+      }
+    >
+      {!room ? <p className="muted">เลือกห้องเพื่อดูคะแนนเก็บของทุกคนในทุกวิชา</p> : (
+        <AsyncView state={data} empty="ห้องนี้ยังไม่มีการลงทะเบียนในภาคเรียนนี้">
+          {(list) => {
+            const courses = [...new Map(list.map((r) => [r.section_id, r])).values()];
+            const people = [...new Map(list.map((r) => [r.student_id, r])).values()];
+            const cell = (sid: string, sec: string) => list.find((r) => r.student_id === sid && r.section_id === sec);
+            return (
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 50 }}>เลขที่</th>
+                    <th>ชื่อ</th>
+                    {courses.map((c) => (
+                      <th key={c.section_id} className="num" title={c.course_name}>
+                        {c.course_code}<br /><small className="muted">เต็ม {Number(c.weight_total)}</small>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {people.map((p) => (
+                    <tr key={p.student_id}>
+                      <td>{p.class_number ?? ''}</td>
+                      <td>{p.student_code} {p.full_name}</td>
+                      {courses.map((c) => {
+                        const x = cell(p.student_id, c.section_id);
+                        if (!x) return <td key={c.section_id} className="num muted">—</td>;
+                        const partial = Number(x.weight_filled) < Number(x.weight_total);
+                        return (
+                          <td key={c.section_id} className="num" title={partial ? `กรอกแล้ว ${Number(x.weight_filled)} จาก ${Number(x.weight_total)}` : ''}>
+                            {num(Number(x.weighted), 2)}{partial && <small className="muted"> *</small>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          }}
+        </AsyncView>
+      )}
+      <p className="hint">* ครูยังกรอกคะแนนไม่ครบทุกรายการ — ชี้ที่ตัวเลขเพื่อดูว่ากรอกแล้วเท่าไรจากเต็ม</p>
+    </TableCard>
   );
 }

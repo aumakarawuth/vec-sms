@@ -5367,6 +5367,24 @@ async function main() {
 
   // ─── ทะเบียนวัดผล: สถิติรายวิชาและเวลาเรียนแบบ SISA ───
 
+  await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
+    const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
+    let rows = 0;
+    for (const room of rooms.body) {
+      const q = room.groupCode ? `?groupCode=${encodeURIComponent(room.groupCode)}` : '';
+      const r = await registrar(`/reports/terms/${TERM1}/room-scores${q}`);
+      expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+      for (const x of r.body) {
+        expect(Number(x.weighted) <= Number(x.weight_filled) + 0.01, `${x.course_code}: คะแนน ${x.weighted} เกินน้ำหนักที่กรอก ${x.weight_filled}`);
+        expect(Number(x.weight_filled) <= Number(x.weight_total) + 0.01, `${x.course_code}: น้ำหนักที่กรอกเกินน้ำหนักเต็ม`);
+      }
+      rows += r.body.length;
+    }
+    const t = await teacher(`/reports/terms/${TERM1}/room-scores`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${rows} แถว (นักศึกษา × วิชา)`;
+  });
+
   await check('API-282 สรุปผลรายวิชา: การกระจายเกรดรวมได้เท่าจำนวนที่มีผล และกลุ่มที่ยังไม่ส่งเกรดยังอยู่ในรายการ', async () => {
     const r = await registrar(`/reports/terms/${TERM1}/course-results`);
     expect(r.status === 200 && r.body.length > 0, `ได้ ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);

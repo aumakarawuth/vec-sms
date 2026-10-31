@@ -552,6 +552,39 @@ export class ReportsService {
     }));
   }
 
+  /**
+   * ผลรวมคะแนนเก็บของห้องหนึ่ง — SISA "ข้อมูลสถิติ › ผลรวมคะแนนเก็บ"
+   * ตาราง นักศึกษา × รายวิชา ของภาคเรียนนั้น คะแนนคิดแบบเดียวกับตอนตัดเกรด
+   * (score / max_score × weight · 0016) — ถ้าคิดคนละสูตร ตัวเลขที่ครูเห็นตรงนี้
+   * จะไม่ตรงกับคะแนนที่ใช้ตัดเกรดจริง
+   * คู่กับ "เต็ม" = ผลรวมน้ำหนักของรายการที่มีคะแนนแล้ว เพื่อให้รู้ว่าคะแนนต่ำ
+   * เพราะทำได้น้อย หรือเพราะครูยังกรอกไม่ครบ
+   */
+  async roomScores(termId: string, groupCode: string | null) {
+    return this.db.query(
+      `select s.id as student_id, s.student_code, s.class_number,
+              trim(coalesce(pe.prefix_th, '') || coalesce(pe.first_name_th, '') || ' ' || coalesce(pe.last_name_th, '')) as full_name,
+              cs.id as section_id, c.code as course_code, c.name_th as course_name,
+              round(coalesce(sum(gsc.score / gi.max_score * gi.weight), 0), 2) as weighted,
+              round(coalesce(sum(gi.weight) filter (where gsc.score is not null), 0), 2) as weight_filled,
+              (select round(coalesce(sum(gi2.weight), 0), 2) from gradebook_item gi2 where gi2.class_section_id = cs.id) as weight_total
+         from enrollment e
+         join term t on t.id = e.term_id
+         join student s on s.id = e.student_id
+         join person pe on pe.id = s.person_id
+         join class_section cs on cs.id = e.class_section_id
+         join course c on c.id = cs.course_id
+         left join student_class_placement p on p.student_id = s.id and p.academic_year_id = t.academic_year_id
+         left join gradebook_item gi on gi.class_section_id = cs.id
+         left join gradebook_score gsc on gsc.gradebook_item_id = gi.id and gsc.enrollment_id = e.id
+        where e.term_id = $1 and e.status <> 'withdrawn'
+          and p.group_code is not distinct from $2
+        group by s.id, s.student_code, s.class_number, pe.prefix_th, pe.first_name_th, pe.last_name_th, cs.id, c.code, c.name_th
+        order by s.class_number nulls last, s.student_code, c.code`,
+      [termId, groupCode],
+    );
+  }
+
   async byCurriculum() {
     return this.db.query(
       `select cur.name_th as curriculum_name, cv.edition_be, cur.shift,
@@ -656,6 +689,12 @@ export class ReportsController {
   @Get('terms/:termId/course-results')
   courseResults(@Param('termId', ParseUuidPipe) termId: string) {
     return this.svc.courseResults(termId);
+  }
+
+  /** groupCode ว่าง = กอง "ยังไม่จัดห้อง" */
+  @Get('terms/:termId/room-scores')
+  roomScores(@Param('termId', ParseUuidPipe) termId: string, @Query('groupCode') groupCode?: string) {
+    return this.svc.roomScores(termId, groupCode || null);
   }
 
   @Get('terms/:termId/attendance-by-room')
