@@ -5365,6 +5365,36 @@ async function main() {
 
   // ─── รับสมัคร: สถิติแบบ SISA และใบรายงานตัว ───
 
+  await check('API-281 เลขบัตรในใบสมัครแฮชด้วยกุญแจ (ไม่ใช่ sha256 เปล่า) และติดป้ายรุ่น 2 ไปถึงตัวนักศึกษา', async () => {
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const r = await db.query(
+        `select a.national_id_hash = digest('1100000000001', 'sha256') as plain,
+                a.national_id_hash is not null as has_hash, a.national_id_hash_v,
+                a.father_national_id_hash is null as father_none
+           from application a where a.id = $1`,
+        [appId],
+      );
+      const row = r.rows[0];
+      expect(row?.has_hash, 'ใบสมัครที่กรอกเลขบัตรต้องมีค่าแฮช');
+      expect(row.plain === false, 'ค่าแฮชต้องไม่ใช่ sha256 เปล่าที่ไล่ย้อนกลับได้');
+      expect(row.national_id_hash_v === 2, `ใบใหม่ต้องเป็นรุ่น 2 ได้ ${row.national_id_hash_v}`);
+      const p = await db.query(
+        `select pe.national_id_hash_v, pe.national_id_hash = a.national_id_hash as same
+           from application a join person pe on pe.national_id_hash = a.national_id_hash
+          where a.id = $1`,
+        [appId],
+      );
+      if (p.rows.length) {
+        expect(p.rows[0].national_id_hash_v === 2, `ตัวนักศึกษาที่รับเข้าต้องได้ป้ายรุ่น 2 ได้ ${p.rows[0].national_id_hash_v}`);
+      }
+      return p.rows.length ? 'รับเข้าแล้ว ป้ายรุ่น 2 ถึงตัวนักศึกษา' : 'ยังไม่ได้รับเข้า';
+    } finally {
+      await db.end();
+    }
+  });
+
   await check('API-279 สถิติรับสมัครทุกมิติรวมได้จำนวนใบเท่ากัน และจังหวัดถูกจัดเข้าภาคถูกต้อง', async () => {
     const dims = ['program', 'status', 'gender', 'gpa', 'school', 'province', 'region', 'referral'];
     const totals: Record<string, number> = {};

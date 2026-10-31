@@ -31,6 +31,7 @@ import { Audit } from '../../common/audit/audit.interceptor';
 import { Roles } from '../../common/auth/auth.guard';
 import { DbService } from '../../common/db/db.service';
 import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
+import { hashNationalId } from '../../common/crypto/national-id';
 
 /**
  * งานรับสมัครนักศึกษาใหม่
@@ -41,7 +42,7 @@ import { IsUuid, ParseUuidPipe } from '../../common/validation/uuid';
  *
  * ─── เลขบัตรประชาชนไม่ผ่านชั้นนี้แบบอ่านออก ───
  * ฐานข้อมูลเก็บเฉพาะค่าแฮช (หลักเดียวกับ person.national_id_hash ใน 0002)
- * ชั้นนี้จึงส่งเลขที่รับมาให้ `digest()` ในคำสั่ง SQL แล้วไม่เก็บไว้ที่ไหนอีก
+ * ชั้นนี้แฮชด้วยกุญแจ (hashNationalId) ก่อนส่งลงฐานข้อมูล แล้วไม่เก็บเลขไว้ที่ไหนอีก (0100)
  * ข้อจำกัดเดียวกับการนำเข้าข้อมูล — คอลัมน์ที่เข้ารหัสจริงรอเชื่อม KMS
  *
  * ─── ยังไม่เปิดให้ผู้สมัครกรอกเอง ───
@@ -302,6 +303,15 @@ ${line('วันที่รายงานตัว', null)}
    * ซึ่งกินเลขที่ใบสมัครไปแล้วแต่ยื่นไม่ได้ (submit_application บังคับว่า
    * ต้องมีอันดับอย่างน้อยหนึ่ง)
    */
+  /**
+   * ค่าแฮชเลขบัตรแบบมีกุญแจ (HMAC) ตัวเดียวกับระเบียนนักศึกษา (0061) —
+   * เดิมส่งเลขเปล่าให้ digest(sha256) ในคำสั่ง SQL ซึ่งไล่ย้อนกลับได้ในไม่กี่นาที
+   * และแปลว่าเลขจริงเดินทางไปถึงฐานข้อมูล (ไปโผล่ใน log ของคำสั่งที่ช้าได้) (0100)
+   */
+  private hashOf(id?: string): Buffer | null {
+    return id ? hashNationalId(id, process.env.IP_HASH_SECRET ?? 'vec-sms') : null;
+  }
+
   async createApplication(dto: CreateApplicationDto) {
     return this.db.tx(async (c) => {
       const no = (
@@ -321,28 +331,28 @@ ${line('วันที่รายงานตัว', null)}
               father_national_id_hash, father_occupation_th, father_income_monthly, father_phone,
               mother_prefix_th, mother_first_name_th, mother_last_name_th,
               mother_national_id_hash, mother_occupation_th, mother_income_monthly, mother_phone,
-              province_th)
+              province_th, national_id_hash_v)
            values (current_institution_id(), $1, $2, $3, $4, $5,
-                   case when $6::text is not null then digest($6::text, 'sha256') end,
+                   $6::bytea,
                    $7, coalesce($8, 'undisclosed')::gender_kind,
                    $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18,
-                   case when $19::text is not null then digest($19::text, 'sha256') end,
+                   $19::bytea,
                    $20, $21, $22,
                    $23, $24, $25,
-                   case when $26::text is not null then digest($26::text, 'sha256') end,
-                   $27, $28, $29, nullif(btrim($30), ''))
+                   $26::bytea,
+                   $27, $28, $29, nullif(btrim($30), ''), 2)
            returning id, application_no`,
           [dto.roundId, no, dto.prefixTh ?? null, dto.firstNameTh, dto.lastNameTh,
-           dto.nationalId ?? null, dto.birthDate ?? null, dto.gender ?? null,
+           this.hashOf(dto.nationalId), dto.birthDate ?? null, dto.gender ?? null,
            dto.phone ?? null, dto.email ?? null, dto.addressTh ?? null,
            dto.priorSchoolTh ?? null, dto.priorQualificationTh ?? null,
            dto.priorGpax ?? null, dto.referralSource ?? null,
            dto.fatherPrefixTh ?? null, dto.fatherFirstNameTh ?? null, dto.fatherLastNameTh ?? null,
-           dto.fatherNationalId ?? null, dto.fatherOccupationTh ?? null,
+           this.hashOf(dto.fatherNationalId), dto.fatherOccupationTh ?? null,
            dto.fatherIncomeMonthly ?? null, dto.fatherPhone ?? null,
            dto.motherPrefixTh ?? null, dto.motherFirstNameTh ?? null, dto.motherLastNameTh ?? null,
-           dto.motherNationalId ?? null, dto.motherOccupationTh ?? null,
+           this.hashOf(dto.motherNationalId), dto.motherOccupationTh ?? null,
            dto.motherIncomeMonthly ?? null, dto.motherPhone ?? null,
            dto.provinceTh ?? null],
         )

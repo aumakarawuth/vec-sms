@@ -137,6 +137,7 @@ cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_
   THROTTLE_ENABLED=true MFA_DISABLED=false \
   MFA_SECRET_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" \
   NATIONAL_ID_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" && \
+  export MSYS_NO_PATHCONV=1 && \
   npm run test:e2e && npm run test:auth && npm run test:ratelimit && npm run test:hardening && npm run test:platform
 ```
 
@@ -234,6 +235,13 @@ SQL จึงบอกเป็นรายบัญชีว่าใครย�
 - **`pkill -f "node dist/main.js"` ไม่ทำงาน** ใช้ PowerShell `Get-CimInstance Win32_Process`
   กรอง `CommandLine -like '*main.js*'` แทน
 - **หยุด API ก่อนรัน `db/run.sh`** มิฉะนั้น `drop database` ล้มเพราะมี connection ค้าง
+- **กุญแจ base64 ที่ขึ้นต้นด้วย `/` ถูก Git Bash แปลงเป็นพาธ Windows** —
+  `NATIONAL_ID_KEY=/abc…=` ไปถึง Node เป็น `C:/Program Files/Git/abc…=`
+  แล้ว API-167 ถึง 169 ล้มด้วย 500 "ต้องเป็นคีย์ 32 ไบต์" **แบบสุ่ม** (ราวหนึ่งในหกสิบสี่
+  ของกุญแจที่สุ่มใหม่ทุกรอบ) อาการเหมือนโค้ดพังเป็นบางครั้ง ทั้งที่เป็นสภาพแวดล้อม
+  ใส่ `MSYS_NO_PATHCONV=1` ไว้ในคำสั่งรันเทสต์แล้ว **แต่ต้องตั้งหลัง** `prepare-db.sh`
+  — ถ้าตั้งไว้ก่อน พาธไฟล์ที่สคริปต์ส่งให้ `psql.exe` จะไม่ถูกแปลงด้วย แล้วฐานทดสอบ
+  ถูกเตรียมไม่ครบ (อาการ: `42883` ฟังก์ชันไม่มีอยู่)
 - **`TZ` ที่ตั้งใน Git Bash ไปไม่ถึง Node** — `export TZ=Asia/Bangkok` แล้ว
   `echo $TZ` เห็นค่าถูกต้อง แต่ `process.env.TZ` เป็น `undefined` (MSYS จัดการ
   ตัวแปรนี้เป็นกรณีพิเศษ) อาการคือ production-guard เตือน "TZ ไม่ได้ตั้ง"
