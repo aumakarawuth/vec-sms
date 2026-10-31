@@ -21,4 +21,4 @@ function Stat({t,v,n,c}:{t:string;v:number;n:string;c:string}){return <div class
 function Preview({x}:{x:I}){return <><PageHead title={x.title} sub="โครงหน้าจอสำหรับงานพฤติกรรม" actions={<a href={href('/behavior-center')}>← กลับ</a>}/><Notice kind="info">หน้านี้เป็น Mockup และไม่เปลี่ยนข้อมูลจริง</Notice><div className="registry-summary"><Stat t="นักศึกษาที่ติดตาม" v={42} n="ข้อมูลตัวอย่าง" c="primary"/><Stat t="สถานะปกติ" v={34} n="ดำเนินการแล้ว" c="success"/><Stat t="ต้องติดตาม" v={8} n="รอดำเนินการ" c="warning"/></div><Card title={x.title}><div className="mock-chart">{[82,64,91,58,74,88].map((h,n)=><i key={n} style={{height:`${h}%`}}/>)}</div><p className="hint">{x.desc} ข้อมูลนี้ใช้แสดงรูปแบบก่อนเชื่อม API เฉพาะ</p></Card></>}
 
 /** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
-export const SUBNAV = GROUPS.flatMap((g) => g.items).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title }));
+export const SUBNAV = GROUPS.flatMap((g) => g.items.map((x) => ({ ...x, group: g.title }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, group: x.group }));

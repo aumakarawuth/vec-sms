@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 /**
  * โครงหน้าจอและเส้นทาง
  *
@@ -84,7 +85,7 @@ const NAV_ICON: Record<string, string> = {
  * พากลับไปศูนย์ที่ผู้ใช้ไม่ได้มาจาก (เช่นเข้า /finance จากศูนย์นักศึกษา
  * แต่ปุ่มกลับพาไปศูนย์อื่น)
  */
-const SUBNAV: Record<string, { path: string; label: string; roles?: Role[] }[]> = {
+const SUBNAV: Record<string, { path: string; label: string; group?: string; roles?: Role[] }[]> = {
   '/registry': SUB_REGISTRY,
   '/student-center': SUB_STUDENT,
   '/personnel-center': SUB_PERSONNEL,
@@ -201,8 +202,11 @@ export function App() {
                         .filter((x) => !Object.prototype.hasOwnProperty.call(SUBNAV, x.path))
                         .filter((x) => !x.roles || roles.length === 0 || x.roles.some((r) => roles.includes(r)))
                         .filter((x, n, all) => all.findIndex((y) => y.path === x.path) === n)
-                        .map((x) => (
-                          <a key={x.path} href={href(x.path)} className={route.path === x.path || route.path.startsWith(x.path + '/') ? 'active' : ''}>{x.label}</a>
+                        .map((x, n, all) => (
+                          <Fragment key={x.path}>
+                          {x.group && x.group !== all[n - 1]?.group && <span className="subnav-group">{x.group}</span>}
+                          <a href={href(x.path)} className={route.path === x.path || route.path.startsWith(x.path + '/') ? 'active' : ''}>{x.label}</a>
+                          </Fragment>
                         ))}
                     </div>
                   )}

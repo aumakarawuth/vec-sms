@@ -28,4 +28,4 @@ function Stat({ title, value, note, tone }: { title:string; value:number; note:s
 function Preview({ item }: { item:Item }) { return <><PageHead title={item.title} sub="โครงหน้าจอการเงิน" actions={<a href={href('/finance-center')}>← ศูนย์การเงิน</a>} /><Notice kind="info">เมนูนี้เตรียมโครงหน้าจอไว้แล้ว และจะเชื่อมข้อมูลจริงในขั้นถัดไป</Notice><Card title={item.title}><p className="hint">{item.desc}</p></Card></>; }
 
 /** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
-export const SUBNAV = GROUPS.flatMap((g) => g.items).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title }));
+export const SUBNAV = GROUPS.flatMap((g) => g.items.map((x) => ({ ...x, group: g.title }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, group: x.group }));

@@ -23,4 +23,4 @@ function Stat({t,v,n,c}:{t:string;v:number;n:string;c:string}){return <div class
 function Preview({x}:{x:Item}){return <><PageHead title={x.title} sub="เครื่องมือระบบฉบับต้นแบบ" actions={<a href={href('/settings-center')}>← กลับ</a>}/><Notice kind="info">หน้านี้เป็น Mockup การกดใช้งานจะยังไม่เปลี่ยนข้อมูลจริง</Notice><div className="registry-summary"><Stat t="สถานะระบบ" v={100} n="พร้อมให้บริการ (%)" c="success"/><Stat t="รายการทั้งหมด" v={12} n="ข้อมูลตัวอย่าง" c="primary"/><Stat t="รอตั้งค่า" v={3} n="ต้องดำเนินการ" c="warning"/></div><Card title={x.title}><div className="mock-chart">{[86,70,94,62,78,90].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div><p className="hint">{x.desc} หน้านี้เตรียมรูปแบบไว้เพื่อเชื่อม API และพื้นที่จัดเก็บในขั้นถัดไป</p></Card></>}
 
 /** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
-export const SUBNAV = GROUPS.flatMap((g) => g.items).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title }));
+export const SUBNAV = GROUPS.flatMap((g) => g.items.map((x) => ({ ...x, group: g.title }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, group: x.group }));
