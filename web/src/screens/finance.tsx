@@ -19,6 +19,7 @@ import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
+import { StudentPicker } from '../ui/room-navigator';
 import { CashierSummaryCard, FundingReportCard, ReceiptSearchCard, RoomSummaryCard } from './finance-reports';
 
 const METHOD: Record<string, string> = {
@@ -1048,6 +1049,8 @@ export function FinanceScreen({ section = 'payments' }: { section?: FinanceSecti
       {section === 'payments' && (
         <>
       <Card title="เลือกนักศึกษา">
+        {/* ไล่จากห้อง — กล่องด้านล่างมีแค่สองร้อยคนแรก คนที่เลือกจากตรงนี้ถูกดึงมาเติมให้เอง */}
+        <StudentPicker academicYearId={term?.academic_year_id ?? null} studentId={studentId} onPick={(st) => setStudentId(st.id)} />
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
             <span>นักศึกษา</span>
@@ -1200,6 +1203,8 @@ export function FinanceScreen({ section = 'payments' }: { section?: FinanceSecti
         <>
       <FundingReportCard />
       <Card title="เลือกนักศึกษา">
+        {/* ไล่จากห้อง — กล่องด้านล่างมีแค่สองร้อยคนแรก คนที่เลือกจากตรงนี้ถูกดึงมาเติมให้เอง */}
+        <StudentPicker academicYearId={term?.academic_year_id ?? null} studentId={studentId} onPick={(st) => setStudentId(st.id)} />
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
             <span>นักศึกษา</span>
