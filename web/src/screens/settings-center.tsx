@@ -15,9 +15,6 @@ const GROUPS:{title:string;subtitle:string;items:Item[]}[]=[
   {key:'jobs',title:'งานตามกำหนดเวลา',desc:'ดูสถานะและสั่งรันงานประจำวันของระบบ (คำนวณสถิติ ส่งแจ้งเตือน ฯลฯ)',path:'/jobs',state:'ready'},
   {key:'import',title:'นำเข้าข้อมูล',desc:'นำเข้าข้อมูลนักศึกษาและบุคลากรจากไฟล์ พร้อมขั้นตรวจสอบก่อนบันทึกจริง',path:'/import',state:'ready'},
   {key:'government-exports',title:'ส่งออกข้อมูล',desc:'ออกไฟล์ข้อมูลตามรูปแบบที่หน่วยงานรัฐกำหนด (PVRS ฯลฯ)',path:'/government-exports',state:'ready'},
-  {key:'system-info',title:'System Informations',desc:'ข้อมูลเวอร์ชัน สถานะบริการ และสภาพแวดล้อมระบบ',state:'planned'},
-  {key:'images',title:'จัดการไฟล์รูปภาพ',desc:'รูปนักศึกษา บุคลากร ตราสถานศึกษา และไฟล์ประกอบ',state:'planned'},
-  {key:'qr',title:'QR Code',desc:'สร้างรหัสสำหรับเช็กอิน เอกสาร และการตรวจสอบ',state:'planned'},
  ]},
 ];
 const STATUS={ready:{label:'พร้อมใช้งาน',kind:'ok'},partial:{label:'ใช้งานได้บางส่วน',kind:'warn'},planned:{label:'หน้าต้นแบบ',kind:'info'}} as const;
