@@ -3920,7 +3920,7 @@ async function main() {
     const st = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
       body: JSON.stringify({
-        status: 'graduated', effectiveOn: '2569-03-31',
+        status: 'graduated', effectiveOn: '2026-03-31',
         reason: 'สำเร็จการศึกษาตามหลักสูตร', documentNo: 'คำสั่งที่ 12/2569',
       }),
     });
@@ -3943,7 +3943,7 @@ async function main() {
      */
     const noReason = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status: 'dismissed', effectiveOn: '2569-03-31' }),
+      body: JSON.stringify({ status: 'dismissed', effectiveOn: '2026-03-31' }),
     });
     expect(noReason.status === 400, `สถานะที่ออกจากสถานศึกษาต้องบังคับเหตุผล ได้ ${noReason.status}`);
 
@@ -3951,7 +3951,7 @@ async function main() {
     // จะได้จุดเดียวไปให้พ้น ๆ ซึ่งแย่กว่าไม่ถาม
     const back = await registrar(`/students/${F.student}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status: 'active', effectiveOn: '2569-04-01' }),
+      body: JSON.stringify({ status: 'active', effectiveOn: '2026-04-01' }),
     });
     expect(back.status < 400, `สถานะที่ยังอยู่ต้องไม่บังคับเหตุผล ได้ ${back.status}`);
     return 'กรอกได้ · ขึ้นใบ · บังคับเฉพาะสถานะที่ออกจริง';
@@ -3969,20 +3969,20 @@ async function main() {
      * ผ่านโดยไม่ได้ตรวจอะไร — ซึ่งแย่กว่าไม่มีเทสต์ เพราะดูเหมือนมีคนดูแลอยู่
      */
     const first = await registrar(`/graduation/students/${F.student}/completed-on`, {
-      method: 'PATCH', body: JSON.stringify({ completedOn: '2569-09-30' }),
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2026-09-30' }),
     });
     expect(first.status < 400,
       `แก้วันจบไม่ได้ ${first.status} ${JSON.stringify(first.body)} — ` +
       'ข้อนี้ต้องรันหลังเทสต์ที่อนุมัติจบให้นักศึกษาตัวอย่างแล้ว');
-    expect(String(first.body.completed_on).startsWith('2569-09-30'),
+    expect(String(first.body.completed_on).startsWith('2026-09-30'),
       `วันจบต้องเปลี่ยนจริง ได้ ${first.body.completed_on}`);
     const gpaxBefore = String(first.body.gpax);
 
     const r = await registrar(`/graduation/students/${F.student}/completed-on`, {
-      method: 'PATCH', body: JSON.stringify({ completedOn: '2570-03-31' }),
+      method: 'PATCH', body: JSON.stringify({ completedOn: '2027-03-31' }),
     });
     expect(r.status < 400, `แก้วันจบรอบสองไม่ได้ ${r.status}`);
-    expect(String(r.body.completed_on).startsWith('2570-03-31'),
+    expect(String(r.body.completed_on).startsWith('2027-03-31'),
       `วันจบต้องเปลี่ยนได้อีก ได้ ${r.body.completed_on}`);
     expect(String(r.body.gpax) === gpaxBefore,
       `GPAX ต้องไม่เปลี่ยน — ${gpaxBefore} → ${r.body.gpax}`);
@@ -3990,7 +3990,7 @@ async function main() {
     // ฟิลด์ที่ไม่ได้ประกาศใน DTO ต้องถูกปฏิเสธ ไม่ใช่เมินเงียบ ๆ
     const sneaky = await registrar(`/graduation/students/${F.student}/completed-on`, {
       method: 'PATCH',
-      body: JSON.stringify({ completedOn: '2569-09-30', gpax: 4.0 }),
+      body: JSON.stringify({ completedOn: '2026-09-30', gpax: 4.0 }),
     });
     expect(sneaky.status === 400, `ฟิลด์แปลกปลอมต้องถูกปฏิเสธ ได้ ${sneaky.status}`);
     return 'แก้วันได้ · GPAX ไม่ขยับ · ฟิลด์แปลกปลอมถูกปฏิเสธ';
@@ -4578,7 +4578,7 @@ async function main() {
   await check('API-217 งานทะเบียนคัดลอกค่าเทอมไปปีใหม่ได้ แบบยังไม่เปิดใช้ และกดซ้ำได้โดยไม่ซ้อน', async () => {
     const newYear = await registrar('/academic/years', {
       method: 'POST',
-      body: JSON.stringify({ yearBe: 2570, startsOn: '2570-05-01', endsOn: '2571-03-31' }),
+      body: JSON.stringify({ yearBe: 2570, startsOn: '2027-05-01', endsOn: '2028-03-31' }),
     });
     expect(newYear.status === 201, `เตรียมปีการศึกษาใหม่ไม่สำเร็จ: ${JSON.stringify(newYear.body)}`);
 
@@ -5160,7 +5160,7 @@ async function main() {
   });
 
   await check('API-256 รายงานรายรับรวมยอดที่กระทบยอดแล้วเท่านั้น', async () => {
-    const r = await finance(`/finance/revenue?from=2000-01-01&to=2999-12-31`);
+    const r = await finance(`/finance/revenue?from=2000-01-01&to=2300-12-31`);
     expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
     expect(typeof r.body.total === 'number', 'ต้องมียอดรวม');
     expect(Array.isArray(r.body.byMethod), 'ต้องแยกตามช่องทางชำระ');
@@ -5183,7 +5183,7 @@ async function main() {
     expect(all.body.length > 0, 'ชุดทดสอบรับชำระไปแล้ว ต้องมีใบเสร็จอย่างน้อยหนึ่งใบ');
     const pp = await finance('/finance/receipts/search?method=promptpay');
     expect(pp.body.every((r: any) => r.method === 'promptpay'), 'ตัวกรองช่องทางต้องมีผลจริง');
-    const none = await finance('/finance/receipts/search?from=2999-01-01');
+    const none = await finance('/finance/receipts/search?from=2300-01-01');
     expect(none.body.length === 0, 'ช่วงวันที่ในอนาคตต้องไม่มีใบเสร็จ');
     return `${all.body.length} ใบ · promptpay ${pp.body.length} ใบ`;
   });
@@ -5326,6 +5326,27 @@ async function main() {
   await check('API-265 ชื่อมิติที่ไม่รู้จักถูกปฏิเสธ ไม่ถูกต่อเข้า SQL', async () => {
     const r = await registrar(`/reports/students/breakdown?dimension=${encodeURIComponent("gender; drop table student")}&academicYearId=${AY}`);
     expect(r.status === 400, `ควรได้ 400 ได้ ${r.status}`);
+  });
+
+  await check('API-271 วันที่ปี พ.ศ. ถูกปฏิเสธทุกทาง — body · query · ช่องซ้อนในอาร์เรย์ — และไม่มีอะไรถูกเขียน', async () => {
+    const before = await registrar(`/students/${F.student}/status-history`);
+    const body = await registrar(`/students/${F.student}/status`, {
+      method: 'POST', body: JSON.stringify({ status: 'on_leave', effectiveOn: '2569-06-01' }),
+    });
+    expect(body.status === 400, `body ควรได้ 400 ได้ ${body.status}`);
+    expect(String(body.body.message).includes('คริสต์ศักราช'), `ข้อความต้องบอกว่าต้องเป็นปี ค.ศ. ได้ ${JSON.stringify(body.body)}`);
+    const after = await registrar(`/students/${F.student}/status-history`);
+    expect(after.body.length === before.body.length, 'ถูกปฏิเสธแล้วต้องไม่มีประวัติเพิ่ม');
+    const query = await finance('/finance/receipts/search?from=2569-01-01');
+    expect(query.status === 400, `query ควรได้ 400 ได้ ${query.status}`);
+    const nested = await finance('/finance/bank-transactions', {
+      method: 'POST',
+      body: JSON.stringify({ transactions: [{ postedAt: '2569-08-20', amount: 10, counterparty: 'ทดสอบ' }] }),
+    });
+    expect(nested.status === 400, `ช่องในอาร์เรย์ควรได้ 400 ได้ ${nested.status}`);
+    // ค่าที่หน้าตาคล้ายแต่ไม่ใช่วันที่ ต้องไม่ถูกแตะ
+    const ok = await finance('/finance/receipts/search?docFrom=2569-0001');
+    expect(ok.status === 200, `เลขที่เอกสารที่มีขีดต้องไม่ถูกปฏิเสธ ได้ ${ok.status}`);
   });
 
   await app.close();

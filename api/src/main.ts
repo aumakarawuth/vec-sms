@@ -1,3 +1,4 @@
+import { RejectBuddhistYearPipe } from './common/validation/ce-date';
 import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -66,6 +67,8 @@ export async function createApp() {
   }
 
   app.useGlobalPipes(
+    // ก่อน ValidationPipe — ดูเหตุผลใน ce-date.ts
+    new RejectBuddhistYearPipe(),
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
