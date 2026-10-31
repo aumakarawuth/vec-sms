@@ -12,16 +12,16 @@ const i = (key:string, title:string, desc:string, path?:string, state:State = 'p
 const GROUPS = [
   { title:'รับชำระเงิน', subtitle:'งานหน้าเคาน์เตอร์', items:[
     i('payments','รับชำระเงิน','เลือกนักศึกษา ดูยอดค้าง ออกใบแจ้งหนี้ และรับชำระ','/finance/payments','ready'),
-    i('receipts','ใบเสร็จรับเงิน','ดูและพิมพ์ใบเสร็จย้อนหลังของนักศึกษา','/finance/receipts','ready'),
+    i('receipts','ใบเสร็จรับเงิน','ค้นใบเสร็จทั้งวิทยาลัยตามวันที่ เลขที่ หรือนักศึกษา แล้วพิมพ์ซ้ำ','/finance/receipts','ready'),
     i('bank','นำเข้าและกระทบยอดธนาคาร','นำเข้ารายการเดินบัญชี และจับคู่กับนักศึกษา','/finance/bank','ready'),
   ] },
   { title:'รายงาน', subtitle:'สรุปรายรับและติดตามหนี้', items:[
-    i('revenue','รายงานรายรับ','ยอดรับตามช่วงวันที่ แยกตามช่องทางการชำระ','/finance/revenue','ready'),
-    i('arrears','ค้างชำระและระงับสิทธิ์','ยอดลูกหนี้ตามอายุหนี้ และเงื่อนไขการระงับสิทธิ์','/finance/arrears','ready'),
+    i('revenue','รายงานรายรับ','ปิดยอดตามผู้รับเงิน และยอดที่กระทบยอดแล้วแยกช่องทาง','/finance/revenue','ready'),
+    i('arrears','ค้างชำระและระงับสิทธิ์','การชำระแยกห้อง รายชื่อค้างชำระ อายุหนี้ และการระงับสิทธิ์','/finance/arrears','ready'),
   ] },
   { title:'การตั้งค่า', subtitle:'โครงสร้างค่าธรรมเนียมและส่วนลด', items:[
     i('fees','ตั้งค่าค่าธรรมเนียม','รายการค่าธรรมเนียม โครงสร้างค่าเทอม และค่าเรียนซ่อม','/finance/fees','ready'),
-    i('discounts','ทุนและส่วนลด','แหล่งทุน และส่วนลดของนักศึกษารายคน','/finance/discounts','ready'),
+    i('discounts','ทุนและส่วนลด','รายงานผู้ได้รับทุน แหล่งทุน และส่วนลดรายคน','/finance/discounts','ready'),
   ] },
 ];
 const STATUS = { ready:{ label:'พร้อมใช้งาน', kind:'ok' }, partial:{ label:'ใช้งานได้บางส่วน', kind:'warn' }, planned:{ label:'หน้าต้นแบบ', kind:'info' } } as const;

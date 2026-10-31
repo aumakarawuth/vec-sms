@@ -5175,6 +5175,71 @@ async function main() {
     expect(r.status === 403, `ควรได้ 403 ได้ ${r.status}`);
   });
 
+  // ─── รายงานการเงินแบบ SISA — ค้นใบเสร็จ · ปิดยอดผู้รับเงิน · รายห้อง · ทุน ───
+
+  await check('API-258 ค้นใบเสร็จทั้งวิทยาลัยได้ และกรองด้วยช่องทางชำระได้จริง', async () => {
+    const all = await finance('/finance/receipts/search');
+    expect(all.status === 200, `ได้ ${all.status}: ${JSON.stringify(all.body)}`);
+    expect(all.body.length > 0, 'ชุดทดสอบรับชำระไปแล้ว ต้องมีใบเสร็จอย่างน้อยหนึ่งใบ');
+    const pp = await finance('/finance/receipts/search?method=promptpay');
+    expect(pp.body.every((r: any) => r.method === 'promptpay'), 'ตัวกรองช่องทางต้องมีผลจริง');
+    const none = await finance('/finance/receipts/search?from=2999-01-01');
+    expect(none.body.length === 0, 'ช่วงวันที่ในอนาคตต้องไม่มีใบเสร็จ');
+    return `${all.body.length} ใบ · promptpay ${pp.body.length} ใบ`;
+  });
+
+  await check('API-259 ปิดยอดตามผู้รับเงินรวมได้เท่ากับยอดใบเสร็จที่ไม่ถูกยกเลิก', async () => {
+    const sum = await finance('/finance/reports/cashier');
+    expect(sum.status === 200, `ได้ ${sum.status}: ${JSON.stringify(sum.body)}`);
+    const receipts = await finance('/finance/receipts/search?status=active');
+    const a = sum.body.reduce((t: number, r: any) => t + r.amount, 0);
+    const b = receipts.body.reduce((t: number, r: any) => t + Number(r.amount), 0);
+    // ใช้ได้เพราะชุดทดสอบมีใบเสร็จไม่ถึงเพดาน 500 ใบของการค้น
+    expect(Math.abs(a - b) < 0.01, `ยอดปิดผู้รับเงิน ${a} ต้องเท่ากับผลรวมใบเสร็จ ${b}`);
+    return `รวม ${a} บาท`;
+  });
+
+  await check('API-260 สรุปรายห้องรวมกันได้เท่ากับยอดทั้งวิทยาลัย (รวมกองที่ยังไม่จัดห้อง)', async () => {
+    const r = await finance(`/finance/reports/rooms?academicYearId=${AY}`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.length > 0, 'ชุดทดสอบออกใบแจ้งหนี้ไปแล้ว ต้องมีอย่างน้อยหนึ่งแถว');
+    for (const row of r.body) {
+      expect(Math.abs(row.billed - row.paid - row.outstanding) < 0.01, `ห้อง ${row.groupCode}: เรียกเก็บ − ชำระ ต้องเท่ากับค้าง`);
+    }
+    const owingRoom = r.body.find((x: any) => x.owing > 0);
+    if (owingRoom) {
+      const q = owingRoom.groupCode ? `&groupCode=${encodeURIComponent(owingRoom.groupCode)}` : '';
+      const list = await finance(`/finance/reports/rooms/arrears?academicYearId=${AY}${q}`);
+      expect(list.status === 200, `ได้ ${list.status}`);
+      expect(list.body.length === owingRoom.owing, `รายชื่อค้าง ${list.body.length} คน ต้องเท่ากับจำนวนในสรุป ${owingRoom.owing}`);
+    }
+    return `${r.body.length} ห้อง`;
+  });
+
+  // มอบเองในข้อนี้ — ส่วนลดของ API-236 ถูก API-237 ถอนไปแล้ว
+  await check('API-261 รายงานทุนเห็นส่วนลดที่เพิ่งมอบ และไม่เห็นที่ถอนไปแล้ว', async () => {
+    const src = await finance('/finance/funding-sources', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'other', nameTh: 'ทุนทดสอบ API-261' }),
+    });
+    expect(src.status === 201, `สร้างแหล่งทุนได้ ${src.status}: ${JSON.stringify(src.body)}`);
+    const grant = await finance(`/finance/students/${F.student}/funding`, {
+      method: 'POST',
+      body: JSON.stringify({ fundingSourceId: src.body.id, academicYearId: AY, amount: 500 }),
+    });
+    expect(grant.status === 201, `มอบทุนได้ ${grant.status}: ${JSON.stringify(grant.body)}`);
+    const r = await finance(`/finance/reports/funding?academicYearId=${AY}`);
+    expect(r.status === 200, `ได้ ${r.status}: ${JSON.stringify(r.body)}`);
+    expect(r.body.some((x: any) => x.source_name === 'ทุนทดสอบ API-261'), 'ต้องเห็นทุนที่เพิ่งมอบ');
+    expect(!r.body.some((x: any) => x.source_name === 'ส่วนลดทดสอบ API-236'), 'ส่วนลดที่ถอนแล้วต้องไม่อยู่ในรายงาน');
+    return `${r.body.length} รายการ`;
+  });
+
+  await check('API-262 ครูค้นใบเสร็จและดูปิดยอดผู้รับเงินไม่ได้', async () => {
+    expect((await teacher('/finance/receipts/search')).status === 403, 'ค้นใบเสร็จต้องได้ 403');
+    expect((await teacher('/finance/reports/cashier')).status === 403, 'ปิดยอดต้องได้ 403');
+  });
+
   await app.close();
 
   console.log('');

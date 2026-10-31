@@ -19,6 +19,7 @@ import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
+import { CashierSummaryCard, FundingReportCard, ReceiptSearchCard, RoomSummaryCard } from './finance-reports';
 
 const METHOD: Record<string, string> = {
   cash: 'เงินสด',
@@ -952,11 +953,11 @@ function PendingMatchRow({
  */
 export const FINANCE_SECTIONS = {
   payments: { title: 'รับชำระเงิน', sub: 'เลือกนักศึกษา ดูยอดค้าง ออกใบแจ้งหนี้ และรับชำระ' },
-  receipts: { title: 'ใบเสร็จรับเงิน', sub: 'ดูและพิมพ์ใบเสร็จย้อนหลังของนักศึกษา' },
-  revenue: { title: 'รายงานรายรับ', sub: 'ยอดรับตามช่วงวันที่ แยกตามช่องทางการชำระ' },
-  arrears: { title: 'ค้างชำระและระงับสิทธิ์', sub: 'ยอดลูกหนี้ตามอายุหนี้ และเงื่อนไขการระงับสิทธิ์' },
+  receipts: { title: 'ใบเสร็จรับเงิน', sub: 'ค้นใบเสร็จทั้งวิทยาลัยตามวันที่ เลขที่ ช่องทาง หรือนักศึกษา แล้วพิมพ์ซ้ำ' },
+  revenue: { title: 'รายงานรายรับ', sub: 'ปิดยอดตามผู้รับเงิน และยอดที่กระทบยอดแล้วแยกช่องทาง' },
+  arrears: { title: 'ค้างชำระและระงับสิทธิ์', sub: 'การชำระแยกห้อง รายชื่อค้างชำระ อายุหนี้ และการระงับสิทธิ์' },
   fees: { title: 'ตั้งค่าค่าธรรมเนียม', sub: 'รายการค่าธรรมเนียม โครงสร้างค่าเทอม และค่าเรียนซ่อม' },
-  discounts: { title: 'ทุนและส่วนลด', sub: 'แหล่งทุน และส่วนลดของนักศึกษารายคน' },
+  discounts: { title: 'ทุนและส่วนลด', sub: 'รายงานผู้ได้รับทุน แหล่งทุน และส่วนลดรายคน' },
   bank: { title: 'นำเข้าและกระทบยอดธนาคาร', sub: 'นำเข้ารายการเดินบัญชี และจับคู่กับนักศึกษา' },
 } as const;
 export type FinanceSection = keyof typeof FINANCE_SECTIONS;
@@ -1193,83 +1194,11 @@ export function FinanceScreen({ section = 'payments' }: { section?: FinanceSecti
         </>
       )}
 
-      {section === 'receipts' && (
-        <>
-      <Card title="เลือกนักศึกษา">
-        <div className="row">
-          <label className="field" style={{ flex: 2 }}>
-            <span>นักศึกษา</span>
-            <AsyncView state={students}>
-              {() => (
-                <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-                  <option value="">— เลือกนักศึกษา —</option>
-                  {studentOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.student_code} {s.full_name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </AsyncView>
-          </label>
-        </div>
-      </Card>
-
-          {studentId && (
-            <>
-          <TableCard title="ใบเสร็จที่ออกให้นักศึกษาคนนี้">
-            <AsyncView state={receipts} empty="ยังไม่เคยออกใบเสร็จให้นักศึกษาคนนี้">
-              {(rows) => (
-                <table>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 130 }}>เลขที่</th>
-                      <th style={{ width: 130 }}>วันที่</th>
-                      <th className="num" style={{ width: 120 }}>จำนวนเงิน</th>
-                      <th>ตัวอักษร</th>
-                      <th style={{ width: 130 }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.id} style={{ opacity: r.voided_at ? 0.55 : 1 }}>
-                        <td className="mono">{r.doc_no}</td>
-                        <td>{thaiDate(r.issued_on)}</td>
-                        <td className="num">{money(r.amount)}</td>
-                        <td>
-                          {r.amount_text}
-                          {r.voided_at && (
-                            <>
-                              {' '}
-                              <Badge kind="danger">ยกเลิกแล้ว</Badge>
-                              {r.void_reason ? ` — ${r.void_reason}` : ''}
-                            </>
-                          )}
-                        </td>
-                        <td>
-                          {/*
-                            พิมพ์ซ้ำอ่านจาก payload ที่ตรึงไว้ ไม่ได้ออกใบใหม่ —
-                            เลขที่จึงไม่เดินและกระดาษที่ได้เหมือนใบแรกทุกตัวอักษร
-                          */}
-                          <PrintButton path={`/finance/receipts/${r.id}/print`}>
-                            พิมพ์ซ้ำ
-                          </PrintButton>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </AsyncView>
-          </TableCard>
-
-            </>
-          )}
-        </>
-      )}
+      {section === 'receipts' && <ReceiptSearchCard methods={METHOD} />}
 
       {section === 'discounts' && (
         <>
+      <FundingReportCard />
       <Card title="เลือกนักศึกษา">
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
@@ -1299,10 +1228,16 @@ export function FinanceScreen({ section = 'payments' }: { section?: FinanceSecti
         </>
       )}
 
-      {section === 'revenue' && <RevenueReportCard />}
+      {section === 'revenue' && (
+        <>
+          <CashierSummaryCard methods={METHOD} />
+          <RevenueReportCard />
+        </>
+      )}
 
       {section === 'arrears' && (
         <>
+      <RoomSummaryCard />
       <TableCard
         title="ยอดลูกหนี้แยกตามอายุหนี้"
         actions={
