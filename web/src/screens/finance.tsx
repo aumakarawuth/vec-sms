@@ -896,9 +896,20 @@ function BankImportCard({ onDone }: { onDone: () => void }) {
 }
 
 function PendingMatchRow({
-  row, students, onDone,
-}: { row: PendingMatch; students: StudentRow[]; onDone: () => void }) {
+  row, onDone,
+}: { row: PendingMatch; onDone: () => void }) {
   const [studentId, setStudentId] = useState('');
+  /*
+   * ค้นจากรหัส/ชื่อในแถวเอง — เดิมเป็นกล่องที่มีแค่สองร้อยคนแรก ผู้โอนที่เป็น
+   * นักศึกษาคนที่ 201 จึงยืนยันไม่ได้เลย ค้นเมื่อกด Enter เพราะหนึ่งหน้ามีหลายแถว
+   * ยิงทุกตัวอักษรจะกินโควตาคำขอของทั้งวิทยาลัย
+   */
+  const [typed, setTyped] = useState(row.counterparty ?? '');
+  const [q, setQ] = useState('');
+  const found = useAsync(
+    () => (q ? api.get<StudentRow[]>(`/students${qs({ q, limit: 20 })}`) : Promise.resolve([])),
+    [q],
+  );
   const hasSuggestion = !!row.student_name;
 
   return (
@@ -915,12 +926,19 @@ function PendingMatchRow({
             </div>
           </>
         ) : (
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)} style={{ maxWidth: 220 }}>
-            <option value="">— ไม่พบข้อมูลพอ เลือกนักศึกษาเอง —</option>
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
-            ))}
-          </select>
+<div style={{ display: 'grid', gap: 4, maxWidth: 240 }}>
+            <form onSubmit={(e) => { e.preventDefault(); setQ(typed.trim()); setStudentId(''); }}>
+              <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="รหัสหรือชื่อ แล้วกด Enter" />
+            </form>
+            {q && (
+              <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
+                <option value="">{found.loading ? 'กำลังค้นหา…' : `— พบ ${found.data?.length ?? 0} คน เลือกหนึ่งคน —`}</option>
+                {(found.data ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
+                ))}
+              </select>
+            )}
+          </div>
         )}
       </td>
       <td style={{ width: 200 }}>
@@ -1310,7 +1328,6 @@ export function FinanceScreen({ section = 'payments' }: { section?: FinanceSecti
                   <PendingMatchRow
                     key={r.id}
                     row={r}
-                    students={students.data ?? []}
                     onDone={() => pending.reload()}
                   />
                 ))}
