@@ -5448,6 +5448,34 @@ async function main() {
     return `${rooms} ห้อง`;
   });
 
+  await check('API-288 กลุ่มเรียนกรองตามห้องประจำ: ได้เฉพาะกลุ่มที่คนในห้องลงอยู่ และเป็นส่วนหนึ่งของทั้งหมด', async () => {
+    const all = await registrar(`/academic/sections?termId=${TERM1}`);
+    const ids = new Set(all.body.map((x: any) => x.id));
+    const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
+    await db.connect();
+    try {
+      const rooms = await db.query(
+        `select distinct pl.study_year, pl.group_code from student_class_placement pl join term t on t.academic_year_id = pl.academic_year_id where t.id = $1`, [TERM1]);
+      for (const r of rooms.rows) {
+        const g = r.group_code ?? '-';
+        const got = await registrar(`/academic/sections?termId=${TERM1}&studyYear=${r.study_year}&groupCode=${encodeURIComponent(g)}`);
+        expect(got.status === 200, `${g}: ได้ ${got.status}`);
+        const want = await db.query(
+          `select distinct e.class_section_id as id from enrollment e join term t on t.id = e.term_id
+             join student_class_placement pl on pl.student_id = e.student_id and pl.academic_year_id = t.academic_year_id
+            where e.term_id = $1 and e.status = 'enrolled' and pl.study_year = $2 and pl.group_code is not distinct from $3`,
+          [TERM1, r.study_year, r.group_code]);
+        expect(got.body.length === want.rows.length, `${g}: ได้ ${got.body.length} กลุ่ม ควรได้ ${want.rows.length}`);
+        for (const x of got.body) expect(ids.has(x.id), `${g}: ${x.id} ไม่อยู่ในรายการทั้งหมด`);
+      }
+    } finally {
+      await db.end();
+    }
+    const bad = await registrar(`/academic/sections?termId=${TERM1}&studyYear=0`);
+    expect(bad.status === 400, `studyYear=0 ควรได้ 400 ได้ ${bad.status}`);
+    return `${all.body.length} กลุ่มทั้งหมด`;
+  });
+
   await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
     const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
     let rows = 0;
