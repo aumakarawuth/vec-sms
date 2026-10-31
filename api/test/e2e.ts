@@ -5365,6 +5365,28 @@ async function main() {
 
   // ─── รับสมัคร: สถิติแบบ SISA และใบรายงานตัว ───
 
+  // ─── ทะเบียนวัดผล: สถิติรายวิชาและเวลาเรียนแบบ SISA ───
+
+  await check('API-282 สรุปผลรายวิชา: การกระจายเกรดรวมได้เท่าจำนวนที่มีผล และกลุ่มที่ยังไม่ส่งเกรดยังอยู่ในรายการ', async () => {
+    const r = await registrar(`/reports/terms/${TERM1}/course-results`);
+    expect(r.status === 200 && r.body.length > 0, `ได้ ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+    for (const s of r.body) {
+      const dist = Object.values(s.distribution as Record<string, number>).reduce((t, n) => t + n, 0);
+      expect(dist === s.graded, `${s.courseCode} ${s.sectionNo}: กระจายเกรด ${dist} ต้องเท่ากับจำนวนที่มีผล ${s.graded}`);
+      expect(s.passed <= s.graded, `${s.courseCode}: ผ่านต้องไม่เกินจำนวนที่มีผล`);
+    }
+    const graded = r.body.filter((s: any) => s.graded > 0).length;
+    return `${r.body.length} กลุ่มเรียน · มีผลแล้ว ${graded} กลุ่ม`;
+  });
+
+  await check('API-283 ขาด ลา มาสาย แยกห้อง และครูเปิดสถิติทั้งวิทยาลัยไม่ได้', async () => {
+    const r = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
+    expect(r.status === 200 && Array.isArray(r.body), `ได้ ${r.status}`);
+    const t = await teacher(`/reports/terms/${TERM1}/course-results`);
+    expect(t.status === 403, `ครูควรได้ 403 ได้ ${t.status}`);
+    return `${r.body.length} ห้อง`;
+  });
+
   await check('API-281 เลขบัตรในใบสมัครแฮชด้วยกุญแจ (ไม่ใช่ sha256 เปล่า) และติดป้ายรุ่น 2 ไปถึงตัวนักศึกษา', async () => {
     const db = new Client({ connectionString: process.env.ADMIN_DATABASE_URL });
     await db.connect();

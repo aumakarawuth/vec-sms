@@ -474,6 +474,84 @@ export class ReportsService {
     return { updated: rows.length, skipped: personIds.length - rows.length };
   }
 
+  /**
+   * สรุปผลการประเมินรายวิชาของภาคเรียน — SISA "ข้อมูลสถิติ › จำนวนนักศึกษาที่
+   * ลงทะเบียน · สรุปผลการประเมินรายวิชา · คะแนนเฉลี่ย" ในตารางเดียว
+   * ใช้ผลฉบับปัจจุบันเท่านั้น (superseded_by ว่าง) — ฉบับที่ถูกแก้ผ่านคำร้องแล้ว
+   * ไม่นับซ้ำ (หลักข้อ 4: ผลเก่ายังอยู่แต่ไม่ใช่ผลที่มีผล)
+   * กลุ่มที่ยังไม่ส่งเกรดยังขึ้นเป็นแถว พร้อมจำนวน "ยังไม่มีผล" — ตัดทิ้งแล้ว
+   * จะไม่มีใครเห็นว่าวิชาไหนค้างส่งเกรด
+   */
+  async courseResults(termId: string) {
+    const rows = await this.db.query<{
+      section_id: string; course_code: string; course_name: string; section_no: string; teacher_name: string | null;
+      enrolled: string; graded: string; passed: string; avg_score: string | null; dist: Record<string, number> | null;
+    }>(
+      `with cur as (
+         select r.enrollment_id, r.raw_score, r.credits_earned, gs.symbol
+           from enrollment_result r join grade_symbol gs on gs.id = r.grade_symbol_id
+          where r.superseded_by is null)
+       select cs.id as section_id, c.code as course_code, c.name_th as course_name, cs.section_no,
+              trim(coalesce(tp.prefix_th, '') || coalesce(tp.first_name_th, '') || ' ' || coalesce(tp.last_name_th, '')) as teacher_name,
+              count(e.id) filter (where e.status <> 'withdrawn')           as enrolled,
+              count(cur.enrollment_id)                                     as graded,
+              count(cur.enrollment_id) filter (where cur.credits_earned > 0) as passed,
+              round(avg(cur.raw_score), 2)                                 as avg_score,
+              (select jsonb_object_agg(symbol, n) from (
+                 select cur2.symbol, count(*) as n from enrollment e2 join cur cur2 on cur2.enrollment_id = e2.id
+                  where e2.class_section_id = cs.id group by cur2.symbol) d) as dist
+         from class_section cs
+         join course c on c.id = cs.course_id
+         left join staff ts on ts.id = cs.teacher_id
+         left join person tp on tp.id = ts.person_id
+         left join enrollment e on e.class_section_id = cs.id
+         left join cur on cur.enrollment_id = e.id
+        where cs.term_id = $1
+        group by cs.id, c.code, c.name_th, cs.section_no, tp.prefix_th, tp.first_name_th, tp.last_name_th
+        order by c.code, cs.section_no`,
+      [termId],
+    );
+    return rows.map((r) => ({
+      sectionId: r.section_id, courseCode: r.course_code, courseName: r.course_name, sectionNo: r.section_no,
+      teacherName: r.teacher_name || null, enrolled: Number(r.enrolled), graded: Number(r.graded),
+      passed: Number(r.passed), avgScore: r.avg_score === null ? null : Number(r.avg_score), distribution: r.dist ?? {},
+    }));
+  }
+
+  /**
+   * ขาด ลา มาสาย แยกห้อง — SISA "ข้อมูลสถิติ › ขาด ลา มาสาย"
+   * นับเป็นจำนวนคาบ (ไม่ใช่จำนวนคน) ตามสถานะที่ครูบันทึกในภาคเรียนนั้น ห้องมาจาก
+   * การจัดห้องของปีการศึกษาของภาค คนที่ยังไม่ถูกจัดห้องรวมเป็นแถว "ยังไม่จัดห้อง"
+   */
+  async attendanceByRoom(termId: string) {
+    const rows = await this.db.query<{
+      study_year: number | null; group_code: string | null; students: string;
+      present: string; late: string; leave_sick: string; leave_personal: string; activity: string; absent: string;
+    }>(
+      `select p.study_year, p.group_code, count(distinct e.student_id) as students,
+              count(*) filter (where ar.status = 'present')        as present,
+              count(*) filter (where ar.status = 'late')           as late,
+              count(*) filter (where ar.status = 'leave_sick')     as leave_sick,
+              count(*) filter (where ar.status = 'leave_personal') as leave_personal,
+              count(*) filter (where ar.status = 'activity')       as activity,
+              count(*) filter (where ar.status = 'absent')         as absent
+         from attendance_record ar
+         join enrollment e on e.id = ar.enrollment_id
+         join term t on t.id = e.term_id
+         left join student_class_placement p
+           on p.student_id = e.student_id and p.academic_year_id = t.academic_year_id
+        where e.term_id = $1
+        group by p.study_year, p.group_code
+        order by p.study_year nulls first, p.group_code nulls first`,
+      [termId],
+    );
+    return rows.map((r) => ({
+      studyYear: r.study_year, groupCode: r.group_code, students: Number(r.students),
+      present: Number(r.present), late: Number(r.late), leaveSick: Number(r.leave_sick),
+      leavePersonal: Number(r.leave_personal), activity: Number(r.activity), absent: Number(r.absent),
+    }));
+  }
+
   async byCurriculum() {
     return this.db.query(
       `select cur.name_th as curriculum_name, cv.edition_be, cur.shift,
@@ -573,6 +651,16 @@ export class ReportsController {
   @Get('by-curriculum')
   byCurriculum() {
     return this.svc.byCurriculum();
+  }
+
+  @Get('terms/:termId/course-results')
+  courseResults(@Param('termId', ParseUuidPipe) termId: string) {
+    return this.svc.courseResults(termId);
+  }
+
+  @Get('terms/:termId/attendance-by-room')
+  attendanceByRoom(@Param('termId', ParseUuidPipe) termId: string) {
+    return this.svc.attendanceByRoom(termId);
   }
 
   @Get('students/dimensions')
