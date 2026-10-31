@@ -300,9 +300,16 @@ export function GradeReportsScreen() {
   const { terms, termId, term, setTerm } = useTermPicker();
   const [scope, setScope] = useState<Scope>('term');
   const [onlyFailed, setOnlyFailed] = useState(false);
+  /* ห้องเลือกจากตัวนำทาง ไม่เลือก = ทั้งวิทยาลัยเหมือนเดิม */
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
+  const roomQuery = nav.groupCode && nav.studyYear && term?.academic_year_id
+    ? { roomYearId: term.academic_year_id, studyYear: nav.studyYear, groupCode: nav.groupCode }
+    : {};
 
-  const scopeQuery =
-    scope === 'term' ? { termId } : scope === 'year' ? { academicYearId: term?.academic_year_id } : { allTerms: 'true' };
+  const scopeQuery = {
+    ...(scope === 'term' ? { termId } : scope === 'year' ? { academicYearId: term?.academic_year_id } : { allTerms: 'true' }),
+    ...roomQuery,
+  };
   const scopeReady = scope === 'all' || (scope === 'term' && termId) || (scope === 'year' && term?.academic_year_id);
 
   const scopeLabel =
@@ -310,13 +317,14 @@ export function GradeReportsScreen() {
     : scope === 'year' && term ? `ปีการศึกษา ${term.year_be}`
     : scope === 'all' ? 'ทุกภาคเรียน'
     : '';
+  const roomLabel = nav.groupCode ? ` · ชั้นปี ${nav.studyYear} ห้อง ${nav.groupCode === '-' ? 'ยังไม่จัดห้อง' : nav.groupCode}` : '';
 
   const grades = useAsync(
     () =>
       canUse && scopeReady
         ? api.get<GradeRow[]>(`/reports/grades${qs({ ...scopeQuery, onlyFailed: onlyFailed ? 'true' : undefined })}`)
         : Promise.resolve([]),
-    [canUse, scope, termId, term?.academic_year_id, onlyFailed],
+    [canUse, scope, termId, term?.academic_year_id, onlyFailed, nav.studyYear, nav.groupCode],
   );
 
   const failing = useAsync(
@@ -337,7 +345,9 @@ export function GradeReportsScreen() {
       ) : (
       <>
 
-      <Card title="เลือกขอบเขต">
+      <RoomNavigator academicYearId={term?.academic_year_id ?? null} value={nav} onChange={setNav} />
+
+      <Card title={nav.groupCode ? `เลือกขอบเขต — ชั้นปี ${nav.studyYear} ห้อง ${nav.groupCode === '-' ? 'ยังไม่จัดห้อง' : nav.groupCode}` : 'เลือกขอบเขต — ทั้งวิทยาลัย (เลือกห้องด้านบนเพื่อกรอง)'}>
         <div className="row" style={{ alignItems: 'end' }}>
           <label className="field" style={{ maxWidth: 220 }}>
             <span>ขอบเขต</span>
@@ -375,7 +385,7 @@ export function GradeReportsScreen() {
                 path={`/reports/grades/print${qs({
                   ...scopeQuery,
                   onlyFailed: onlyFailed ? 'true' : undefined,
-                  scopeLabel,
+                  scopeLabel: scopeLabel + roomLabel,
                 })}`}
               >
                 พิมพ์รายงาน
@@ -390,7 +400,7 @@ export function GradeReportsScreen() {
       {!scopeReady ? (
         <Notice kind="info">เลือกภาคเรียนหรือปีการศึกษาก่อน — ยกเว้นเลือก "ทุกภาคเรียน" ที่ดูได้ทันที</Notice>
       ) : (
-        <TableCard title={`ผลการเรียน — ${scopeLabel}${onlyFailed ? ' (เฉพาะที่ไม่ผ่าน)' : ''}`}>
+        <TableCard title={`ผลการเรียน — ${scopeLabel}${roomLabel}${onlyFailed ? ' (เฉพาะที่ไม่ผ่าน)' : ''}`}>
           <AsyncView state={grades} empty="ไม่มีข้อมูลตามเงื่อนไขที่เลือก">
             {(rows) => {
               const studentCount = new Set(rows.map((r) => r.student_code)).size;

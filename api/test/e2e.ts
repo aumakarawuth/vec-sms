@@ -5394,6 +5394,26 @@ async function main() {
     return `${tree.body.length} แถว · ${total} คน`;
   });
 
+  await check('API-286 รายงานผลการเรียนกรองตามห้องได้ — ทุกแถวเป็นคนในห้องนั้น และค่าที่ผิดรูปถูกปฏิเสธ', async () => {
+    const all = await registrar(`/reports/grades?allTerms=true`);
+    expect(all.status === 200, `ได้ ${all.status}`);
+    const tree = await registrar(`/registry/tree?academicYearId=${AY}`);
+    let checked = 0;
+    for (const r of tree.body) {
+      const g = r.groupCode ?? '-';
+      const filtered = await registrar(`/reports/grades?allTerms=true&roomYearId=${AY}&studyYear=${r.studyYear}&groupCode=${encodeURIComponent(g)}`);
+      expect(filtered.status === 200, `${g}: ได้ ${filtered.status}`);
+      const room = await registrar(`/registry/room-students?academicYearId=${AY}${r.groupCode ? `&groupCode=${encodeURIComponent(r.groupCode)}` : ''}`);
+      const codes = new Set(room.body.map((x: any) => x.student_code));
+      for (const row of filtered.body) expect(codes.has(row.student_code), `${row.student_code} ไม่ได้อยู่ห้อง ${g} แต่โผล่ในรายงาน`);
+      checked += filtered.body.length;
+    }
+    expect(checked <= all.body.length, `ผลรวมรายห้อง ${checked} เกินทั้งหมด ${all.body.length}`);
+    const bad = await registrar(`/reports/grades?allTerms=true&roomYearId=${AY}&studyYear=x`);
+    expect(bad.status === 400, `studyYear ผิดรูปควรได้ 400 ได้ ${bad.status}`);
+    return `${checked} แถวจาก ${all.body.length}`;
+  });
+
   await check('API-284 ผลรวมคะแนนเก็บของห้อง: คะแนนไม่เกินน้ำหนักที่กรอกแล้ว และไม่เกินน้ำหนักเต็ม', async () => {
     const rooms = await registrar(`/reports/terms/${TERM1}/attendance-by-room`);
     let rows = 0;

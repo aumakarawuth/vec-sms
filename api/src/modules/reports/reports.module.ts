@@ -146,7 +146,10 @@ export class ReportsService {
    * ไม่ใช่กฎธุรกิจ จึงเขียนที่ชั้น API ตรง ๆ แบบเดียวกับ rooms()/roomPlan()
    * ในโมดูลลงทะเบียน ไม่ต้องมีฟังก์ชันในฐานข้อมูล
    */
-  async grades(opts: { termId?: string; academicYearId?: string; allTerms?: boolean; onlyFailed?: boolean }) {
+  async grades(opts: {
+    termId?: string; academicYearId?: string; allTerms?: boolean; onlyFailed?: boolean;
+    room?: { academicYearId: string; studyYear: number; groupCode: string | null };
+  }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (opts.termId) {
@@ -159,6 +162,18 @@ export class ReportsService {
       throw new BadRequestException('ต้องระบุ termId, academicYearId หรือ allTerms=true อย่างใดอย่างหนึ่ง');
     }
     if (opts.onlyFailed) conditions.push('not gsym.earns_credit');
+    /*
+     * ห้องเป็นของปีการศึกษา ไม่ใช่ของภาคเรียน — รายงาน "ทุกภาคเรียน" ของห้อง 2/1
+     * จึงหมายถึงคนที่อยู่ห้อง 2/1 ในปีที่เลือก พร้อมผลทุกภาคที่เคยเรียนมา
+     * (แบบเดียวกับที่ SISA ไล่จากห้องปัจจุบันแล้วแสดงประวัติทั้งหมด)
+     */
+    if (opts.room) {
+      params.push(opts.room.academicYearId, opts.room.studyYear, opts.room.groupCode);
+      const n = params.length;
+      conditions.push(`exists (select 1 from student_class_placement pl
+        where pl.student_id = s.id and pl.academic_year_id = $${n - 2}
+          and pl.study_year = $${n - 1} and pl.group_code is not distinct from $${n}::text)`);
+    }
     const where = conditions.length ? `and ${conditions.join(' and ')}` : '';
 
     return this.db.query(
@@ -671,6 +686,15 @@ const STATUS_FILTER: Record<string, string> = {
   all:       `true`,
 };
 
+/** ห้องจากตัวนำทาง — groupCode `-` คือกองยังไม่จัดห้อง (null ในฐานข้อมูล) */
+function roomFilter(roomYearId?: string, studyYear?: string, groupCode?: string) {
+  if (!roomYearId) return undefined;
+  if (!UUID_PATTERN.test(roomYearId)) throw new BadRequestException('roomYearId ต้องเป็นรหัสรูปแบบ UUID');
+  const y = Number(studyYear);
+  if (!Number.isInteger(y) || y < 1 || y > 9) throw new BadRequestException('studyYear ต้องเป็นชั้นปี 1–9');
+  return { academicYearId: roomYearId, studyYear: y, groupCode: !groupCode || groupCode === '-' ? null : groupCode };
+}
+
 @Roles('registrar', 'academic', 'finance', 'student_affairs', 'director', 'admin')
 @Controller('reports')
 export class ReportsController {
@@ -739,6 +763,9 @@ export class ReportsController {
     @Query('academicYearId') academicYearId?: string,
     @Query('allTerms') allTerms?: string,
     @Query('onlyFailed') onlyFailed?: string,
+    @Query('roomYearId') roomYearId?: string,
+    @Query('studyYear') studyYear?: string,
+    @Query('groupCode') groupCode?: string,
   ) {
     if (termId && !UUID_PATTERN.test(termId)) throw new BadRequestException('termId ต้องเป็นรหัสรูปแบบ UUID');
     if (academicYearId && !UUID_PATTERN.test(academicYearId)) {
@@ -749,6 +776,7 @@ export class ReportsController {
       academicYearId: academicYearId || undefined,
       allTerms: allTerms === 'true',
       onlyFailed: onlyFailed === 'true',
+      room: roomFilter(roomYearId, studyYear, groupCode),
     });
   }
 
@@ -764,6 +792,9 @@ export class ReportsController {
     @Query('academicYearId') academicYearId?: string,
     @Query('allTerms') allTerms?: string,
     @Query('onlyFailed') onlyFailed?: string,
+    @Query('roomYearId') roomYearId?: string,
+    @Query('studyYear') studyYear?: string,
+    @Query('groupCode') groupCode?: string,
     @Query('scopeLabel') scopeLabel?: string,
   ) {
     if (termId && !UUID_PATTERN.test(termId)) throw new BadRequestException('termId ต้องเป็นรหัสรูปแบบ UUID');
@@ -775,6 +806,7 @@ export class ReportsController {
       academicYearId: academicYearId || undefined,
       allTerms: allTerms === 'true',
       onlyFailed: onlyFailed === 'true',
+      room: roomFilter(roomYearId, studyYear, groupCode),
     });
 
     // จัดกลุ่มตามนักศึกษา — แถวหัวกลุ่มคั่นแทนการพิมพ์รหัส/ชื่อซ้ำทุกแถววิชา
