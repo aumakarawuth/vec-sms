@@ -11,7 +11,9 @@ import { useEffect, useState } from 'react';
 import { api, qs } from '../core/api';
 import { LEVEL, STUDENT_STATUS, thaiDate, money, pct } from '../core/fmt';
 import { href, navigate, useRoute } from '../core/router';
+import { useScope } from '../core/scope';
 import { AsyncView, Badge, Card, Field, PageHead, TableCard, useAsync } from '../ui/kit';
+import { RoomNavigator } from '../ui/room-navigator';
 import {
   AchievementTab,
   AddressTab,
@@ -51,9 +53,26 @@ export function StudentsScreen() {
     return () => clearTimeout(t);
   }, [typed]);
 
+  /*
+   * ไล่จากห้องแบบ SISA — เดิมหน้านี้ค้นหาได้อย่างเดียวและแสดงสองร้อยคนแรก
+   * วิทยาลัยพันคนจึงดู "ทั้งห้อง 2/1" ไม่ได้เลย ห้องที่เลือกอยู่ใน URL
+   */
+  const route = useRoute();
+  const scope = useScope();
+  const yearId = scope.term?.academic_year_id ?? null;
+  const nav = { cur: route.query.get('cur'), studyYear: route.query.get('studyYear'), groupCode: route.query.get('groupCode') };
+  const setNav = (v: typeof nav) => {
+    const qq = new URLSearchParams(route.query);
+    for (const [k, x] of Object.entries(v)) { if (x) qq.set(k, x); else qq.delete(k); }
+    navigate(`${route.path}?${qq.toString()}`);
+  };
+  /* กอง "ยังไม่จัดห้อง" ใช้ตัวนำทางเปิดรายชื่อแทน เพราะ /students กรองค่าว่างไม่ได้ */
+  const roomFilter = nav.groupCode && nav.groupCode !== '-' && yearId
+    ? { academicYearId: yearId, studyYear: nav.studyYear ?? undefined, groupCode: nav.groupCode }
+    : {};
   const list = useAsync(
-    () => api.get<StudentRow[]>(`/students${qs({ q, limit: 200 })}`),
-    [q],
+    () => api.get<StudentRow[]>(`/students${qs({ q, limit: 200, ...roomFilter })}`),
+    [q, yearId, nav.studyYear, nav.groupCode],
   );
 
   return (
@@ -69,6 +88,13 @@ export function StudentsScreen() {
         <div className="stat-card yellow"><span>กำลังศึกษา</span><strong>{list.data?.filter((x) => x.status === 'active').length ?? '—'}</strong><small><b>●</b> สถานะปัจจุบัน</small></div>
         <div className="stat-card blue"><span>สำเร็จการศึกษา</span><strong>{list.data?.filter((x) => x.status === 'graduated').length ?? '—'}</strong><small>ประวัติสะสม</small></div>
       </div>
+
+      <RoomNavigator
+        academicYearId={yearId}
+        value={nav}
+        onChange={setNav}
+        onStudent={(st) => navigate(`/students/${st.id}`)}
+      />
 
       <Card>
         <div className="row">

@@ -14,11 +14,13 @@
 import { useState } from 'react';
 import { api, qs } from '../core/api';
 import { money, thaiDate } from '../core/fmt';
-import { href, useRoute } from '../core/router';
+import { useRoute } from '../core/router';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, PrintButton, TableCard, useAsync,
 } from '../ui/kit';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
+import { StudentPicker } from '../ui/room-navigator';
+import { CashierSummaryCard, FundingReportCard, ReceiptSearchCard, RoomSummaryCard } from './finance-reports';
 
 const METHOD: Record<string, string> = {
   cash: 'เงินสด',
@@ -894,9 +896,20 @@ function BankImportCard({ onDone }: { onDone: () => void }) {
 }
 
 function PendingMatchRow({
-  row, students, onDone,
-}: { row: PendingMatch; students: StudentRow[]; onDone: () => void }) {
+  row, onDone,
+}: { row: PendingMatch; onDone: () => void }) {
   const [studentId, setStudentId] = useState('');
+  /*
+   * ค้นจากรหัส/ชื่อในแถวเอง — เดิมเป็นกล่องที่มีแค่สองร้อยคนแรก ผู้โอนที่เป็น
+   * นักศึกษาคนที่ 201 จึงยืนยันไม่ได้เลย ค้นเมื่อกด Enter เพราะหนึ่งหน้ามีหลายแถว
+   * ยิงทุกตัวอักษรจะกินโควตาคำขอของทั้งวิทยาลัย
+   */
+  const [typed, setTyped] = useState(row.counterparty ?? '');
+  const [q, setQ] = useState('');
+  const found = useAsync(
+    () => (q ? api.get<StudentRow[]>(`/students${qs({ q, limit: 20 })}`) : Promise.resolve([])),
+    [q],
+  );
   const hasSuggestion = !!row.student_name;
 
   return (
@@ -913,12 +926,19 @@ function PendingMatchRow({
             </div>
           </>
         ) : (
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)} style={{ maxWidth: 220 }}>
-            <option value="">— ไม่พบข้อมูลพอ เลือกนักศึกษาเอง —</option>
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
-            ))}
-          </select>
+<div style={{ display: 'grid', gap: 4, maxWidth: 240 }}>
+            <form onSubmit={(e) => { e.preventDefault(); setQ(typed.trim()); setStudentId(''); }}>
+              <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="รหัสหรือชื่อ แล้วกด Enter" />
+            </form>
+            {q && (
+              <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
+                <option value="">{found.loading ? 'กำลังค้นหา…' : `— พบ ${found.data?.length ?? 0} คน เลือกหนึ่งคน —`}</option>
+                {(found.data ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
+                ))}
+              </select>
+            )}
+          </div>
         )}
       </td>
       <td style={{ width: 200 }}>
@@ -945,7 +965,23 @@ function PendingMatchRow({
   );
 }
 
-export function FinanceScreen() {
+/**
+ * หน้าการเงินแยกเป็นหน้าละงาน แบบเดียวกับ SISA ที่หนึ่งเมนูตอบหนึ่งคำถาม —
+ * เดิมเก้าการ์ดอยู่หน้าเดียว ทุกเมนูในศูนย์การเงินจึงพามาเจอหน้าเดิม
+ * แล้วผู้ใช้ต้องเลื่อนหาเอง ส่วนตัวการ์ดแต่ละใบไม่ได้เปลี่ยนเลย
+ */
+export const FINANCE_SECTIONS = {
+  payments: { title: 'รับชำระเงิน', sub: 'เลือกนักศึกษา ดูยอดค้าง ออกใบแจ้งหนี้ และรับชำระ' },
+  receipts: { title: 'ใบเสร็จรับเงิน', sub: 'ค้นใบเสร็จทั้งวิทยาลัยตามวันที่ เลขที่ ช่องทาง หรือนักศึกษา แล้วพิมพ์ซ้ำ' },
+  revenue: { title: 'รายงานรายรับ', sub: 'ปิดยอดตามผู้รับเงิน และยอดที่กระทบยอดแล้วแยกช่องทาง' },
+  arrears: { title: 'ค้างชำระและระงับสิทธิ์', sub: 'การชำระแยกห้อง รายชื่อค้างชำระ อายุหนี้ และการระงับสิทธิ์' },
+  fees: { title: 'ตั้งค่าค่าธรรมเนียม', sub: 'รายการค่าธรรมเนียม โครงสร้างค่าเทอม และค่าเรียนซ่อม' },
+  discounts: { title: 'ทุนและส่วนลด', sub: 'รายงานผู้ได้รับทุน แหล่งทุน และส่วนลดรายคน' },
+  bank: { title: 'นำเข้าและกระทบยอดธนาคาร', sub: 'นำเข้ารายการเดินบัญชี และจับคู่กับนักศึกษา' },
+} as const;
+export type FinanceSection = keyof typeof FINANCE_SECTIONS;
+
+export function FinanceScreen({ section = 'payments' }: { section?: FinanceSection }) {
   const route = useRoute();
   const { terms, termId, term, setTerm } = useTermPicker();
   const aging = useAsync(() => api.get<AgingRow[]>('/finance/ar-aging'), []);
@@ -1009,95 +1045,30 @@ export function FinanceScreen() {
       : []),
   ];
 
+  const meta = FINANCE_SECTIONS[section];
+  const needsTerm = section === 'payments' || section === 'discounts';
+
   return (
     <>
       <PageHead
-        title="งานการเงิน"
+        title={meta.title}
+        sub={meta.sub}
         actions={
-          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-            <a href={href('/finance-center')}>← ศูนย์การเงิน</a>
+          needsTerm ? (
             <div style={{ width: 240 }}>
               <AsyncView state={terms}>
                 {(l) => <TermSelect terms={l} termId={termId} onChange={setTerm} />}
               </AsyncView>
             </div>
-          </div>
+          ) : undefined
         }
       />
 
-      <RetakeFeeCard />
-
-      <RevenueReportCard />
-
-      <LatePolicyCard />
-
-      <TableCard
-        title="ยอดลูกหนี้แยกตามอายุหนี้"
-        actions={
-          <ActionButton onRun={() => api.post('/finance/holds/refresh')} onDone={() => aging.reload()}>
-            ปรับสถานะระงับสิทธิ์
-          </ActionButton>
-        }
-      >
-        <AsyncView state={aging} empty="ยังไม่มียอดค้างชำระ">
-          {(rows) => (
-            <table>
-              <thead>
-                <tr>
-                  <th>ช่วงอายุหนี้</th>
-                  <th className="num" style={{ width: 120 }}>จำนวนนักศึกษา</th>
-                  <th className="num" style={{ width: 160 }}>ยอดเงิน</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.bucket}>
-                    <td>
-                      <Badge kind={bucketKind(r.bucket)}>{r.bucket}</Badge>
-                    </td>
-                    <td className="num">{r.students}</td>
-                    <td className="num">{money(r.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </AsyncView>
-      </TableCard>
-
-      <FeeScheduleSetupCard />
-
-      <BankImportCard onDone={() => pending.reload()} />
-
-      <TableCard title="รายการรอกระทบยอด">
-        <AsyncView state={pending} empty="ไม่มีรายการค้างให้ตัดสินใจ">
-          {(rows) => (
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 110 }}>วันที่</th>
-                  <th className="num" style={{ width: 110 }}>จำนวนเงิน</th>
-                  <th style={{ width: 160 }}>ผู้โอน</th>
-                  <th>ข้อเสนอ</th>
-                  <th style={{ width: 200 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <PendingMatchRow
-                    key={r.id}
-                    row={r}
-                    students={students.data ?? []}
-                    onDone={() => pending.reload()}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
-        </AsyncView>
-      </TableCard>
-
+      {section === 'payments' && (
+        <>
       <Card title="เลือกนักศึกษา">
+        {/* ไล่จากห้อง — กล่องด้านล่างมีแค่สองร้อยคนแรก คนที่เลือกจากตรงนี้ถูกดึงมาเติมให้เอง */}
+        <StudentPicker academicYearId={term?.academic_year_id ?? null} studentId={studentId} onPick={(st) => setStudentId(st.id)} />
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
             <span>นักศึกษา</span>
@@ -1117,8 +1088,8 @@ export function FinanceScreen() {
         </div>
       </Card>
 
-      {studentId && (
-        <>
+          {studentId && (
+            <>
           <Card title="ยอดของนักศึกษาคนนี้">
             <AsyncView state={balance}>
               {(b) => (
@@ -1142,8 +1113,6 @@ export function FinanceScreen() {
               )}
             </AsyncView>
           </Card>
-
-          {term && <StudentDiscountCard studentId={studentId} academicYearId={term.academic_year_id} />}
 
           <Card title="ออกใบแจ้งหนี้ของภาคเรียนที่เลือก">
             <div className="row">
@@ -1237,56 +1206,137 @@ export function FinanceScreen() {
             )}
           </Card>
 
-          <TableCard title="ใบเสร็จที่ออกให้นักศึกษาคนนี้">
-            <AsyncView state={receipts} empty="ยังไม่เคยออกใบเสร็จให้นักศึกษาคนนี้">
-              {(rows) => (
-                <table>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 130 }}>เลขที่</th>
-                      <th style={{ width: 130 }}>วันที่</th>
-                      <th className="num" style={{ width: 120 }}>จำนวนเงิน</th>
-                      <th>ตัวอักษร</th>
-                      <th style={{ width: 130 }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.id} style={{ opacity: r.voided_at ? 0.55 : 1 }}>
-                        <td className="mono">{r.doc_no}</td>
-                        <td>{thaiDate(r.issued_on)}</td>
-                        <td className="num">{money(r.amount)}</td>
-                        <td>
-                          {r.amount_text}
-                          {r.voided_at && (
-                            <>
-                              {' '}
-                              <Badge kind="danger">ยกเลิกแล้ว</Badge>
-                              {r.void_reason ? ` — ${r.void_reason}` : ''}
-                            </>
-                          )}
-                        </td>
-                        <td>
-                          {/*
-                            พิมพ์ซ้ำอ่านจาก payload ที่ตรึงไว้ ไม่ได้ออกใบใหม่ —
-                            เลขที่จึงไม่เดินและกระดาษที่ได้เหมือนใบแรกทุกตัวอักษร
-                          */}
-                          <PrintButton path={`/finance/receipts/${r.id}/print`}>
-                            พิมพ์ซ้ำ
-                          </PrintButton>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </AsyncView>
-          </TableCard>
-
           <Notice kind="info">
             เงินที่รับเข้ามาจะถูกตัดกับงวดที่ครบกำหนดก่อนเสมอตามลำดับที่
             ฐานข้อมูลกำหนด ไม่ใช่ให้เจ้าหน้าที่เลือกว่าจะตัดงวดไหน
           </Notice>
+            </>
+          )}
+        </>
+      )}
+
+      {section === 'receipts' && <ReceiptSearchCard methods={METHOD} />}
+
+      {section === 'discounts' && (
+        <>
+      <FundingReportCard />
+      <Card title="เลือกนักศึกษา">
+        {/* ไล่จากห้อง — กล่องด้านล่างมีแค่สองร้อยคนแรก คนที่เลือกจากตรงนี้ถูกดึงมาเติมให้เอง */}
+        <StudentPicker academicYearId={term?.academic_year_id ?? null} studentId={studentId} onPick={(st) => setStudentId(st.id)} />
+        <div className="row">
+          <label className="field" style={{ flex: 2 }}>
+            <span>นักศึกษา</span>
+            <AsyncView state={students}>
+              {() => (
+                <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
+                  <option value="">— เลือกนักศึกษา —</option>
+                  {studentOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.student_code} {s.full_name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </AsyncView>
+          </label>
+        </div>
+      </Card>
+
+          {studentId && (
+            <>
+          {term && <StudentDiscountCard studentId={studentId} academicYearId={term.academic_year_id} />}
+
+            </>
+          )}
+        </>
+      )}
+
+      {section === 'revenue' && (
+        <>
+          <CashierSummaryCard methods={METHOD} />
+          <RevenueReportCard />
+        </>
+      )}
+
+      {section === 'arrears' && (
+        <>
+      <RoomSummaryCard />
+      <TableCard
+        title="ยอดลูกหนี้แยกตามอายุหนี้"
+        actions={
+          <ActionButton onRun={() => api.post('/finance/holds/refresh')} onDone={() => aging.reload()}>
+            ปรับสถานะระงับสิทธิ์
+          </ActionButton>
+        }
+      >
+        <AsyncView state={aging} empty="ยังไม่มียอดค้างชำระ">
+          {(rows) => (
+            <table>
+              <thead>
+                <tr>
+                  <th>ช่วงอายุหนี้</th>
+                  <th className="num" style={{ width: 120 }}>จำนวนนักศึกษา</th>
+                  <th className="num" style={{ width: 160 }}>ยอดเงิน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.bucket}>
+                    <td>
+                      <Badge kind={bucketKind(r.bucket)}>{r.bucket}</Badge>
+                    </td>
+                    <td className="num">{r.students}</td>
+                    <td className="num">{money(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncView>
+      </TableCard>
+
+      <LatePolicyCard />
+        </>
+      )}
+
+      {section === 'fees' && (
+        <>
+      <FeeScheduleSetupCard />
+      <RetakeFeeCard />
+        </>
+      )}
+
+      {section === 'bank' && (
+        <>
+      <BankImportCard onDone={() => pending.reload()} />
+
+      <TableCard title="รายการรอกระทบยอด">
+        <AsyncView state={pending} empty="ไม่มีรายการค้างให้ตัดสินใจ">
+          {(rows) => (
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 110 }}>วันที่</th>
+                  <th className="num" style={{ width: 110 }}>จำนวนเงิน</th>
+                  <th style={{ width: 160 }}>ผู้โอน</th>
+                  <th>ข้อเสนอ</th>
+                  <th style={{ width: 200 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <PendingMatchRow
+                    key={r.id}
+                    row={r}
+                    onDone={() => pending.reload()}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </AsyncView>
+      </TableCard>
+
         </>
       )}
     </>

@@ -1,0 +1,10 @@
+# ตีสาม — หลังงานประจำคืนของ vec-sms (ตีหนึ่งครึ่ง) และห่างจากช่วงสอบ
+[Unit]
+Description=สำรองฐานข้อมูล vec-sms ทุกคืน
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Bangkok
+Persistent=true
+
+[Install]
+WantedBy=timers.target

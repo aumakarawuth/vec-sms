@@ -18,7 +18,8 @@
 import { useState } from 'react';
 import { api } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
-import { href } from '../core/router';
+import { href, navigate, useRoute } from '../core/router';
+import { RoomNavigator } from '../ui/room-navigator';
 import type { Role } from '../core/session';
 import {
   ActionButton, AsyncView, Badge, Card, Field, Notice, PageHead, RestrictedNotice, TableCard, useAsync, useCan,
@@ -88,6 +89,18 @@ export function LettersScreen() {
   // นักศึกษาที่กำลังทำงานด้วย — เลือกจากรายชื่อหรือจากผลค้นหา
   const [studentId, setStudentId] = useState('');
   const [studentLabel, setStudentLabel] = useState('');
+  /*
+   * เดิมเลือกคนได้จากตาราง "ต้องแจ้งขาดเรียน" ทางเดียว หนังสือเชิญผู้ปกครองกับ
+   * ใบรับรองความประพฤติจึงออกได้เฉพาะคนที่ขาดเรียนเกินเกณฑ์ — ซึ่งเป็นกลุ่มที่
+   * ใบรับรองความประพฤติแทบไม่เคยถูกขอ ตัวนำทางแบบ SISA เปิดให้เลือกได้ทุกคน
+   */
+  const route = useRoute();
+  const nav = { cur: route.query.get('cur'), studyYear: route.query.get('studyYear'), groupCode: route.query.get('groupCode') };
+  const setNav = (v: typeof nav) => {
+    const q = new URLSearchParams(route.query);
+    for (const [k, x] of Object.entries(v)) { if (x) q.set(k, x); else q.delete(k); }
+    navigate(`${route.path}?${q.toString()}`);
+  };
   const issued = useAsync(
     () =>
       canUse && studentId
@@ -218,10 +231,17 @@ export function LettersScreen() {
       </TableCard>
 
       <Card title="ออกหนังสือฉบับอื่น">
+        <RoomNavigator
+          academicYearId={terms.data?.find((t) => t.id === termId)?.academic_year_id ?? null}
+          value={nav}
+          onChange={setNav}
+          studentId={studentId}
+          onStudent={(st) => { setStudentId(st.id); setStudentLabel(`${st.student_code} ${st.full_name}`); }}
+        />
         <div className="row">
           <Field label="นักศึกษาที่เลือก">
             <input
-              value={studentLabel || '— กด “เลือกเพื่อออกใบอื่น” จากตารางด้านบน —'}
+              value={studentLabel || '— เลือกจากตัวนำทาง หรือกด “เลือกเพื่อออกใบอื่น” ในตารางด้านบน —'}
               readOnly
             />
           </Field>

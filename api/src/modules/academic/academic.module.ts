@@ -1377,7 +1377,7 @@ export class CatalogService {
    * นับผู้ลงทะเบียนด้วย เพราะหน้าจอลงทะเบียนต้องรู้ว่าเต็มหรือยังก่อนกด
    * ไม่ใช่รู้ตอนที่ฐานข้อมูลปฏิเสธ
    */
-  async sections(termId: string, q?: string) {
+  async sections(termId: string, q?: string, room?: { studyYear: number; groupCode: string | null }) {
     return this.db.query(
       `select cs.id, cs.section_no, cs.capacity, cs.planned_periods,
               cs.delivery_mode, cs.is_locked,
@@ -1396,9 +1396,17 @@ export class CatalogService {
           and ($2::text is null
                or co.code ilike '%' || $2 || '%'
                or co.name_th ilike '%' || $2 || '%')
+          /* ห้องประจำ (SISA ไล่ถึงห้องก่อนเลือกวิชา) — กลุ่มเรียนที่คนในห้องนั้นลงอยู่ */
+          and ($3::int is null or exists (
+                select 1 from enrollment re
+                  join term rt on rt.id = re.term_id
+                  join student_class_placement pl on pl.student_id = re.student_id
+                       and pl.academic_year_id = rt.academic_year_id
+                 where re.class_section_id = cs.id and re.status = 'enrolled'
+                   and pl.study_year = $3 and pl.group_code is not distinct from $4::text))
         group by cs.id, co.id, tp.first_name_th, tp.last_name_th, r.name_th
         order by co.code, cs.section_no`,
-      [termId, q ?? null],
+      [termId, q ?? null, room?.studyYear ?? null, room?.groupCode ?? null],
     );
   }
 
@@ -1770,8 +1778,16 @@ class CatalogController {
   }
 
   @Get('sections')
-  sections(@Query('termId', ParseUuidPipe) termId: string, @Query('q') q?: string) {
-    return this.svc.sections(termId, q);
+  sections(
+    @Query('termId', ParseUuidPipe) termId: string,
+    @Query('q') q?: string,
+    @Query('studyYear') studyYear?: string,
+    @Query('groupCode') groupCode?: string,
+  ) {
+    if (studyYear === undefined) return this.svc.sections(termId, q);
+    const y = Number(studyYear);
+    if (!Number.isInteger(y) || y < 1 || y > 9) throw new BadRequestException('studyYear ต้องเป็นชั้นปี 1–9');
+    return this.svc.sections(termId, q, { studyYear: y, groupCode: !groupCode || groupCode === '-' ? null : groupCode });
   }
 
   @Get('my-schedule')

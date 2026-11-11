@@ -2,8 +2,8 @@
 -- ระบบบริหารวิทยาลัยอาชีวศึกษาเอกชน — โครงสร้าง + ข้อมูลตัวอย่าง
 -- แกนหลักสูตรฐานสมรรถนะ · การวัดผลตามระเบียบ ปวช./ปวส. · การลงทะเบียน
 --
--- migration ล่าสุด  0094
--- ลายนิ้วมือต้นทาง  e31b55d3034ed3b5
+-- migration ล่าสุด  0100
+-- ลายนิ้วมือต้นทาง  1942de587adf8d5f
 -- ต้องการ           PostgreSQL 14 ขึ้นไป (ใช้ pgcrypto และ btree_gist)
 --
 -- ไฟล์เดียวจบ เหมาะกับการทดลองใช้และการสาธิต
@@ -24388,7 +24388,15 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 revoke all on function enrollment_has_pending_retake_charge(uuid) from public;
-grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+-- ครอบด้วย if exists แบบเดียวกับ 0048 — ตอนติดตั้งจริงสคีมาถูกนำเข้าก่อน
+-- db/deploy/roles.sql (DEPLOY-ONLINE.md) บทบาทนี้จึงยังไม่มี grant เปล่า ๆ
+-- จะทำให้ทั้งไฟล์ล้มบนฐานเปล่าของลูกค้าทุกราย
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+  end if;
+end $$;
 
 comment on function enrollment_has_pending_retake_charge(uuid) is
   'true = มีค่าซ่อมค้างชำระ — security definer เพราะครูมองไม่เห็นแถว course_retake_charge เอง (ดูคอมเมนต์บนฟังก์ชันนี้)';
@@ -24878,6 +24886,611 @@ select institution_id, received_on, method,
 
 comment on view v_revenue_daily is
   'รายรับรายวันแยกตามช่องทางชำระ — ต้นทางของรายงานรายรับที่ /finance/revenue อ่านแล้วรวมตามช่วงที่ขอ';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0095_multi_role_secretary_hr.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0095_multi_role_secretary_hr.sql
+--
+-- ศูนย์บุคลากรแบบหลายฝ่ายซ้อนกัน — เพิ่มบทบาท "เลขา" กับ "บุคคล" และปิด
+-- ช่องว่างที่ session ยุบเหลือบทบาทเดียว
+--
+-- ─── ช่องว่างที่ปิดในไฟล์นี้ ───
+-- login_role_for() (0022) ใช้ coalesce(staff_role → is_teacher → student →
+-- guardian) คนที่มีทั้งบทบาทระดับวิทยาลัย (เช่น academic) และเป็นครูผู้สอน
+-- ด้วย (staff.is_teacher) จะได้ role เดียวคือ academic — ความสามารถฝั่งครู
+-- (ส่งเกรดกลุ่มตัวเอง ฯลฯ) หายไปทั้งที่ RLS หลายจุดยอมให้ครูทำอยู่แล้ว
+-- รูปเดียวกับข้อ 14 ใน CLAUDE.md (grade_submission) แต่คราวนี้เกิดจาก
+-- การยุบบทบาทตอนล็อกอิน ไม่ใช่นโยบาย restrictive ที่เขียนไม่ครบ
+--
+-- ─── ทำไมไม่แก้ login_role_for() ตรง ๆ ───
+-- ที่อื่นในระบบ (JWT field `role`, access_log, audit) ยังอ้างค่าเดียวอยู่
+-- และค่านั้นต้องเป็น "บทบาทที่แรงที่สุด" เพื่อความหมายเดิม (เช่นใครลงชื่อ
+-- อนุมัติ) จึงเพิ่มฟังก์ชันคู่ขนาน login_roles_for() ที่คืน**ชุด**บทบาท
+-- ทั้งหมดแทน ให้ชั้น API ส่งเป็น `roles` เพิ่มเติมจาก `role` เดิม
+--
+-- ─── ทำไม current_app_roles() ต้อง fallback เป็น current_app_role() ───
+-- งานเบื้องหลัง (jobs, platform, provisioning) ยังตั้งแค่ app.role เดี่ยว
+-- ถ้า current_app_roles() คืนอาร์เรย์ว่างเมื่อไม่มี app.roles นโยบายที่พึ่ง
+-- current_app_roles() จะปิดกั้นทุกอย่างสำหรับบริบทเหล่านั้นทันที
+--
+-- ─── ทำไมเลขา/บุคคลไม่เข้ากลุ่ม is_institution_wide_role() ───
+-- กลุ่มนั้นเห็นข้อมูลทั้งวิทยาลัยรวมถึงเกรดและการเงิน ถ้าเลขา/บุคคลเข้ากลุ่ม
+-- จะเห็นข้อมูลที่ไม่เกี่ยวกับงานตัวเองทันที ขัดกับ "ห้ามมีช่องว่างข้ามสิทธิ์"
+-- จึงเสียบเข้าเฉพาะนโยบายของตารางที่เกี่ยวกับงานของฝ่ายตัวเองเท่านั้น
+-- (งานบุคคล → staff_leave/staff_record/staff_child ของ 0035, เลขา →
+-- issued_document สามใบที่ issue_student_letter() ออกได้ (0055) กับ
+-- announcement ของ 0091)
+-- ═══════════════════════════════════════════════════════════════════
+
+-- enum ใหม่ต้อง commit ก่อนถูกใช้งานในทรานแซกชันอื่น จึงแยกเป็นทรานแซกชัน
+-- ของตัวเอง ไม่รวมกับส่วนที่เหลือของไฟล์นี้
+alter type staff_role_kind add value if not exists 'secretary';
+alter type staff_role_kind add value if not exists 'hr';
+
+comment on type staff_role_kind is
+  'บทบาทที่มอบหมายให้บุคลากรได้ — ไม่มี teacher เพราะการเป็นครูผู้สอนมาจาก staff.is_teacher และการถูกกำหนดเป็นครูประจำกลุ่มเรียน ไม่ใช่การมอบหมายสิทธิ';
+
+begin;
+
+-- ───────────────────────────────────────────────────────────────────
+-- effective_staff_role() ต้องรู้จักค่า enum ใหม่ มิฉะนั้น case ที่ไม่ครบ
+-- จะทำให้ query ล้มตอน runtime ทันทีที่มีใครถือบทบาทนี้
+-- ───────────────────────────────────────────────────────────────────
+create or replace function effective_staff_role(p_person_id uuid, p_on date default current_date)
+returns text
+language sql stable as $$
+  select sr.role::text
+    from staff_role sr
+    join staff st on st.id = sr.staff_id
+   where st.person_id = p_person_id
+     and st.active
+     and sr.revoked_at is null
+     and sr.effective_from <= p_on
+     and (sr.effective_to is null or sr.effective_to >= p_on)
+   order by case sr.role
+              when 'admin'           then 1
+              when 'director'        then 2
+              when 'registrar'       then 3
+              when 'academic'        then 4
+              when 'finance'         then 5
+              when 'student_affairs' then 6
+              when 'hr'              then 7
+              when 'secretary'       then 8
+            end
+   limit 1
+$$;
+
+-- ───────────────────────────────────────────────────────────────────
+-- ชุดบทบาททั้งหมดที่มีผลจริง — คู่ขนานกับ login_role_for() ที่ยังคืน
+-- ค่าเดียว (บทบาทที่แรงที่สุด) ไว้ให้จุดที่ยังอ้างค่าเดียวใช้ต่อได้
+--
+-- ต่างจาก login_role_for() ตรงที่ "ครูผู้สอน" ไม่ใช่ทางเลือกสำรองเมื่อไม่มี
+-- staff_role อีกต่อไป — เป็นบทบาทที่**บวกเพิ่ม**เสมอถ้า is_teacher เป็นจริง
+-- ไม่ว่าจะมี staff_role อื่นอยู่ด้วยหรือไม่ นี่คือจุดที่ปิดช่องว่างของ
+-- "ฝ่ายวิชาการที่สอนด้วย" ที่อธิบายไว้ด้านบน
+-- ───────────────────────────────────────────────────────────────────
+create or replace function login_roles_for(p_person_id uuid, p_institution_id uuid)
+returns text[]
+language sql stable security definer
+set search_path = public as $$
+  with staff_ctx as (
+    select st.id, st.is_teacher
+      from staff st
+     where st.person_id = p_person_id
+       and st.institution_id = p_institution_id
+       and st.active
+     limit 1
+  ),
+  granted as (
+    select sr.role::text as r
+      from staff_role sr
+      join staff_ctx sc on sc.id = sr.staff_id
+     where sr.revoked_at is null
+       and sr.effective_from <= current_date
+       and (sr.effective_to is null or sr.effective_to >= current_date)
+    union
+    select 'teacher'
+      from staff_ctx sc
+     where sc.is_teacher
+  ),
+  agg as (
+    select array_agg(distinct r) as roles from granted
+  )
+  select case
+           when (select roles from agg) is not null then (select roles from agg)
+           else array[login_role_for(p_person_id, p_institution_id)]
+         end
+$$;
+
+comment on function login_roles_for(uuid, uuid) is
+  'ชุดบทบาททั้งหมดที่มีผลจริง ไม่ยุบเหลือตัวเดียวแบบ login_role_for() — ใช้ตอนออก token เพื่อไม่ให้ความสามารถของบทบาทรองหายไปเมื่อมีบทบาทหลักซ้อนอยู่';
+
+revoke all on function login_roles_for(uuid, uuid) from public;
+
+-- ───────────────────────────────────────────────────────────────────
+-- current_app_roles() — คู่กับ current_app_role() เดิมใน 0008
+-- fallback เป็น [current_app_role()] เมื่อไม่มีใครตั้ง app.roles
+-- (งานเบื้องหลัง/บริบทเก่าที่ยังตั้งแค่ app.role เดี่ยว) — ไม่ทำให้
+-- นโยบายที่พึ่งฟังก์ชันนี้ปิดกั้นบริบทเหล่านั้นไปทั้งหมด
+-- ───────────────────────────────────────────────────────────────────
+create or replace function current_app_roles() returns text[]
+language sql stable as $$
+  select case
+           when nullif(current_setting('app.roles', true), '') is null
+             then array[current_app_role()]
+           else string_to_array(current_setting('app.roles', true), ',')
+         end
+$$;
+
+-- ───────────────────────────────────────────────────────────────────
+-- งานบุคคล (hr) เห็นระเบียนบุคลากรทั้งวิทยาลัยได้โดยไม่ต้องเข้ากลุ่ม
+-- institution-wide เดิม — จำกัดเฉพาะสามตารางของ 0035 ที่เป็นงานของฝ่ายนี้
+-- โดยตรง (ประวัติ · การลา · บุตรบุคลากร) ไม่แตะตารางอื่น
+-- ───────────────────────────────────────────────────────────────────
+alter policy staff_leave_scope on staff_leave
+  using (
+    is_institution_wide_role()
+    or 'hr' = any (current_app_roles())
+    or exists (select 1 from staff s
+                where s.id = staff_leave.staff_id
+                  and s.person_id = current_actor_id())
+  );
+
+alter policy staff_record_scope on staff_record
+  using (
+    is_institution_wide_role()
+    or 'hr' = any (current_app_roles())
+    or exists (select 1 from staff s
+                where s.id = staff_record.staff_id
+                  and s.person_id = current_actor_id())
+  );
+
+alter policy staff_child_scope on staff_child
+  using (
+    is_institution_wide_role()
+    or 'hr' = any (current_app_roles())
+    or exists (select 1 from staff s
+                where s.id = staff_child.staff_id
+                  and s.person_id = current_actor_id())
+  );
+
+-- ───────────────────────────────────────────────────────────────────
+-- เลขา (secretary) ออกหนังสือถึงผู้ปกครองได้ (issue_student_letter() ไม่ใช่
+-- security definer จึงยึด RLS ของ issued_document ตรง ๆ — 0045 บังคับไว้
+-- ว่าเขียนได้เฉพาะ is_institution_wide_role() เท่านั้น เพิ่ม secretary
+-- เป็นเงื่อนไข OR เสริมเฉพาะสามนโยบายของตารางนี้ ไม่แตะตารางอื่นในลูป 0045)
+-- ───────────────────────────────────────────────────────────────────
+alter policy issued_document_staff_insert on issued_document
+  with check (is_institution_wide_role() or 'secretary' = any (current_app_roles()));
+
+alter policy issued_document_staff_update on issued_document
+  using (is_institution_wide_role() or 'secretary' = any (current_app_roles()))
+  with check (is_institution_wide_role() or 'secretary' = any (current_app_roles()));
+
+alter policy issued_document_staff_delete on issued_document
+  using (is_institution_wide_role() or 'secretary' = any (current_app_roles()));
+
+-- ───────────────────────────────────────────────────────────────────
+-- เลขาประกาศข่าวได้ (0091) — เพิ่มเข้ารายชื่อเดิมที่ policy เช็คตรง ๆ
+-- ───────────────────────────────────────────────────────────────────
+alter policy announcement_insert on announcement
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin','secretary']));
+
+alter policy announcement_update on announcement
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin','secretary']))
+  with check (current_app_role() = any (array['registrar','academic','student_affairs','director','admin','secretary']));
+
+alter policy announcement_delete on announcement
+  using (current_app_role() = any (array['registrar','academic','student_affairs','director','admin','secretary']));
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0097_hr_secretary_working.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0097_hr_secretary_working.sql
+-- ทำให้บทบาทงานบุคคล (hr) และเลขา (secretary) ใช้งานได้จริง — และปิดช่องที่
+-- เจอระหว่างทาง
+--
+-- ─── ที่มา ───
+-- 0095 เพิ่มสองบทบาทแต่เปิดได้แค่ "อ่าน" (TEST 340/341 เฝ้าเฉพาะ "ไม่เกินสิทธิ์")
+-- งานบุคคลจึงแก้ระเบียน ทช.1 · โครงสร้างหน่วยงาน · ตัดสินใบลาไม่ได้ ส่วนเลขา
+-- ถูกนโยบายประกาศที่ยังอ่าน current_app_role() ตัวเดียวกันไว้ทุกครั้งที่มี
+-- บทบาทหลักอื่นซ้อน และเปิดหนังสือที่ออกแล้วไม่ได้เลยเพราะ issued_document_scope
+--
+-- ─── ช่องที่เจอระหว่างทาง (ร้ายแรงกว่าเรื่องที่มาแก้) ───
+-- `department` · `staff_assignment` · `staff_attendance` มีแต่ tenant_isolation
+-- ตั้งแต่ 0035 — ยิงจริงในบริบท app.role = 'student' แล้ว **สร้างแผนกใหม่ได้ ·
+-- แก้ชื่อแผนกทั้งวิทยาลัยได้ · ลงเวลามาทำงานแทนบุคลากรได้** บทเรียนเดียวกับ
+-- ข้อ 16/20/25 — ตารางที่ไม่มีหน้าจอให้คนทั่วไปเขียนไม่ได้แปลว่าปิด
+--
+-- และ `staff_leave` เจ้าของใบแก้แถวของตัวเองได้ (ตั้งใจ — ยื่นและยกเลิกเอง)
+-- แต่ trigger กันแค่ "ผู้ตัดสินต้องไม่ใช่เจ้าของ" ครูจึงตั้ง status = 'approved'
+-- พร้อมใส่ decided_by เป็นรหัสของใครก็ได้ แล้วผ่าน — การอนุมัติปลอมที่ระบุชื่อ
+-- ผู้อนุมัติเป็นคนอื่น ตอนนี้การตัดสินใบลาต้องเป็นบทบาทผู้บริหาร/งานบุคคล
+--
+-- ─── ทำไมเลขายังออกหนังสือใหม่เองไม่ได้ ───
+-- issue_student_letter() ไม่ใช่ security definer มันอ่านนักศึกษา ผู้ปกครอง
+-- เวลาเรียน และคะแนนความประพฤติด้วยสิทธิ์ของคนกด ถ้าจะให้เลขาออกได้ต้องเปิด
+-- ข้อมูลเหล่านั้นทั้งวิทยาลัยให้เลขา ซึ่งเกินหน้าที่ — งานปกครองเป็นคนออก
+-- เลขาเปิด/พิมพ์ซ้ำหนังสือที่ออกแล้วได้ (อ่านจาก payload ที่ตรึงไว้ ไม่แตะตารางอื่น)
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create or replace function hr_writer() returns boolean
+language sql stable as $$
+  select is_institution_wide_role() or 'hr' = any (current_app_roles())
+$$;
+comment on function hr_writer() is
+  'ผู้เขียนข้อมูลงานบุคคลได้ — บทบาทระดับวิทยาลัย หรือมีบทบาท hr อยู่ในชุดบทบาท (0097)';
+
+-- ─── 1. ปิดสามตารางที่ใครก็เขียนได้ ───────────────────────────────
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['department', 'staff_assignment', 'staff_attendance'] loop
+    execute format('create policy %1$I_write_insert on %1$I as restrictive for insert with check (hr_writer())', t);
+    execute format('create policy %1$I_write_update on %1$I as restrictive for update using (hr_writer()) with check (hr_writer())', t);
+    execute format('create policy %1$I_write_delete on %1$I as restrictive for delete using (hr_writer())', t);
+  end loop;
+end $$;
+
+-- ─── 2. งานบุคคลเขียนระเบียน ทช.1 และบุตรบุคลากรได้ ──────────────────
+-- แก้ตัว restrictive ของ 0049 เอง ไม่ใช่เพิ่ม permissive ทับ (ทับไม่มีผล — ข้อ 14)
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['staff_record', 'staff_child'] loop
+    execute format('alter policy %1$I_staff_insert on %1$I with check (hr_writer())', t);
+    execute format('alter policy %1$I_staff_update on %1$I using (hr_writer()) with check (hr_writer())', t);
+    execute format('alter policy %1$I_staff_delete on %1$I using (hr_writer())', t);
+  end loop;
+end $$;
+
+-- ─── 3. การตัดสินใบลาเป็นของผู้บริหาร/งานบุคคลเท่านั้น ─────────────
+-- เจ้าของใบยังยื่นและยกเลิกของตัวเองได้ — แต่แถวผลลัพธ์ต้องไม่มีผู้ตัดสิน
+create policy staff_leave_decide on staff_leave
+  as restrictive for update
+  using (true)
+  with check (hr_writer() or (status in ('pending', 'cancelled') and decided_by is null));
+
+create policy staff_leave_submit on staff_leave
+  as restrictive for insert
+  with check (hr_writer() or (status = 'pending' and decided_by is null));
+
+-- ─── 4. เลขา: ประกาศอ่านชุดบทบาท · เปิดหนังสือถึงผู้ปกครองที่ออกแล้ว ──
+alter policy announcement_insert on announcement
+  with check (current_app_roles() && array['registrar','academic','student_affairs','director','admin','secretary']);
+alter policy announcement_update on announcement
+  using (current_app_roles() && array['registrar','academic','student_affairs','director','admin','secretary'])
+  with check (current_app_roles() && array['registrar','academic','student_affairs','director','admin','secretary']);
+alter policy announcement_delete on announcement
+  using (current_app_roles() && array['registrar','academic','student_affairs','director','admin','secretary']);
+
+-- 0095 เปิด insert/update/delete ให้เลขาไว้ ซึ่งรอดมาได้เพราะ scope ด้านล่าง
+-- ปิดอยู่ทั้งตาราง พอ scope เปิดให้เห็นหนังสือถึงผู้ปกครอง เลขาจะ insert ใบรับรอง
+-- ความประพฤติที่เขียน payload เองได้ตรง ๆ โดยไม่ผ่าน issue_student_letter() —
+-- เอกสารทางการปลอมที่แก้/ลบไม่ได้อีกเลย (หลักข้อ 4) จึงคืนเป็นของเดิมก่อนเปิดอ่าน
+alter policy issued_document_staff_insert on issued_document
+  with check (is_institution_wide_role());
+alter policy issued_document_staff_update on issued_document
+  using (is_institution_wide_role()) with check (is_institution_wide_role());
+alter policy issued_document_staff_delete on issued_document
+  using (is_institution_wide_role());
+
+alter policy issued_document_scope on issued_document
+  using (
+    is_institution_wide_role()
+    or ('secretary' = any (current_app_roles())
+        and kind in ('absence_notice', 'guardian_invitation', 'conduct_certificate'))
+    or exists (select 1 from student s
+                where s.id = issued_document.student_id
+                  and s.person_id = current_actor_id())
+  );
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0098_reference_option.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0098_reference_option.sql
+-- ข้อมูลพื้นฐานที่วิทยาลัยแก้เองได้ — SISA "การตั้งค่า › ข้อมูลพื้นฐาน"
+-- (คำนำหน้าชื่อ · ศาสนา · สัญชาติ · เชื้อชาติ · อาชีพ · ธนาคาร · สถานศึกษา ·
+-- วุฒิการศึกษา)
+--
+-- ─── ทำไมเป็นรายการตัวเลือก ไม่ใช่คีย์นอก ───
+-- ช่องเหล่านี้เป็นข้อความอิสระมาตั้งแต่ 0002/0053 และมีข้อมูลนำเข้าจากไฟล์อยู่แล้ว
+-- การเปลี่ยนเป็นคีย์นอกแปลว่าข้อมูลเดิมทุกแถวต้องจับคู่ใหม่ และไฟล์นำเข้าที่สะกด
+-- ต่างไปนิดเดียวจะล้มทั้งแถว ตารางนี้จึงเป็น "คำที่ควรใช้" ที่หน้าจอเสนอให้เลือก
+-- ผลที่ได้คือคำสะกดเดียวกันทั้งวิทยาลัย — สถิติแยกตามศาสนา/อาชีพ
+-- (/reports/students/breakdown) จึงไม่แตกเป็น "พุทธ" กับ "ศาสนาพุทธ" สองแถว
+--
+-- ─── ทำไมไม่มีแถวกลางที่ institution_id ว่าง ───
+-- แถวที่ไม่มีวิทยาลัยต้องเปิดให้บริบทที่ไม่มีวิทยาลัยอ่านได้ ซึ่งคือบริบทของ
+-- ผู้ให้บริการ — TEST 186 ห้ามสิ่งนั้นทุกตาราง จึงคัดลอกค่าตั้งต้นลงให้แต่ละ
+-- วิทยาลัยแทน ทั้งวิทยาลัยที่มีอยู่แล้ว (ด้านล่าง) และที่เปิดใหม่ (trigger)
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+create table reference_option (
+  id             uuid        primary key default gen_random_uuid(),
+  institution_id uuid        not null references institution on delete cascade,
+  category       text        not null check (category in
+                   ('prefix', 'religion', 'nationality', 'ethnicity', 'occupation', 'bank', 'school', 'qualification')),
+  code           text,
+  label_th       text        not null check (btrim(label_th) <> ''),
+  label_en       text,
+  sort_order     smallint    not null default 0,
+  active         boolean     not null default true,
+  created_at     timestamptz not null default now(),
+  unique (institution_id, category, label_th)
+);
+create index on reference_option (institution_id, category, sort_order);
+
+comment on table reference_option is
+  'คำที่ควรใช้ในช่องข้อความอิสระ (คำนำหน้า ศาสนา อาชีพ ฯลฯ) — หน้าจอเสนอให้เลือก ไม่ใช่คีย์นอก (0098)';
+
+alter table reference_option enable row level security;
+alter table reference_option force row level security;
+
+create policy tenant_isolation on reference_option
+  using (institution_id = current_institution_id());
+
+-- อ่านได้ทุกบทบาท (ครูต้องเห็นตัวเลือกตอนกรอก) · เขียนได้เฉพาะคนตั้งค่าระบบ
+-- แยก for insert/update/delete — restrictive for all กิน select ด้วย (บทเรียนจาก 0053)
+create policy reference_option_insert on reference_option
+  as restrictive for insert with check (current_app_roles() && array['registrar', 'director', 'admin']);
+create policy reference_option_update on reference_option
+  as restrictive for update
+  using (current_app_roles() && array['registrar', 'director', 'admin'])
+  with check (current_app_roles() && array['registrar', 'director', 'admin']);
+create policy reference_option_delete on reference_option
+  as restrictive for delete using (current_app_roles() && array['registrar', 'director', 'admin']);
+
+/*
+ * ค่าตั้งต้น — ชุดเล็กที่ใช้จริงในสถานศึกษาไทย ไม่ใช่ทุกค่าที่เป็นไปได้
+ * (SISA มีสัญชาติ 273 ค่า ซึ่งเกือบทั้งหมดไม่มีใครเลือก และทำให้หาค่าที่ต้องการยาก)
+ * วิทยาลัยเพิ่มเองได้ที่หน้าตั้งค่า
+ */
+create or replace function seed_reference_options(p_institution_id uuid) returns void
+language sql security definer set search_path = public as $$
+  insert into reference_option (institution_id, category, code, label_th, label_en, sort_order)
+  select p_institution_id, v.category, v.code, v.th, v.en, v.ord
+    from (values
+      ('prefix', '001', 'นาย', 'Mr.', 1), ('prefix', '002', 'นางสาว', 'Miss', 2), ('prefix', '003', 'นาง', 'Mrs.', 3),
+      ('prefix', '004', 'เด็กชาย', 'Master', 4), ('prefix', '005', 'เด็กหญิง', 'Miss', 5),
+      ('religion', '101', 'พุทธ', 'Buddhism', 1), ('religion', '102', 'คริสต์', 'Christianity', 2),
+      ('religion', '103', 'อิสลาม', 'Islam', 3), ('religion', '104', 'ฮินดู', 'Hinduism', 4),
+      ('religion', '105', 'ซิกข์', 'Sikhism', 5), ('religion', '199', 'ไม่นับถือศาสนา', 'None', 9),
+      ('nationality', '099', 'ไทย', 'Thai', 1), ('nationality', '048', 'เมียนมา', 'Myanmar', 2),
+      ('nationality', '056', 'ลาว', 'Lao', 3), ('nationality', '057', 'กัมพูชา', 'Cambodian', 4),
+      ('nationality', '044', 'จีน', 'Chinese', 5), ('nationality', '046', 'เวียดนาม', 'Vietnamese', 6),
+      ('ethnicity', '099', 'ไทย', 'Thai', 1), ('ethnicity', '044', 'จีน', 'Chinese', 2),
+      ('ethnicity', '048', 'เมียนมา', 'Myanmar', 3), ('ethnicity', '056', 'ลาว', 'Lao', 4),
+      ('ethnicity', '057', 'กัมพูชา', 'Cambodian', 5), ('ethnicity', '070', 'มลายู', 'Malay', 6),
+      ('occupation', '01', 'รับราชการ', 'Government official', 1), ('occupation', '02', 'พนักงานรัฐวิสาหกิจ', 'State enterprise employee', 2),
+      ('occupation', '03', 'พนักงานบริษัท', 'Company employee', 3), ('occupation', '04', 'ค้าขาย/ธุรกิจส่วนตัว', 'Business owner', 4),
+      ('occupation', '05', 'เกษตรกร', 'Farmer', 5), ('occupation', '06', 'รับจ้างทั่วไป', 'General labourer', 6),
+      ('occupation', '07', 'แม่บ้าน/พ่อบ้าน', 'Homemaker', 7), ('occupation', '08', 'ไม่ได้ประกอบอาชีพ', 'Unemployed', 8),
+      ('bank', '002', 'ธนาคารกรุงเทพ', 'Bangkok Bank', 1), ('bank', '004', 'ธนาคารกสิกรไทย', 'Kasikornbank', 2),
+      ('bank', '006', 'ธนาคารกรุงไทย', 'Krungthai Bank', 3), ('bank', '014', 'ธนาคารไทยพาณิชย์', 'Siam Commercial Bank', 4),
+      ('bank', '025', 'ธนาคารกรุงศรีอยุธยา', 'Bank of Ayudhya', 5), ('bank', '011', 'ธนาคารทหารไทยธนชาต', 'TMBThanachart Bank', 6),
+      ('bank', '030', 'ธนาคารออมสิน', 'Government Savings Bank', 7), ('bank', '034', 'ธ.ก.ส.', 'BAAC', 8),
+      ('qualification', '01', 'มัธยมศึกษาตอนต้น (ม.3)', 'Lower secondary', 1),
+      ('qualification', '02', 'มัธยมศึกษาตอนปลาย (ม.6)', 'Upper secondary', 2),
+      ('qualification', '03', 'ประกาศนียบัตรวิชาชีพ (ปวช.)', 'Certificate of Vocational Education', 3),
+      ('qualification', '04', 'ประกาศนียบัตรวิชาชีพชั้นสูง (ปวส.)', 'Diploma of Vocational Education', 4),
+      ('qualification', '05', 'ปริญญาตรี', 'Bachelor''s degree', 5),
+      ('qualification', '06', 'ปริญญาโท', 'Master''s degree', 6), ('qualification', '07', 'ปริญญาเอก', 'Doctoral degree', 7)
+    ) as v(category, code, th, en, ord)
+  on conflict (institution_id, category, label_th) do nothing
+$$;
+revoke all on function seed_reference_options(uuid) from public;
+
+create or replace function institution_seed_reference_options() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform seed_reference_options(new.id);
+  return new;
+end $$;
+
+create trigger institution_reference_options
+  after insert on institution
+  for each row execute function institution_seed_reference_options();
+
+select seed_reference_options(id) from institution;
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0099_application_province.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0099_application_province.sql
+-- จังหวัดของผู้สมัคร — SISA "รับสมัคร › ข้อมูลสถิติ › จังหวัด / ภูมิภาค"
+--
+-- ที่อยู่ของผู้สมัครเป็นข้อความก้อนเดียว (`address_th`) มาตั้งแต่ 0033 การตัด
+-- จังหวัดออกจากข้อความทีหลังเดาผิดได้ง่าย ("อ.เมืองนครปฐม" กับ "จ.นครปฐม")
+-- จึงเก็บจังหวัดแยกเป็นช่องของตัวเอง ภูมิภาคคำนวณจากจังหวัดที่ชั้น API
+-- (ตารางจังหวัด → ภาค ไม่เปลี่ยนตามวิทยาลัย และไม่ใช่กฎธุรกิจ)
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+alter table application add column if not exists province_th text;
+
+comment on column application.province_th is
+  'จังหวัดตามที่อยู่ผู้สมัคร แยกจาก address_th เพื่อใช้ทำสถิติรายจังหวัด/ภูมิภาค (0099)';
+
+commit;
+
+
+-- ───────────────────────────────────────────────────────────────────
+-- แหล่งที่มา: migrations/0100_application_keyed_hash.sql
+-- ───────────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 0100_application_keyed_hash.sql
+-- เลขบัตรประชาชนในใบสมัครแฮชด้วยกุญแจ — เหมือนที่ 0061 ทำกับนักศึกษา
+--
+-- ─── ที่มา ───
+-- 0033/0092 เก็บเลขบัตรของผู้สมัครและบิดามารดาเป็น digest(sha256) เปล่า
+-- เลขบัตรไทยมีราว 10¹² ค่า ไล่ครบด้วยการ์ดจอใบเดียวในไม่กี่นาที "เก็บแค่แฮช"
+-- จึงไม่ได้ป้องกันอะไร (CLAUDE.md หัวข้อ national_id_enc) และ admit_applicant()
+-- คัดลอกค่านั้นต่อไปที่ person/student_parent ซึ่ง 0061 ตั้งใจให้เป็นรุ่น 2
+--
+-- ─── วิธีแก้ ───
+-- ชั้น API คำนวณ HMAC ด้วย hashNationalId() ตัวเดียวกับระเบียนนักศึกษาแล้วส่ง
+-- ไบต์มา ฐานข้อมูลไม่เห็นเลขจริงอีกเลย · ใบสมัครมีป้ายรุ่น (national_id_hash_v)
+-- แบบเดียวกับ person และ admit_applicant() ส่งป้ายต่อไปให้ person/student_parent
+--
+-- ─── ใบเก่า ───
+-- ค่าแฮชเก่าแปลงเป็นรุ่น 2 ไม่ได้เพราะไม่มีเลขต้นฉบับ จึงคงไว้พร้อมป้ายรุ่น 1
+-- และการหาคนเดิมตอนรับเข้าเทียบเฉพาะแฮชรุ่นเดียวกัน — เทียบข้ามรุ่นได้ผลว่า
+-- "ไม่ใช่คนเดิม" เสมอ ซึ่งคือสิ่งที่เกิดจริงอยู่แล้ว แต่ตอนนี้รู้ตัว
+-- ═══════════════════════════════════════════════════════════════════
+begin;
+
+alter table application
+  add column if not exists national_id_hash_v smallint not null default 1
+    check (national_id_hash_v in (1, 2));
+
+comment on column application.national_id_hash_v is
+  'รุ่นของค่าแฮชเลขบัตรของผู้สมัครและบิดามารดาในใบนี้ — 1 = sha256 เปล่า (ย้อนกลับได้) · 2 = HMAC ที่ชั้น API (0100)';
+
+create or replace function admit_applicant(
+  p_application_id   uuid,
+  p_student_code     text,
+  p_academic_year_id uuid,
+  p_study_year       smallint default 1,
+  p_group_code       text     default null
+) returns uuid language plpgsql as $$
+declare
+  v_app     application;
+  v_inst    uuid := current_institution_id();
+  v_person  uuid;
+  v_student uuid;
+begin
+  select * into v_app from application where id = p_application_id;
+  if v_app.id is null then
+    raise exception 'ไม่พบใบสมัครที่ระบุ';
+  end if;
+  if v_app.status <> 'passed' then
+    raise exception 'รับเข้าได้เฉพาะผู้ที่ผ่านการคัดเลือก (สถานะ %)', v_app.status
+      using errcode = 'check_violation';
+  end if;
+  if v_app.student_id is not null then
+    raise exception 'ใบสมัครนี้รับเข้าไปแล้ว'
+      using errcode = 'check_violation';
+  end if;
+  if coalesce(btrim(p_student_code), '') = '' then
+    raise exception 'ต้องระบุรหัสนักศึกษา';
+  end if;
+
+  -- คนที่เคยเรียนแล้วลาออกไปสมัครใหม่มีอยู่จริง ใช้ person เดิมต่อ
+  -- มิฉะนั้นจะชน unique (institution_id, national_id_hash) แล้วรับเข้าไม่ได้
+  if v_app.national_id_hash is not null then
+    select p.id into v_person from person p
+     where p.institution_id = v_inst
+       and p.national_id_hash = v_app.national_id_hash
+       and p.national_id_hash_v = v_app.national_id_hash_v;
+  end if;
+
+  if v_person is null then
+    insert into person
+      (institution_id, prefix_th, first_name_th, last_name_th,
+       national_id_hash, national_id_hash_v, birth_date, gender, phone, email)
+    values (v_inst, v_app.prefix_th, v_app.first_name_th, v_app.last_name_th,
+            v_app.national_id_hash, v_app.national_id_hash_v, v_app.birth_date, v_app.gender,
+            v_app.phone, v_app.email)
+    returning id into v_person;
+  end if;
+
+  insert into student
+    (institution_id, person_id, student_code, admitted_year_be, status)
+  values (v_inst, v_person, btrim(p_student_code),
+          (select ay.year_be from academic_year ay where ay.id = p_academic_year_id),
+          'active')
+  returning id into v_student;
+
+  insert into student_curriculum (student_id, curriculum_version_id, effective_from)
+  values (v_student, v_app.admitted_curriculum_version_id, current_date);
+
+  insert into student_class_placement
+    (institution_id, student_id, academic_year_id, study_year, group_code)
+  values (v_inst, v_student, p_academic_year_id, p_study_year, p_group_code);
+
+  -- ─── วุฒิเดิม ───
+  -- level_th เป็น not null และเป็นส่วนหนึ่งของ unique (student_id, level_th)
+  -- ใบสมัครไม่มีคอลัมน์ "ระดับ" แยกต่างหาก จึงใช้ prior_qualification_th
+  -- เป็น level_th โดยตรง — ถ้าเจ้าหน้าที่ไม่ได้กรอกอะไรมาเลยก็ไม่ต้อง insert
+  -- แถวเปล่า (ต่างจาก student/person ที่ต้องมีเสมอ)
+  if v_app.prior_school_th is not null or v_app.prior_qualification_th is not null
+     or v_app.prior_gpax is not null then
+    insert into student_prior_education
+      (institution_id, student_id, level_th, gpax, school_th)
+    values (v_inst, v_student,
+            coalesce(nullif(btrim(v_app.prior_qualification_th), ''), 'ไม่ระบุระดับ'),
+            v_app.prior_gpax, v_app.prior_school_th)
+    on conflict (student_id, level_th) do nothing;
+  end if;
+
+  -- ─── บิดามารดา ───
+  -- มีชื่ออย่างน้อยหนึ่งคนถึงจะ insert — unique (student_id, role) กันซ้ำ
+  -- อยู่แล้ว แต่ไม่ต้องการแถวเปล่าที่ไม่มีชื่อเลยสักตัว
+  if v_app.father_first_name_th is not null then
+    insert into student_parent
+      (institution_id, student_id, role, prefix_th, first_name_th, last_name_th,
+       national_id_hash, national_id_hash_v, occupation_th, income_monthly, phone)
+    values (v_inst, v_student, 'father', v_app.father_prefix_th,
+            v_app.father_first_name_th, v_app.father_last_name_th,
+            v_app.father_national_id_hash, v_app.national_id_hash_v, v_app.father_occupation_th,
+            v_app.father_income_monthly, v_app.father_phone)
+    on conflict (student_id, role) do nothing;
+  end if;
+
+  if v_app.mother_first_name_th is not null then
+    insert into student_parent
+      (institution_id, student_id, role, prefix_th, first_name_th, last_name_th,
+       national_id_hash, national_id_hash_v, occupation_th, income_monthly, phone)
+    values (v_inst, v_student, 'mother', v_app.mother_prefix_th,
+            v_app.mother_first_name_th, v_app.mother_last_name_th,
+            v_app.mother_national_id_hash, v_app.national_id_hash_v, v_app.mother_occupation_th,
+            v_app.mother_income_monthly, v_app.mother_phone)
+    on conflict (student_id, role) do nothing;
+  end if;
+
+  -- ─── ทำไมไม่คัดลอกวุฒิเดิมลง prior_academic_record (คนละตารางกับ
+  -- student_prior_education ด้านบน) ───
+  -- prior_academic_record เก็บ**ผลรายวิชา**เพื่อเทียบโอนหน่วยกิต (มี
+  -- credits > 0 เป็นข้อบังคับ) ไม่ใช่ "วุฒิที่จบมา" การยัดแถวปลอมที่มีรหัส
+  -- วิชาเป็น '-' และหน่วยกิตเป็นศูนย์ลงไป จะทำให้ทุกรายงานที่นับรายวิชา
+  -- เทียบโอนมีขยะปน — ถ้าวันหนึ่งต้องเทียบโอนรายวิชาจริง ให้กรอกผ่าน
+  -- เส้นทางเทียบโอนโดยตรง (ย่อหน้านี้คัดลอกมาจากต้นฉบับ 0033 เพราะยังเป็น
+  -- เหตุผลที่ใช้ได้อยู่ ต่างจาก student_prior_education ที่แก้ไว้ด้านบน)
+  update application
+     set student_id = v_student,
+         status     = 'enrolled',
+         reported_on = coalesce(reported_on, current_date)
+   where id = p_application_id;
+
+  return v_student;
+end $$;
 
 commit;
 

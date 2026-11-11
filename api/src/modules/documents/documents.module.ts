@@ -585,7 +585,8 @@ class DocumentsController {
 
   // งานปกครองต้องเปิดและพิมพ์หนังสือที่ตัวเองเพิ่งออกได้ — ถ้าออกได้
   // แต่พิมพ์ไม่ได้ ต้องไปขอให้งานทะเบียนกดแทนทุกใบ
-  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+  // secretary เห็นได้เฉพาะหนังสือถึงผู้ปกครอง — ชนิดอื่นถูก RLS ซ่อน (0097) จึงได้ 404
+  @Roles('registrar', 'academic', 'student_affairs', 'secretary', 'director', 'admin')
   @Audit('issued_document', 'id')
   @Get(':id')
   get(@Param('id', ParseUuidPipe) id: string) {
@@ -597,7 +598,8 @@ class DocumentsController {
    * แม่แบบฝัง CSS มาในหน้าเดียว ไม่มีการอ้างอิงไฟล์ภายนอกเลย จึงพิมพ์ได้
    * แม้อินเทอร์เน็ตของวิทยาลัยล่ม
    */
-  @Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+  // secretary เห็นได้เฉพาะหนังสือถึงผู้ปกครอง — ชนิดอื่นถูก RLS ซ่อน (0097) จึงได้ 404
+  @Roles('registrar', 'academic', 'student_affairs', 'secretary', 'director', 'admin')
   @Audit('issued_document', 'id')
   @Header('content-type', 'text/html; charset=utf-8')
   @Get(':id/print')

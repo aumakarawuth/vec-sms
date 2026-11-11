@@ -104,7 +104,8 @@ export class AnnouncementsService {
   }
 }
 
-@Roles('registrar', 'academic', 'student_affairs', 'director', 'admin')
+// secretary — ฐานข้อมูลเปิดให้ตั้งแต่ 0095 และอ่านชุดบทบาทตั้งแต่ 0097
+@Roles('registrar', 'academic', 'student_affairs', 'secretary', 'director', 'admin')
 @Controller('announcements')
 class AnnouncementsController {
   constructor(private readonly svc: AnnouncementsService) {}

@@ -67,6 +67,10 @@ const STAFF = [
     code: 'S-FIN01', username: 'finance.demo',   prefix: 'นางสาว', first: 'พรทิพย์',   last: 'บัญชีแม่น',   label: 'การเงิน' },
   { role: 'student_affairs', person: '20000000-0000-0000-0000-000000000006', staff: '21000000-0000-0000-0000-000000000006',
     code: 'S-AFF01', username: 'affairs.demo',   prefix: 'นาย',    first: 'สุรชัย',    last: 'ปกครองดี',    label: 'งานปกครองและแนะแนว' },
+  { role: 'secretary',       person: '20000000-0000-0000-0000-000000000007', staff: '21000000-0000-0000-0000-000000000007',
+    code: 'S-SEC01', username: 'secretary.demo', prefix: 'นางสาว', first: 'อัญชลี',   last: 'จดหมายเหตุ', label: 'งานเลขานุการ' },
+  { role: 'hr',              person: '20000000-0000-0000-0000-000000000008', staff: '21000000-0000-0000-0000-000000000008',
+    code: 'S-HR01',  username: 'hr.demo',        prefix: 'นาย',    first: 'ประเสริฐ',  last: 'คนสำคัญ',    label: 'งานบุคคล' },
 ];
 
 /*

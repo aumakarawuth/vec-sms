@@ -240,7 +240,15 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 revoke all on function enrollment_has_pending_retake_charge(uuid) from public;
-grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+-- ครอบด้วย if exists แบบเดียวกับ 0048 — ตอนติดตั้งจริงสคีมาถูกนำเข้าก่อน
+-- db/deploy/roles.sql (DEPLOY-ONLINE.md) บทบาทนี้จึงยังไม่มี grant เปล่า ๆ
+-- จะทำให้ทั้งไฟล์ล้มบนฐานเปล่าของลูกค้าทุกราย
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant execute on function enrollment_has_pending_retake_charge(uuid) to app_runtime;
+  end if;
+end $$;
 
 comment on function enrollment_has_pending_retake_charge(uuid) is
   'true = มีค่าซ่อมค้างชำระ — security definer เพราะครูมองไม่เห็นแถว course_retake_charge เอง (ดูคอมเมนต์บนฟังก์ชันนี้)';

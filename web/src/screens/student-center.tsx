@@ -9,32 +9,24 @@ const GROUPS = [
   { title:'ข้อมูลนักศึกษา', subtitle:'ประวัติ การจัดชั้นเรียน และการดูแลผู้เรียน', items:[
     item('student-search','ค้นหานักศึกษา','ค้นหาจากชื่อ รหัสนักศึกษา หรือสถานะ แล้วเปิดแฟ้มประวัติ','/students','ready'),
     item('classroom','จัดห้องเรียน','ค้นหา เลือก และจัดนักศึกษาเข้าชั้นปีและห้องเรียน','/academic-year/placements','ready'),
-    item('placement','เปลี่ยนตำแหน่งห้อง','ย้ายห้องหรือจัดนักศึกษาเข้าห้องเรียน','/academic-year/placements','ready'),
-    item('fee','การเงินนักศึกษา','ติดตามใบแจ้งหนี้ การชำระเงิน และส่วนลด','/finance','ready'),
+    item('fee','การเงินนักศึกษา','ติดตามใบแจ้งหนี้ การชำระเงิน และส่วนลด','/finance/payments','ready'),
     item('import','นำเข้าข้อมูล','นำเข้าข้อมูลนักศึกษาจากไฟล์พร้อมตรวจสอบก่อนบันทึก','/import','ready'),
-    item('photo','แสดงรูปภาพนักเรียน','รวมรูปภาพและข้อมูลติดต่อของนักศึกษา'),
-    item('graduation-photo','แสดงรูปภาพนักเรียนชุดครุยรับปริญญา','จัดเก็บและแสดงรูปสำหรับพิธีสำเร็จการศึกษา'),
-    item('health','สุขภาพ','ข้อมูลสุขภาพและข้อควรระวังในการดูแลนักศึกษา — อยู่ในแฟ้มนักศึกษารายคน แท็บ "สุขภาพ"','/students','ready'),
     item('leave','การลา','รับคำขอและพิจารณาการลาของนักศึกษา','/leaves','ready'),
     item('assessment','การประเมิน','บันทึกผลการประเมินและพฤติกรรมนักศึกษา','/behavior','partial'),
-    item('guardian','ข้อมูลผู้ปกครอง','ข้อมูลผู้ปกครองและช่องทางติดต่อ — อยู่ในแฟ้มนักศึกษารายคน แท็บ "ผู้ปกครอง"','/students','ready'),
-    item('status-reason','กำหนดรหัสการรับเข้าออก','เหตุที่พ้นสภาพ/กลับเข้าเรียน พร้อมเลขที่คำสั่ง — อยู่ในแฟ้มนักศึกษารายคน แท็บ "สถานะ"','/students','ready'),
   ] },
   { title:'รายงาน', subtitle:'เวลาเรียน ผลการศึกษา และข้อมูลเพื่อการติดตาม', items:[
     item('study-check','ตรวจสอบข้อมูลจบการศึกษา','ตรวจความครบถ้วนของผลการเรียนก่อนจบการศึกษา','/graduation','ready'),
     item('pr','การประชาสัมพันธ์','จัดทำประกาศและข่าวสารสำหรับนักศึกษา — ตั้งเวลาเผยแพร่ได้','/announcements','ready'),
-    item('scholarship','ทุนการศึกษา','ติดตามทุน ส่วนลด และสวัสดิการนักศึกษา','/finance','partial'),
     item('attendance-report','รายงานการเข้าเรียน','ตรวจและสรุปการเข้าเรียนรายคาบ','/attendance','ready'),
+    item('student-breakdown','สถิตินักศึกษาแยกตามหัวข้อ','ห้อง สาขา เพศ อายุ สัญชาติ จังหวัด พาหนะ อาชีพและรายได้ผู้ปกครอง สถานศึกษาเดิม แยกตามชั้นปี','/statistics/students','ready'),
+    item('status-changes','รายงานการรับเข้า/ออก','การรับเข้า ลาพัก ออก กลับเข้าเรียน และสำเร็จการศึกษา ตามช่วงวันที่','/student-tools/status-changes','ready'),
+    item('rosters','ใบรายชื่อและฉลากที่อยู่','พิมพ์ใบรายชื่อห้องประจำ และฉลากที่อยู่ส่งถึงผู้ปกครอง','/student-tools/rosters','ready'),
+    item('achievement-report','ผลงานและเกียรติประวัติ','รางวัลและผลงานของนักศึกษาทั้งวิทยาลัย','/student-tools/achievements','ready'),
     item('student-report','รายงานข้อมูลนักศึกษา','รายงานรายชื่อ สถานะ และข้อมูลพื้นฐานของนักศึกษา','/statistics','partial'),
     item('exam','ตรวจสอบข้อสอบ','ตรวจตารางสอบและการจัดสอบของนักศึกษา','/exam-schedule','partial'),
-    item('directory','ไปรษณีย์','จัดการข้อมูลไปรษณีย์และเอกสารติดต่อ — เป็นระบบเดียวกับ "การประชาสัมพันธ์"','/announcements','ready'),
-    item('address','ที่อยู่','ที่อยู่และข้อมูลการติดต่อของนักศึกษา — อยู่ในแฟ้มนักศึกษารายคน แท็บ "ที่อยู่"','/students','ready'),
-    item('achievement','ข้อมูลผลงานและเกียรติประวัติ','รางวัลและผลงานของนักศึกษา — อยู่ในแฟ้มนักศึกษารายคน แท็บ "ผลงาน/เกียรติประวัติ"','/students','ready'),
-    item('student-statistics','ข้อมูลสถิติ','ภาพรวมนักศึกษาและตัวชี้วัดสำคัญ','/statistics','ready'),
   ] },
   { title:'การตั้งค่า', subtitle:'ข้อมูลประกอบและค่าเริ่มต้นสำหรับงานนักศึกษา', items:[
-    item('student-photo','รับรูปนักศึกษา','จับคู่ไฟล์รูปด้วยรหัสนักศึกษา'),
-    item('health-setup','สุขภาพ','ตั้งค่าข้อมูลสุขภาพที่ใช้ในการดูแลนักศึกษา'),
+    item('prefix','เปลี่ยนคำนำหน้าชื่อ (อายุ 15 ปี)','เด็กชาย/เด็กหญิงที่อายุครบ 15 ปี เปลี่ยนเป็น นาย/นางสาว พร้อมกัน','/student-tools/prefix','ready'),
     item('old-grade','คีย์เก่า','บันทึกหรือทบทวนผลการเรียนเดิม','/gradebook','partial'),
   ] },
 ];
@@ -53,3 +45,6 @@ export function StudentCenterScreen() {
 
 function Stat({ title, value, note, tone }: { title:string; value:number; note:string; tone:string }) { return <div className={`registry-stat ${tone}`}><span>{title}</span><strong>{value}</strong><small>{note}</small></div>; }
 function Preview({ item }: { item:Item }) { return <><PageHead title={item.title} sub="โครงหน้าจอสำหรับเชื่อมข้อมูลนักศึกษา" actions={<a href={href('/student-center')}>← กลับ</a>} /><Notice kind="info">เมนูนี้เตรียมโครงหน้าจอไว้แล้ว และจะเชื่อมข้อมูลจริงในขั้นถัดไป</Notice><Card title={item.title}><p className="hint">{item.desc}</p></Card></>; }
+
+/** รายการเมนูย่อยให้แถบซ้ายแสดงใต้ศูนย์นี้ — อ่านจากการ์ดชุดเดียวกันจึงไม่เพี้ยนจากกัน */
+export const SUBNAV = GROUPS.flatMap((g) => g.items.map((x) => ({ ...x, group: g.title }))).filter((x) => x.path).map((x) => ({ path: x.path!, label: x.title, group: x.group }));

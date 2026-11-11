@@ -19,9 +19,11 @@ import { IsUuid } from '../../common/validation/uuid';
 import { AuthService } from './auth.service';
 import { ResetDelivery } from './reset-delivery';
 
+// secretary/hr เพิ่มใน 0095 แต่รายการนี้ไม่เคยตามมา เทสต์จึงออก token ของ
+// สองบทบาทนี้ไม่ได้ และรายงานของงานบุคคลไม่มีทางถูกทดสอบในบทบาทของมันเอง
 const ROLES: AppRole[] = [
   'registrar', 'academic', 'finance', 'student_affairs',
-  'director', 'admin', 'teacher', 'student', 'guardian',
+  'director', 'admin', 'secretary', 'hr', 'teacher', 'student', 'guardian',
 ];
 
 class LoginDto {
@@ -208,7 +210,9 @@ class AuthController {
       ctx.actorId,
       dto.code,
       // เข้ามาด้วย token ชั่วคราว = ยังไม่มี token จริง ต้องออกให้ตอนตั้งเสร็จ
-      ctx.mfaPending ? { role: ctx.role, deviceId: dto.deviceId, userAgent } : undefined,
+      ctx.mfaPending
+        ? { role: ctx.role, roles: ctx.roles, deviceId: dto.deviceId, userAgent }
+        : undefined,
     );
   }
 

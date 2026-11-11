@@ -12,6 +12,8 @@
  * แม้ผลการเรียนจะถูกแก้ภายหลังด้วยคำร้อง (หลักข้อ 5)
  */
 import { useState } from 'react';
+import { useScope } from '../core/scope';
+import { StudentPicker } from '../ui/room-navigator';
 import { api, emptyPage } from '../core/api';
 import { num, thaiDate } from '../core/fmt';
 import { href } from '../core/router';
@@ -37,13 +39,6 @@ interface Rule {
   achieved: string | null;
   satisfied: boolean;
   is_blocking: boolean;
-}
-
-interface StudentRow {
-  id: string;
-  student_code: string;
-  full_name: string;
-  status: string;
 }
 
 interface StaffRow {
@@ -93,9 +88,11 @@ interface VersionOption {
  * การมีงานทำไม่มีผู้สำเร็จการศึกษาให้เลือกเลยสักคน
  */
 function AddGraduateForm({
-  approvalId, students, versions, onDone,
-}: { approvalId: string; students: StudentRow[]; versions: VersionOption[]; onDone: () => void }) {
+  approvalId, versions, onDone,
+}: { approvalId: string; versions: VersionOption[]; onDone: () => void }) {
   const [studentId, setStudentId] = useState('');
+  const [label, setLabel] = useState('');
+  const yearId = useScope().term?.academic_year_id ?? null;
   const [versionId, setVersionId] = useState('');
   const [completedOn, setCompletedOn] = useState(new Date().toISOString().slice(0, 10));
   const [gpax, setGpax] = useState('');
@@ -104,15 +101,11 @@ function AddGraduateForm({
 
   return (
     <Card title="เพิ่มผู้สำเร็จการศึกษาเข้ารอบนี้">
+      <StudentPicker academicYearId={yearId} studentId={studentId} onPick={(s) => { setStudentId(s.id); setLabel(`${s.student_code} ${s.full_name}`); }} />
       <div className="row">
         <label className="field" style={{ flex: 2 }}>
           <span>นักศึกษา</span>
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-            <option value="">— เลือกนักศึกษา —</option>
-            {students.map((s) => (
-              <option key={s.id} value={s.id}>{s.student_code} {s.full_name}</option>
-            ))}
-          </select>
+          <input readOnly value={label || '— เลือกจากตัวนำทางด้านบน —'} />
         </label>
         <label className="field" style={{ flex: 2 }}>
           <span>ฉบับหลักสูตรที่จบ</span>
@@ -305,13 +298,10 @@ function CompletedOnEditor({ studentId }: { studentId: string }) {
 }
 
 export function GraduationScreen() {
+  const scope = useScope();
   const canUse = useCan(...GRADUATION_ROLES);
   const approvals = useAsync(
     () => (canUse ? api.get<Approval[]>('/graduation/approvals') : Promise.resolve([])),
-    [canUse],
-  );
-  const students = useAsync(
-    () => (canUse ? api.get<StudentRow[]>('/students?limit=200') : Promise.resolve([])),
     [canUse],
   );
   const staff = useAsync(
@@ -356,23 +346,11 @@ export function GraduationScreen() {
       ) : (
       <>
       <Card title="ตรวจเกณฑ์การจบรายคน">
-        <div className="row">
-          <label className="field" style={{ flex: 2 }}>
-            <span>นักศึกษา</span>
-            <AsyncView state={students}>
-              {(rows) => (
-                <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-                  <option value="">— เลือกนักศึกษา —</option>
-                  {rows.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.student_code} {s.full_name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </AsyncView>
-          </label>
-        </div>
+        <StudentPicker
+          academicYearId={scope.term?.academic_year_id ?? null}
+          studentId={studentId}
+          onPick={(s) => setStudentId(s.id)}
+        />
 
         {studentId && (
           <AsyncView state={rules} empty="ยังไม่มีเกณฑ์ให้ตรวจ — ตรวจว่าผูกหลักสูตรให้นักศึกษาแล้วหรือยัง">
@@ -510,13 +488,10 @@ export function GraduationScreen() {
       </TableCard>
 
       {approvalId && (
-        <AsyncView state={students} empty="ไม่มีนักศึกษา">
-          {(rows) => (
-            <AsyncView state={versions} empty="ยังไม่มีฉบับหลักสูตร">
+        <AsyncView state={versions} empty="ยังไม่มีฉบับหลักสูตร">
               {(vrows) => (
                 <AddGraduateForm
                   approvalId={approvalId}
-                  students={rows}
                   versions={vrows}
                   onDone={() => {
                     approvals.reload();
@@ -524,8 +499,6 @@ export function GraduationScreen() {
                   }}
                 />
               )}
-            </AsyncView>
-          )}
         </AsyncView>
       )}
 

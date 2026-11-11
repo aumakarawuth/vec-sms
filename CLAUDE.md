@@ -134,8 +134,10 @@ PGHOST=localhost PGPORT=5433 PGUSER=postgres PGCLIENTENCODING=UTF8 bash api/test
 cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_api_test" \
   ADMIN_DATABASE_URL="postgres://postgres@localhost:5433/vecsms_api_test" \
   JWT_SECRET=test-secret DEV_AUTH=true IP_HASH_SECRET=test-ip-salt JOBS_ENABLED=false PROVISION_KEY=test-provision-key \
-  THROTTLE_ENABLED=true \
+  THROTTLE_ENABLED=true MFA_DISABLED=false \
+  MFA_SECRET_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" \
   NATIONAL_ID_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" && \
+  export MSYS_NO_PATHCONV=1 && \
   npm run test:e2e && npm run test:auth && npm run test:ratelimit && npm run test:hardening && npm run test:platform
 ```
 
@@ -145,6 +147,9 @@ cd api && export DATABASE_URL="postgres://apiuser:apipass@localhost:5433/vecsms_
 ปิดทั้งชุด แล้ว RATE-02/03/07/08 ล้มโดยที่**ไม่มีอะไรบอกว่าสาเหตุอยู่ในไฟล์
 ตั้งค่า** — อาการเหมือนโค้ดพัง ทั้งที่เป็นค่าที่ตั้งไว้เอง (ตัวแปรใน
 `process.env` ชนะค่าจาก `.env` เสมอ จึงกดทับได้จากบรรทัดคำสั่ง)
+**`MFA_DISABLED=false` กับ `MFA_SECRET_KEY` เป็นกับดักเดียวกัน** — `.env`
+ตั้ง `MFA_DISABLED=true` ไว้ ชุด auth จึงล้ม AUTH-24 ถึง 30 (ผู้ดูแลได้ token
+จริงทันทีโดยไม่ผ่านชั้นที่สอง) และไม่มีกุญแจ MFA ก็ล้มด้วย `key ... Received null`
 
 ```bash
 # API — ทดสอบโหลด (ต้องรัน test:e2e ก่อนหนึ่งครั้งเพื่อสร้างข้อมูลตัวอย่าง)
@@ -230,6 +235,13 @@ SQL จึงบอกเป็นรายบัญชีว่าใครย�
 - **`pkill -f "node dist/main.js"` ไม่ทำงาน** ใช้ PowerShell `Get-CimInstance Win32_Process`
   กรอง `CommandLine -like '*main.js*'` แทน
 - **หยุด API ก่อนรัน `db/run.sh`** มิฉะนั้น `drop database` ล้มเพราะมี connection ค้าง
+- **กุญแจ base64 ที่ขึ้นต้นด้วย `/` ถูก Git Bash แปลงเป็นพาธ Windows** —
+  `NATIONAL_ID_KEY=/abc…=` ไปถึง Node เป็น `C:/Program Files/Git/abc…=`
+  แล้ว API-167 ถึง 169 ล้มด้วย 500 "ต้องเป็นคีย์ 32 ไบต์" **แบบสุ่ม** (ราวหนึ่งในหกสิบสี่
+  ของกุญแจที่สุ่มใหม่ทุกรอบ) อาการเหมือนโค้ดพังเป็นบางครั้ง ทั้งที่เป็นสภาพแวดล้อม
+  ใส่ `MSYS_NO_PATHCONV=1` ไว้ในคำสั่งรันเทสต์แล้ว **แต่ต้องตั้งหลัง** `prepare-db.sh`
+  — ถ้าตั้งไว้ก่อน พาธไฟล์ที่สคริปต์ส่งให้ `psql.exe` จะไม่ถูกแปลงด้วย แล้วฐานทดสอบ
+  ถูกเตรียมไม่ครบ (อาการ: `42883` ฟังก์ชันไม่มีอยู่)
 - **`TZ` ที่ตั้งใน Git Bash ไปไม่ถึง Node** — `export TZ=Asia/Bangkok` แล้ว
   `echo $TZ` เห็นค่าถูกต้อง แต่ `process.env.TZ` เป็น `undefined` (MSYS จัดการ
   ตัวแปรนี้เป็นกรณีพิเศษ) อาการคือ production-guard เตือน "TZ ไม่ได้ตั้ง"
@@ -616,6 +628,10 @@ SQL จึงบอกเป็นรายบัญชีว่าใครย�
    จริงในปี ค.ศ. 2569 (อีกกว่า 500 ปีข้างหน้า) โดยไม่มี error ใด ๆ เลย — แก้
    ด้วยแปลงปีที่เกิน 2400 เป็น ค.ศ. ให้เองก่อนส่งเข้า API เสมอ
    (API-220 ถึง 224)
+   **ต่อมาย้ายไปกันที่ชั้น API ทุกช่อง** (`common/validation/ce-date.ts` ·
+   pipe ตัวแรกก่อน `ValidationPipe`) — เทสต์ API เองก็เคยส่ง `'2569-03-31'`
+   แล้วรายงานรับเข้า/ออกแสดง "31 มี.ค. 3112" แปลว่าทางที่ไม่ผ่านหน้าจอยังเข้าได้
+   ทุกช่อง ปฏิเสธ ไม่แปลงให้เอง เพื่อให้ต้นทางรู้ตัว (API-271)
 24. **มอบ/ถอนบทบาทพนักงานทำได้แค่มือแตะฐานข้อมูลตรง ๆ มาตั้งแต่ 0022** —
    `POST /staff/:id/roles` กับ `PATCH /staff/roles/:roleId/revoke` มีครบทั้ง
    DB/API (คอมเมนต์ของโมดูลเองเขียนว่า "ทำให้ระบบสิทธิทั้งระบบมีความหมาย
@@ -676,6 +692,23 @@ SQL จึงบอกเป็นรายบัญชีว่าใครย�
    และมอบ/ถอนส่วนลดรายคนแบบเจาะจงรายการ (TEST 336–337 ที่ชั้นฐานข้อมูล ·
    API-231 ถึง 237 ที่ชั้น API — ทั้งสองชุดยืนยันตัวเลขจริง ไม่ใช่แค่ดูว่า
    ไม่มี exception)
+
+26. **นักศึกษาสร้างแผนก แก้ชื่อแผนกทั้งวิทยาลัย และลงเวลามาทำงานแทนบุคลากรได้
+   มาตั้งแต่ 0035** — `department` · `staff_assignment` · `staff_attendance` มีแต่
+   `tenant_isolation` เจอตอนไล่เปิดให้งานบุคคล (hr) เขียนได้จริง ยิงจริงในบริบท
+   `app.role = 'student'` แล้วสำเร็จทั้งสามอย่าง — บทเรียนเดียวกับข้อ 16/20/25
+   · **และใบลาบุคลากรอนุมัติปลอมได้** เจ้าของใบแก้แถวของตัวเองได้โดยตั้งใจ
+     (ยื่น/ยกเลิก) แต่ trigger กันแค่ "ผู้ตัดสินต้องไม่ใช่เจ้าของ" ครูจึงตั้ง
+     `status = 'approved'` แล้วใส่ `decided_by` เป็นรหัสของใครก็ได้ — trigger
+     ตรวจค่าในแถวได้ แต่ตรวจไม่ได้ว่าคนกดคือคนที่ชื่ออยู่ในแถวหรือไม่ ต้องใช้
+     นโยบายที่ดูบทบาทของคนกด
+   · **ตอนเปิดสิทธิ์อ่านให้เลขา เกือบเปิดช่องปลอมเอกสาร** — 0095 ให้เลขา insert
+     `issued_document` ได้ ซึ่งรอดมาเพราะ restrictive scope ปิดทั้งตาราง พอ scope
+     เปิดให้เห็นหนังสือถึงผู้ปกครอง เลขาจะ insert ใบรับรองความประพฤติที่เขียน payload
+     เองได้ตรง ๆ **สิทธิ์ที่ปลอดภัยเพราะอีกนโยบายปิดไว้ กลายเป็นช่องทันทีที่อีกนโยบายเปิด**
+   ปิดใน 0097 (`hr_writer()` · TEST 342–347 · API-274/275) และ `/auth/dev-token`
+   ไม่เคยออก token บทบาท hr/secretary ได้เลย จึงไม่มีเทสต์ไหนทดสอบในสองบทบาทนี้
+   มาก่อน (แก้แล้ว)
 
 ---
 

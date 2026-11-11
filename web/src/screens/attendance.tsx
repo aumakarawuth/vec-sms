@@ -12,11 +12,12 @@
  * แล้วให้ครูกดทีละคนทั้งห้อง แปลว่าคาบที่ครูลืมกดจะกลายเป็นขาดทั้งห้อง
  */
 import { useEffect, useState } from 'react';
-import { api } from '../core/api';
-import { fetchSections, type Section } from '../core/catalog';
+import { api, qs } from '../core/api';
+import { type Section } from '../core/catalog';
 import { pct, thaiDate } from '../core/fmt';
 import { href } from '../core/router';
-import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync } from '../ui/kit';
+import { AsyncView, Badge, Card, Notice, PageHead, PrintButton, TableCard, useAsync, useCan } from '../ui/kit';
+import { RoomNavigator, type NavSelection } from '../ui/room-navigator';
 import { TermSelect, useTermPicker } from '../ui/term-picker';
 
 const STATUS: { value: string; label: string; short: string }[] = [
@@ -63,13 +64,21 @@ interface Roster {
 }
 
 export function AttendanceScreen() {
-  const { terms, termId, setTerm } = useTermPicker();
+  const { terms, termId, term, setTerm } = useTermPicker();
   const [sectionId, setSectionId] = useState('');
+  /*
+   * สมุดเวลาเรียนของเจ้าหน้าที่แบบ SISA เริ่มจากห้องแล้วจึงเลือกวิชา — ครูไม่เห็นตัวนำทาง
+   * เพราะครูเลือกจากกลุ่มเรียนของตัวเองอยู่แล้ว และต้นไม้ห้องเป็นข้อมูลระดับวิทยาลัย
+   */
+  const isStaff = useCan('registrar', 'academic', 'student_affairs', 'director', 'admin');
+  const [nav, setNav] = useState<NavSelection>({ cur: null, studyYear: null, groupCode: null });
   const [meetingId, setMeetingId] = useState('');
 
   const sections = useAsync(
-    () => (termId ? fetchSections(termId) : Promise.resolve([])),
-    [termId],
+    () => (termId
+      ? api.get<Section[]>(`/academic/sections${qs({ termId, ...(nav.groupCode ? { studyYear: nav.studyYear ?? undefined, groupCode: nav.groupCode } : {}) })}`)
+      : Promise.resolve([])),
+    [termId, nav.studyYear, nav.groupCode],
   );
   const meetings = useAsync(
     () =>
@@ -99,10 +108,14 @@ export function AttendanceScreen() {
         }
       />
 
+      {isStaff && (
+        <RoomNavigator academicYearId={term?.academic_year_id ?? null} value={nav} onChange={(v) => { setNav(v); setSectionId(''); }} />
+      )}
+
       <Card>
         <div className="row">
           <label className="field" style={{ flex: 2 }}>
-            <span>กลุ่มเรียน</span>
+            <span>กลุ่มเรียน{nav.groupCode ? ' ที่คนในห้องนี้ลงอยู่' : ''}</span>
             <AsyncView state={sections} empty="ภาคเรียนนี้ยังไม่มีกลุ่มเรียน">
               {(rows) => (
                 <select value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
